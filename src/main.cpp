@@ -34,15 +34,50 @@ const uint16_t (*iris)[IRIS_MAP_WIDTH] = irisDefault;
 
 // DISPLAY HARDWARE CONFIG -------------------------------------------------
 
+// Which panel is fitted.  Set from platformio.ini build_flags; the SSD1351
+// colour path is the default so the RGB build is unaffected.
+//   SSD1351 - Waveshare 1.5" RGB OLED, 65K colour, 16 bits/pixel
+//   SSD1327 - Waveshare 1.5" OLED,     16 greys,   4 bits/pixel
+#ifndef USE_SSD1327
+#define USE_SSD1327 0
+#endif
+
+#if USE_SSD1327
+#include "ssd1327.h"
+typedef SSD1327 displayType;
+// Two panels on one bus; drop this if long jumpers make it unreliable.
+#define SSD1327_SPI_HZ 8000000
+static SPISettings graySPI(SSD1327_SPI_HZ, MSBFIRST, SPI_MODE0);
+#else
 #include <Adafruit_SSD1351.h> // OLED display library -OR-
 
 typedef Adafruit_SSD1351 displayType; // Using OLED display(s)
+#endif
 
 #define DISPLAY_DC 33    // Data/command pin for BOTH displays
 #define DISPLAY_RESET 27 // Reset pin for BOTH displays
 #define SELECT_L_PIN 15  // LEFT eye chip select pin
 #define SELECT_R_PIN 04  // RIGHT eye chip select pin
 #define UART_RX_PIN 13   // Pin to receive UART commands from controller
+
+// DEBUG OUTPUT ------------------------------------------------------------
+// Set DEBUG to 0 to compile out all serial diagnostics (no code, no strings,
+// and Serial is never opened).  DEBUG_BAUD feeds Serial.begin() here and must
+// be kept in sync with monitor_speed in platformio.ini.
+
+#define DEBUG 1
+#define DEBUG_BAUD 115200
+// On-board user LED of the DOIT ESP32 DevKit V1, silkscreened "D2".
+// Not broken out to a header pin and unused by the eyes, so it is free.
+#define DEBUG_LED_PIN 2
+
+#if DEBUG
+#define DEBUG_BEGIN() Serial.begin(DEBUG_BAUD)
+#define DEBUG_PRINTF(...) Serial.printf(__VA_ARGS__)
+#else
+#define DEBUG_BEGIN()
+#define DEBUG_PRINTF(...)
+#endif
 
 // INPUT CONFIG (for eye motion -- enable or comment out as needed) --------
 
@@ -71,7 +106,8 @@ typedef struct {
 } eyeBlink;
 
 #define MOSI_PIN 18
-#define SCLK_PINSCLK_PIN 5
+#define MISO_PIN 19
+#define SCLK_PIN 5
 
 SPISettings settings(16000000, MSBFIRST,
                      SPI_MODE3); // 26.667MHz seems reliable on the ESP32.
@@ -80,15 +116,23 @@ struct {
   uint8_t cs;          // Chip select pin
   eyeBlink blink;      // Current blink state
 } eye[] = {
-    // OK to comment out one of these for single-eye display:
-    // displayType(SELECT_L_PIN,DISPLAY_DC,0),SELECT_L_PIN,{NOBLINK},
-    Adafruit_SSD1351(128, 128, &SPI, SELECT_L_PIN, DISPLAY_DC, DISPLAY_RESET),
-    SELECT_L_PIN,
-    {NOBLINK},
-    Adafruit_SSD1351(128, 128, &SPI, SELECT_R_PIN, DISPLAY_DC, DISPLAY_RESET),
-    SELECT_L_PIN,
-    {NOBLINK},
-    // displayType(SELECT_R_PIN,DISPLAY_DC,0),SELECT_R_PIN,{NOBLINK},
+#if USE_SSD1327
+    {SSD1327(SELECT_L_PIN, DISPLAY_DC), SELECT_L_PIN, {NOBLINK}},
+    {SSD1327(SELECT_R_PIN, DISPLAY_DC), SELECT_R_PIN, {NOBLINK}},
+#else
+    // OK to comment out one of these for single-eye display.
+    //
+    // NOTE: reset is passed as -1, not DISPLAY_RESET.  The library resets
+    // inside begin(), and because both panels share one reset line that
+    // would wipe the first panel's init while starting the second.  setup()
+    // pulses the shared line once instead.
+    {Adafruit_SSD1351(128, 128, &SPI, SELECT_L_PIN, DISPLAY_DC, -1),
+     SELECT_L_PIN,
+     {NOBLINK}},
+    {Adafruit_SSD1351(128, 128, &SPI, SELECT_R_PIN, DISPLAY_DC, -1),
+     SELECT_R_PIN,
+     {NOBLINK}},
+#endif
 };
 #define NUM_EYES (sizeof(eye) / sizeof(eye[0]))
 
@@ -99,27 +143,51 @@ HardwareSerial SerialIn(1);
 void setup(void) {
   uint8_t e;
 
-  Serial.begin(921600);
+  DEBUG_BEGIN();
+#if DEBUG
+  pinMode(DEBUG_LED_PIN, OUTPUT);
+#endif
+  DEBUG_PRINTF("\n[creeper-eyes] boot: %s rev%u @ %u MHz, heap %u\n",
+               ESP.getChipModel(), (unsigned)ESP.getChipRevision(),
+               (unsigned)getCpuFrequencyMhz(), (unsigned)ESP.getFreeHeap());
+  DEBUG_PRINTF("[creeper-eyes] SPI SCK=%u MISO=%u MOSI=%u | eyes=%u\n",
+               SCLK_PIN, MISO_PIN, MOSI_PIN, (unsigned)NUM_EYES);
   // SerialIn.begin(9600, SERIAL_8N1, UART_RX_PIN); // disabled
   randomSeed(analogRead(A3)); // Seed random() from floating analog input
 
-  // Both displays share a common reset line; 0 is passed to display
-  // constructor (so no reset in begin()) -- must reset manually here:
-  pinMode(DISPLAY_RESET, OUTPUT);
-  digitalWrite(DISPLAY_RESET, LOW);
-  delay(1);
-  digitalWrite(DISPLAY_RESET, HIGH);
-  delay(50);
+  // Route the SPI bus to the pins in the README wiring table.  Required on
+  // generic ESP32 boards, whose variant defaults are MOSI=23/SCK=18.
+  SPI.begin(SCLK_PIN, MISO_PIN, MOSI_PIN);
 
-  for (e = 0; e < NUM_EYES; e++) { // Deselect all
+  // Park every chip select before touching the bus, so no panel listens
+  // while another is being set up.
+  for (e = 0; e < NUM_EYES; e++) {
     pinMode(eye[e].cs, OUTPUT);
     digitalWrite(eye[e].cs, HIGH);
   }
+
+  // Both panels share one reset line, so it is pulsed exactly once, here,
+  // before any panel is initialised.
+  pinMode(DISPLAY_RESET, OUTPUT);
+  digitalWrite(DISPLAY_RESET, HIGH);
+  delay(20);
+  digitalWrite(DISPLAY_RESET, LOW);
+  delay(20);
+  digitalWrite(DISPLAY_RESET, HIGH);
+  delay(200);
+
   for (e = 0; e < NUM_EYES; e++) {
+#if USE_SSD1327
+    eye[e].display.begin(graySPI);
+    eye[e].display.fill(graySPI, 0x0);
+#else
     digitalWrite(eye[e].cs, LOW); // Select one eye for init
     eye[e].display.begin();
     digitalWrite(eye[e].cs, HIGH); // Deselect
+#endif
   }
+  DEBUG_PRINTF("[creeper-eyes] %u panel(s) initialised (%s)\n",
+               (unsigned)NUM_EYES, USE_SSD1327 ? "SSD1327 grey" : "SSD1351 rgb");
 
   // One of the displays is configured to mirror on the X axis.  Simplifies
   // eyelid handling in the drawEye() function -- no need for distinct
@@ -177,6 +245,18 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
     }
   }
 
+#if USE_SSD1327
+  // Pack the RGB565 frame down to 4-bit grey, two pixels per byte.  This
+  // halves what goes over the wire compared with the colour panel.
+  static uint8_t gBurst[SSD1327_FRAME_BYTES];
+  for (uint16_t i = 0, o = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i += 2, o++)
+    gBurst[o] = (uint8_t)((rgb565ToGray4(pBurst[i]) << 4) |
+                          rgb565ToGray4(pBurst[i + 1]));
+
+  SPI.beginTransaction(graySPI);
+  eye[e].display.pushFrame(gBurst);
+  SPI.endTransaction();
+#else
   eye[e].display.startWrite();
   eye[e].display.writeCommand(SSD1351_CMD_SETROW); // Y range
   eye[e].display.write16(0x0);
@@ -190,6 +270,7 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
   // one large burst
   SPI.writePixels((uint8_t *)pBurst, sizeof(pBurst));
   eye[e].display.endWrite();
+#endif
 }
 
 // EYE ANIMATION -----------------------------------------------------------
@@ -249,6 +330,22 @@ void frame(            // Process motion for a single frame of left or right eye
 
   if (++eyeIndex >= NUM_EYES)
     eyeIndex = 0; // Cycle through eyes, 1 per call
+
+#if DEBUG
+  // Heartbeat: proves the render loop is alive even with no displays wired.
+  {
+    static uint32_t lastReport = 0;
+    uint32_t now = millis();
+    frames++;
+    if (now - lastReport >= 1000) {
+      DEBUG_PRINTF("[creeper-eyes] fps=%u heap=%u\n", (unsigned)frames,
+                   (unsigned)ESP.getFreeHeap());
+      digitalWrite(DEBUG_LED_PIN, !digitalRead(DEBUG_LED_PIN));
+      frames = 0;
+      lastReport = now;
+    }
+  }
+#endif
 
   // X/Y movement
 
