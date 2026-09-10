@@ -13,6 +13,7 @@ effect — without opening the head up.
 - **Runs on a generic ESP32 dev board**, not just the Adafruit Feather
 - **Two panel types supported** — SSD1351 colour and SSD1327 grayscale
 - **Serial command console** over the USB cable that already powers the board
+- **Analogue clock face** rendered in the iris (experimental)
 - **Startup splash** naming each panel, so you never have to trace wires
 - **BOOT button** toggles between the two eye designs
 - **25 eye designs** to choose from, selected at build time
@@ -134,6 +135,9 @@ Compile-time switches, all in `src/main.cpp` unless noted.
 | `BOOT_BUTTON_PIN` | `0` | Button that toggles eye artwork. |
 | `SSD1327_SPI_HZ` | `8000000` | Grayscale bus speed. Lower it if long jumpers cause flicker. |
 | `STARTLE_WINDUP_MS` | `1400` | Slow constrict before the startle jolt. |
+| `CLOCK` | `1` | Analogue clock face. `0` compiles it out. |
+| `CLOCK_*_LEN` / `CLOCK_*_HW` | — | Hand lengths and half-widths, in pixels from the iris centre. |
+| `PUPIL_OFF_SCALE` | `64` | Iris scale used when the pupil is off. At or below 64 the pupil vanishes. |
 | `STARTLE_HOLD_MS` | `1200` | How long the eyes stay wide afterwards. |
 
 Inherited from upstream, unchanged:
@@ -163,6 +167,12 @@ Open `pio device monitor` and type `help`. Commands are line-based at 115200.
 | `dilate <0-100>` | Pupil width; `100` is fully dilated |
 | `dilate auto` | Hand dilation back to autonomous |
 | `startle` | Constrict slowly, then snap wide with a blink |
+| `pupil [on\|off]` | Pupil, or a full iris disc |
+| `clock [on\|off]` | Analogue clock in the iris |
+| `clock set HH:MM[:SS]` | Set the time |
+| `clock rate <1-3600>` | Run the clock faster, for testing |
+| `clock secs [on\|off]` | Show or hide the second hand |
+| `clock color [hour\|min\|sec] RRGGBB` | Hand colours |
 | `blink` | Blink both eyes now |
 | `swap [on\|off]` | Swap which physical panel is which eye |
 | `save` | Remember the eye design and swap across reboots |
@@ -266,15 +276,32 @@ a chip select asserted on the wrong panel.
 
 ## Remembering settings
 
-The eye design and the swap flag can be stored in NVS, so a sealed head comes
-back the way you left it:
+Settings can be stored in NVS, so a sealed head comes back the way you left
+it:
 
 ```
 > eye dragon
 > swap on
+> pupil off
 > save
 ok saved eye=dragon swap=on
 ```
+
+| Saved | Not saved |
+| :---- | :-------- |
+| Eye design | The clock's time |
+| Panel swap | Gaze (`look`) |
+| Pupil on/off | Dilation (`dilate`) |
+| Clock on/off, rate, second hand, hand colours | |
+
+Gaze and dilation are deliberately transient — they are things you drive,
+not things you configure.
+
+The clock's **time** is excluded on purpose. A time saved at power-off comes
+back wrong by exactly the interval the device was off, and the plan is to
+take the time from NTP, which makes a stored one pointless as well as
+misleading. Its display preferences are saved; only the time is not, so
+`clock set` is the one clock command that does not mark settings unsaved.
 
 `status` marks unsaved changes with `(unsaved)`. `forget` clears the stored
 settings and the build defaults apply again at the next boot.
@@ -287,6 +314,54 @@ The design is stored **by name**, not by index. Indices shift whenever the set
 of `EYE_*` switches changes, so a saved index could silently select a
 different design after a rebuild. If a saved design is not in the current
 build, the console says so at boot and falls back to the first one.
+
+## Pupil
+
+`pupil off` removes the pupil entirely, leaving a full iris disc:
+
+```
+> pupil off
+ok pupil=off (full iris disc; dilate has no effect)
+```
+
+The iris is drawn where `iScale * distance / 128 < 64`, and distance peaks at
+127 at the centre, so any scale at or below 64 keeps every pixel in the iris.
+There is nothing left to dilate, which is why `dilate` stops having an effect.
+
+Useful on its own, and it pairs with the clock — a full disc makes a better
+dial than a ring around a pupil.
+
+## Clock face
+
+**Experimental.** Turns the iris into an analogue clock with hour, minute and
+optional second hands.
+
+```
+> clock on
+> clock set 10:10
+> clock rate 600           # 10 minutes of clock per second
+> clock color sec FF8800   # a pop colour on the second hand
+```
+
+There is no real time source yet, so the clock free-runs from `millis()` off a
+time you set. `clock rate` exists because at 1× you cannot tell whether the
+hour hand works without waiting an hour.
+
+Hands are drawn **after** the eye is rendered, straight into the finished
+frame, as filled quads of constant pixel width. Two things follow from that:
+
+- They sit on top of whatever is underneath, so they work with or without a
+  pupil. Black hands read as a silhouette on a light iris but vanish over the
+  black pupil, which is what the colour command is for.
+- The iris-circle and eyelid clips the pixel loop would have provided are
+  applied explicitly, so hands stop at the iris edge and disappear properly
+  behind a blink.
+
+The eyes keep wandering and blinking while the clock runs, so it drifts around
+and gets blinked away. `look 512 512` pins the gaze if you want it readable —
+though the wandering version is arguably the creepier one.
+
+Set `CLOCK` to 0 in `src/main.cpp` to compile the whole feature out.
 
 ## Startup splash
 
