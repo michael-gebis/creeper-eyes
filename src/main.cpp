@@ -544,19 +544,16 @@ void pushCanvas(uint8_t e, GFXcanvas1 &canvas) {
 
 // INITIALIZATION -- runs once at startup ----------------------------------
 
-#if COMMANDS
-static void loadSettings(void); // defined with the console, below setup()
+#if CONTROLLABLE
+static void loadSettings(void); // defined below setup(), with the settings
 #endif
 
 HardwareSerial SerialIn(1);
 
-#if STARTUP_SPLASH
-
-// The default GFX font is a 6x8 cell, so a string's width is just its
-// length scaled up.
-// Four centred lines on both panels.  Used while the eyes are not running --
-// during the setup portal, for instance -- so the head is not just sitting
-// there dark with no explanation.
+// Four centred lines on both panels.  Used whenever the eyes are not running
+// and the head would otherwise sit there dark with no explanation: the setup
+// portal, and OTA progress.  Not behind STARTUP_SPLASH -- the boot cards are
+// optional, this is not.
 void showMessage(const char *l1, const char *l2, const char *l3,
                         const char *l4) {
   GFXcanvas1 canvas(SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -574,6 +571,10 @@ void showMessage(const char *l1, const char *l2, const char *l3,
     pushCanvas(e, canvas);
 }
 
+#if STARTUP_SPLASH
+
+// The default GFX font is a 6x8 cell, so a string's width is just its
+// length scaled up.
 static void showSplash(void) {
   // One 1-bit canvas serves both panel types: 2 KB, versus 32 KB for a
   // colour one, and the text is monochrome either way.
@@ -909,7 +910,7 @@ const uint8_t ease[] = { // Ease in/out curve for eye movements 3*t^2-2*t^3
 uint32_t timeOfLastBlink = 0L, timeToNextBlink = 0L;
 #endif
 
-#if COMMANDS
+#if CONTROLLABLE
 
 // These five are pointers TO const data, not const pointers, so the whole
 // eye can be swapped at runtime -- which is exactly what the note above
@@ -1271,6 +1272,15 @@ bool stateClockSetColor(int8_t which, uint32_t rgb) {
 void stateSave(void) { saveSettings(); }
 void stateForget(void) { forgetSettings(); }
 
+#endif // CONTROLLABLE
+
+// SERIAL CONSOLE ------------------------------------------------------------
+// Everything from here to the end of the block is the console itself: the
+// help text, the line parser, and the BOOT button.  It sits on the operations
+// layer above and knows nothing the API does not.
+
+#if COMMANDS
+
 // Kept in flash with F() -- the string is longer than it looks.
 static void cmdHelp(Print &out) {
   out.print(F("\ncommands:\n"
@@ -1290,6 +1300,7 @@ static void cmdHelp(Print &out) {
                  "  clock secs [on|off]       show the second hand\n"
                  "  clock color [hour|min|sec] RRGGBB\n"
                  "  net [quiet]               address info, on screen too\n"
+                 "  net off                   dismiss the address cards\n"
                  "  tz [POSIX string]         timezone, e.g. CST6CDT,M3.2.0/2\n"
                  "  pupil [on|off]            pupil, or a full iris disc\n"
                  "  swap [on|off]             swap which panel is which "
@@ -1522,10 +1533,16 @@ void handleCommand(char *line, Print &out) {
     out.printf("ok tz=%s" "\n", tzString);
   } else if (!strcmp(cmd, "net")) {
     char *arg = strtok(NULL, " \t");
+    if (arg && !strcmp(arg, "off")) { // take the panels back early
+      netHide();
+      out.println(F("ok address cards dismissed"));
+      return;
+    }
     netReport(out);
     if (!arg || strcmp(arg, "quiet")) {
       netShow();
-      out.println(F("ok showing address cards on the panels"));
+      out.printf("ok showing address cards for %us -- `net off` to dismiss"
+                 "\n", (unsigned)(NET_SHOW_MS / 1000));
     }
 #endif
   } else if (!strcmp(cmd, "pupil")) {
@@ -1663,16 +1680,19 @@ void frame(            // Process motion for a single frame of left or right eye
 #if COMMANDS
   pollCommands();
   pollBootButton();
+#endif
 
 #if NETWORK
   netPollTime(); // cheap no-op once the first sync has landed
   webPoll();
 #endif
+
 #if CLOCK
   if (clockOn)
     clockUpdate();
 #endif
 
+#if CONTROLLABLE
   if (swapPending) { // between frames, never mid-transaction
     swapPending = false;
     applySwap();
@@ -1699,7 +1719,7 @@ void frame(            // Process motion for a single frame of left or right eye
   }
 #endif
 
-#if COMMANDS
+#if CONTROLLABLE
   // Outranks the dilation override: with no pupil there is nothing to
   // dilate.
   if (!pupilOn)
@@ -1716,7 +1736,7 @@ void frame(            // Process motion for a single frame of left or right eye
       DEBUG_PRINTF("[creeper-eyes] fps=%u heap=%u\n", (unsigned)frames,
                    (unsigned)ESP.getFreeHeap());
       digitalWrite(DEBUG_LED_PIN, !digitalRead(DEBUG_LED_PIN));
-#if COMMANDS
+#if CONTROLLABLE
       lastFps = (uint16_t)frames;
 #endif
       frames = 0;
@@ -1739,9 +1759,9 @@ void frame(            // Process motion for a single frame of left or right eye
   static uint32_t eyeMoveStartTime = 0L;
   static int32_t eyeMoveDuration = 0L;
 
-#if COMMANDS
+#if CONTROLLABLE
   serEyeCtrl = gazeCmdActive ? 1 : 0;
-  if (gazeCmdPending) { // new target from the console
+  if (gazeCmdPending) { // a target from the console or the API
     gazeCmdPending = false;
     eyeOldX = eyeCurX; // glide from wherever the eye is now
     eyeOldY = eyeCurY;

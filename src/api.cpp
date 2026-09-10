@@ -54,8 +54,11 @@ static void sendOk(void) {
 // A PUT or POST body, parsed.  Returns false and answers with 400 if it is
 // missing or malformed, so callers can simply return.
 static bool readBody(JsonDocument &doc) {
+  // WebServer only keeps the raw body under "plain" when it did not recognise
+  // the content type; a form-encoded body has already been split into args by
+  // the time a handler runs, which is the usual reason for landing here.
   if (!S->hasArg("plain")) {
-    sendError(400, "expected a JSON body");
+    sendError(400, "expected a JSON body with Content-Type: application/json");
     return false;
   }
   DeserializationError e = deserializeJson(doc, S->arg("plain"));
@@ -131,6 +134,7 @@ static void fillNet(JsonObject o) {
   }
   o["timeSynced"] = timeSynced;
   o["tz"] = tzString;
+  o["showingInfo"] = netShowing();
 }
 
 // ---------------------------------------------------------------- handlers --
@@ -350,6 +354,30 @@ static void getNet(void) {
   sendJson(200, d);
 }
 
+// Whether the address cards are up on the panels.  Modelled as state rather
+// than as a one-shot because it can be dismissed as well as raised -- the
+// panels are either showing the eyes or showing the address.
+static void getNetInfo(void) {
+  JsonDocument d;
+  d["on"] = netShowing();
+  sendJson(200, d);
+}
+
+static void putNetInfo(void) {
+  JsonDocument b;
+  if (!readBody(b))
+    return;
+  if (!b["on"].is<bool>()) {
+    sendError(400, "expected on: true or false");
+    return;
+  }
+  if (b["on"].as<bool>())
+    netShow();
+  else
+    netHide();
+  getNetInfo();
+}
+
 static void getTz(void) {
   JsonDocument d;
   d["tz"] = tzString;
@@ -395,7 +423,7 @@ static void postAction(void) {
   else if (!strcmp(a, "splash"))
     stateSplash();
   else if (!strcmp(a, "netinfo"))
-    netShow();
+    netShow(); // synonym for PUT /netinfo {"on":true}
   else {
     sendError(400, "action must be blink, startle, splash or netinfo");
     return;
@@ -464,6 +492,11 @@ void apiRegister(WebServer &s) {
   s.on(API "/clock", HTTP_PUT, putClock);
   s.on(API "/clock", HTTP_OPTIONS, handleOptions);
   s.on(API "/clock", HTTP_ANY, notAllowed);
+
+  s.on(API "/netinfo", HTTP_GET, getNetInfo);
+  s.on(API "/netinfo", HTTP_PUT, putNetInfo);
+  s.on(API "/netinfo", HTTP_OPTIONS, handleOptions);
+  s.on(API "/netinfo", HTTP_ANY, notAllowed);
 
   s.on(API "/tz", HTTP_GET, getTz);
   s.on(API "/tz", HTTP_PUT, putTz);

@@ -160,4 +160,18 @@
 // the only access.
 #define BOOT_BUTTON_PIN 0
 
+// DERIVED ------------------------------------------------------------------
+// Must come last: these are computed from the switches above, so every
+// #ifndef default has to have been applied by the time they are evaluated.
+
+// Anything that can change the device at runtime -- the operations layer in
+// state.h, the settings it persists, and the state both of them touch -- is
+// needed by the serial console and by the REST API alike.  Neither switch
+// implies the other, so the shared machinery keys off this instead of either.
+#if COMMANDS || NETWORK
+#define CONTROLLABLE 1
+#else
+#define CONTROLLABLE 0
+#endif
+
 #endif // CONFIG_H

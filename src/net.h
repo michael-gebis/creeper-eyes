@@ -50,6 +50,8 @@ void netReport(Print &out);
 
 // Paint the address cards on the panels for a while.  Non-blocking.
 void netShow(void);
+void netHide(void);
+bool netShowing(void);
 
 // Set while the cards are up; the renderer skips the eyes until it passes.
 extern uint32_t netShowUntil;

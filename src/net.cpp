@@ -241,4 +241,10 @@ void netShow(void) {
   netShowUntil = millis() + NET_SHOW_MS;
 }
 
+// Take the panels back before the deadline.  frame() resumes rendering on its
+// next pass, so there is nothing to redraw here.
+void netHide(void) { netShowUntil = 0; }
+
+bool netShowing(void) { return netShowUntil != 0; }
+
 #endif // NETWORK
