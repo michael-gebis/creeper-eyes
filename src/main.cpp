@@ -23,7 +23,9 @@
 // a clone with no secrets.ini still builds: PlatformIO tolerates the missing
 // file, and an unconfigured board falls through to the setup portal.
 
+#ifndef NETWORK
 #define NETWORK 1
+#endif
 
 #define WIFI_HOSTNAME "frank"
 #define WIFI_AP_NAME "frank-setup"
@@ -87,7 +89,9 @@
 // and Serial is never opened).  DEBUG_BAUD feeds Serial.begin() here and must
 // be kept in sync with monitor_speed in platformio.ini.
 
+#ifndef DEBUG
 #define DEBUG 1
+#endif
 #define DEBUG_BAUD 115200
 // On-board user LED of the DOIT ESP32 DevKit V1, silkscreened "D2".
 // Not broken out to a header pin and unused by the eyes, so it is free.
@@ -106,7 +110,9 @@
 // physical display is on which chip select without tracing wires.  Set to 0
 // to boot straight into the eyes.
 
+#ifndef STARTUP_SPLASH
 #define STARTUP_SPLASH 1
+#endif
 #define SPLASH_SECONDS 5
 
 // COMMAND CONSOLE ---------------------------------------------------------
@@ -114,7 +120,9 @@
 // powers the board -- so the eyes can be driven once the head is assembled
 // and the BOOT button is out of reach.  Type "help" in the serial monitor.
 
+#ifndef COMMANDS
 #define COMMANDS 1
+#endif
 
 
 // PUPIL -------------------------------------------------------------------
@@ -134,7 +142,9 @@
 // when its angle is near the hand's and it lies within the hand's length.
 // No trigonometry and no mask buffer -- two comparisons per hand.
 
+#ifndef CLOCK
 #define CLOCK 1
+#endif
 
 // 12 o'clock is 128 in the polar table's 0-511 angle, increasing clockwise.
 #define CLOCK_NOON 128
