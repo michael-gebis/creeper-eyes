@@ -126,9 +126,11 @@ If the port is picked wrongly, pin it in `platformio.ini` with
 
 ## Build options
 
-Compile-time switches. All of them live in [`src/config.h`](src/config.h),
-and each is `#ifndef`-guarded, so any of them can also be overridden from
-`build_flags` in `platformio.ini` without editing a source file.
+Compile-time switches. Most live in [`src/config.h`](src/config.h); the ones
+inherited from upstream are still declared in `src/main.cpp`, next to the
+rendering code they belong to. Either way each is `#ifndef`-guarded, so any of
+them can be overridden from `build_flags` in `platformio.ini` without editing
+a source file — which is how the `gray` environment sets `USE_SSD1327`.
 
 | Option | Default | Effect |
 | :----- | :------ | :----- |
@@ -518,7 +520,7 @@ Each card says what happens to its settings when the power goes off —
 persistent, session only, or momentary — because that is the first question
 anyone asks of a control they have just moved.
 
-The page is static: one 17 KB string in [`src/page.h`](src/page.h), served
+The page is static: one 19 KB string in [`src/page.h`](src/page.h), served
 straight out of flash. Its tab icon is an inline SVG `data:` URI from
 [`src/favicon.h`](src/favicon.h) rather than a `/favicon.ico` route — no
 second handler, and no second request against a server that manages one
@@ -666,6 +668,15 @@ Two things bite on Windows:
   `upload_flags = --host_ip=192.168.1.20`.
 
 macOS and Linux need neither workaround.
+
+## The tools
+
+[`tools/gen_eyes.py`](tools/gen_eyes.py) converts the artwork;
+[`tools/git_rev.py`](tools/git_rev.py) stamps the build with its commit. Both
+are fully type-annotated — signatures and locals — and both run on Python 3.9,
+which is the oldest interpreter PlatformIO is likely to hand them. Annotations
+are lazy (`from __future__ import annotations`), so the modern generic syntax
+works there too.
 
 ## Versions
 

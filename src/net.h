@@ -40,7 +40,8 @@ const char *tzLookup(const char *name);
 // Connect, or open the portal.  Blocks; may take the portal timeout.
 void setupNetwork(void);
 
-// Bring up mDNS, IPv6 and SNTP.  Call once a link exists.
+// Bring up mDNS and SNTP, and IPv6 if it is compiled in.  Call once a link
+// exists.
 void netOnConnected(void);
 
 // Apply tzString and (re)start SNTP.  Safe to call again after a change.

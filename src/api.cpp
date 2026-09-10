@@ -1,9 +1,10 @@
 // The REST API.  JSON in, JSON out, over /api/v1.
 //
-// Every handler is a thin translation: parse a body, call one operation from
-// state.h, report what happened.  No device logic lives here, which is what
-// keeps it honestly in step with the serial console -- both drive the same
-// operations, so neither can grow behaviour the other lacks.
+// Every handler is a thin translation: parse a body, call one operation --
+// from state.h for anything about the eyes, from net.h for anything about the
+// network -- and report what happened.  No device logic lives here, which is
+// what keeps it honestly in step with the serial console: both front ends
+// drive the same operations, so neither can grow behaviour the other lacks.
 //
 // Versioned from the start because this interface has external clients by
 // design.  When something has to change incompatibly, /api/v2 can appear

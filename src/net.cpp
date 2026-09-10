@@ -12,16 +12,6 @@
 #include <WiFiManager.h>
 
 
-// Defined with the splash helpers, further down.
-void showMessage(const char *l1, const char *l2, const char *l3,
-                        const char *l4);
-void netStartTime(void);  // defined with the time code below
-void handleCommand(char *line, Print &out); // the console's dispatcher
-void cmdStatus(Print &out);
-void netReport(Print &out);
-void webBegin(void);      // defined with the web server below
-void otaBegin(void);      // defined alongside it
-
 uint8_t netState = NET_DOWN;
 
 // Blocks until connected or the timeout expires.  Returns true on success.
@@ -235,9 +225,12 @@ void netOnConnected(void) {
   webBegin();
 }
 
-// Address cards, one panel each, because IPv6 will not fit beside the rest:
-// a link-local address is around 24 characters and a 128 px panel holds 21.
-// Splitting across the two displays is the tidiest use of having two.
+// Address cards, one panel each.  A 128 px panel holds 21 characters of the
+// default font, which is not enough for everything worth reading off a head
+// at arm's length, so having two displays is the tidiest way out: Frank's
+// right takes the numbers, his left takes the names.  Anything that still
+// does not fit is wrapped rather than truncated -- half an address is worse
+// than none.
 uint32_t netShowUntil = 0;
 void netShow(void); // defined with the display code below
 
@@ -412,7 +405,9 @@ void netReport(Print &out) {
   }
 }
 
-
+// Paints one address card.  Frank's right takes the numbers -- MAC, IPv4,
+// signal -- and his left the names, because a 128 px panel holds 21
+// characters of the default font and none of this fits on one.
 void netDrawPanel(uint8_t e) {
   GFXcanvas1 c(PANEL_W, PANEL_H);
   c.fillScreen(0);

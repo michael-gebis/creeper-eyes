@@ -1,4 +1,4 @@
-// Build-time configuration -- every switch and tunable in one place.
+// Build-time configuration.
 //
 // Each switch is #ifndef-guarded, so platformio.ini can override any of them
 // without this file being edited:
@@ -6,6 +6,13 @@
 //   build_flags = -DNETWORK=0 -DCLOCK=0
 //
 // See the environments in platformio.ini for the combinations that ship.
+//
+// Not quite everything is here.  The switches this project inherited from
+// upstream -- USE_SSD1327, SSD1327_SPI_HZ, STARTLE_WINDUP_MS,
+// STARTLE_HOLD_MS, TRACKING, AUTOBLINK and IRIS_MIN/IRIS_MAX -- are still
+// declared in main.cpp beside the rendering code they belong to.  They are
+// overridable from build_flags just the same; USE_SSD1327 is set that way by
+// the `gray` environment.
 
 #ifndef CONFIG_H
 #define CONFIG_H

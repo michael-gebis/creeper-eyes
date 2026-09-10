@@ -277,6 +277,10 @@ async function fillLists() {
   $('#tz').selectedIndex = -1;
 }
 
+// One pass over a /state reply, writing every control on the page.  Cheap
+// enough to run whole once a second, and running it whole is what keeps the
+// page honest -- there is no incremental path that could drift out of step
+// with what the device actually reports.
 function render(s) {
   st = s;
   $('#sub').textContent = s.net.state === 'up'

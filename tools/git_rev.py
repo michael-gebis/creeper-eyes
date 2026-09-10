@@ -9,12 +9,24 @@ git installed, and a shallow clone all just leave the revision unknown rather
 than failing a build that would otherwise have worked.
 """
 
+from __future__ import annotations
+
 import subprocess
+from typing import Any
 
-Import("env")  # noqa: F821  -- injected by SCons
+# Injected by SCons when PlatformIO executes this script; there is no import
+# that would satisfy a type checker, so it is annotated as opaque.
+Import("env")  # noqa: F821
+env: Any
 
 
-def git(*args):
+def git(*args: str) -> str | None:
+    """Run a git command in the project directory.
+
+    Returns its trimmed output, or None if git is missing, the command
+    failed, or it took long enough to look like it was waiting on something.
+    """
+    out: subprocess.CompletedProcess[bytes]
     try:
         out = subprocess.run(
             ["git"] + list(args),
@@ -30,12 +42,12 @@ def git(*args):
     return out.stdout.decode("utf-8", "replace").strip()
 
 
-rev = git("rev-parse", "--short", "HEAD") or "unknown"
+rev: str = git("rev-parse", "--short", "HEAD") or "unknown"
 
 # --porcelain prints one line per changed file, so any output at all means the
 # build does not correspond to the commit named above.
-status = git("status", "--porcelain")
-dirty = 1 if status else 0
+status: str | None = git("status", "--porcelain")
+dirty: int = 1 if status else 0
 
 env.Append(CPPDEFINES=[  # noqa: F821
     ("GIT_REV", env.StringifyMacro(rev)),  # noqa: F821

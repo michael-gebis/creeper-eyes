@@ -118,6 +118,9 @@ void otaBegin(void) {
                WIFI_HOSTNAME);
 }
 
+// Called from netOnConnected(), once there is a link to serve over.  The
+// order matters: the specific routes and api.cpp's are registered before the
+// catch-all, because WebServer matches in registration order.
 void webBegin(void) {
   server.on("/", webHandleRoot);
 #if WEB_CMD_ENDPOINT && COMMANDS
