@@ -184,21 +184,25 @@
 #define FIRMWARE_COMMIT GIT_REV
 #endif
 
-// IPv6 for the web server.  Off, and not yet selectable.
+// IPv6.  All of it: bringing the address up, reporting it, and printing it
+// on the address cards.  Off, and not yet selectable.
 //
 // WiFiServer in the ESP32 Arduino core opens an AF_INET socket and nothing
-// else, so nothing listens on the board's IPv6 address: it answers pings and
-// refuses HTTP.  Waiting for support in the core, which is missing as of
-// 2.0.17 (framework-arduinoespressif32 4.20017).  Core 3.x replaces
-// WiFiServer with a dual-stack NetworkServer, at which point this becomes a
-// real switch rather than a placeholder.
+// else, so nothing listens on the board's IPv6 address -- it answers pings
+// and refuses HTTP.  Waiting for support in the core, which is missing as of
+// 2.0.17 (framework-arduinoespressif32 4.20017); core 3.x replaces
+// WiFiServer with a dual-stack NetworkServer.
 //
 // A global address would be wanted too.  enableIpV6() brings up a link-local
-// one, which is reachable only from the same segment and only with a zone
-// index in the URL (http://[fe80::...%2528]/), so it is of little use as a
-// service address even once something is listening.
-#ifndef IPV6_SERVER
-#define IPV6_SERVER 0
+// one, reachable only from the same segment and only with a zone index in
+// the URL (http://[fe80::...%2528]/), so it is of little use as a service
+// address even once something is listening.
+//
+// Until both of those are true, an address that cannot be connected to is
+// just something else on the screen to be puzzled by, so none of it is
+// compiled in.  Setting this to 1 brings the lot back at once.
+#ifndef IPV6
+#define IPV6 0
 #endif
 
 // DERIVED ------------------------------------------------------------------

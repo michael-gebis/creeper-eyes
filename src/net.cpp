@@ -220,11 +220,11 @@ void setupNetwork(void) {
 void netOnConnected(void) {
   if (WiFi.status() != WL_CONNECTED)
     return;
+#if IPV6
   // Link-local IPv6 is not brought up by default, and takes a moment to be
-  // assigned, so the address can still read as :: right after boot.  Worth
-  // having for pings and for the address cards even though nothing serves
-  // over it -- see IPV6_SERVER in config.h for why not.
+  // assigned, so the address can still read as :: right after boot.
   WiFi.enableIpV6();
+#endif
   if (MDNS.begin(WIFI_HOSTNAME))
     DEBUG_PRINTF("[net] mdns up: %s.local" "\n", WIFI_HOSTNAME);
   else
@@ -397,7 +397,9 @@ void netReport(Print &out) {
                (int)WiFi.RSSI());
     out.printf("  ipv4 %s  gw %s" "\n", WiFi.localIP().toString().c_str(),
                WiFi.gatewayIP().toString().c_str());
+#if IPV6
     out.printf("  ipv6 %s" "\n", WiFi.localIPv6().toString().c_str());
+#endif
   }
   if (timeSynced) {
     struct tm t;
@@ -439,6 +441,7 @@ void netDrawPanel(uint8_t e) {
     snprintf(line, sizeof(line), "%d dBm", (int)WiFi.RSSI());
     splashCenter(c, line, 1, y);
   } else {
+#if IPV6
     splashCenter(c, "IPv6", 1, y);
     y += 11;
     String v6 = WiFi.localIPv6().toString();
@@ -449,6 +452,21 @@ void netDrawPanel(uint8_t e) {
     }
     y += 10;
     splashCenter(c, WIFI_HOSTNAME ".local", 1, y);
+#else
+    splashCenter(c, "NAME", 1, y);
+    y += 11;
+    splashCenter(c, WIFI_HOSTNAME ".local", 1, y);
+    y += 18;
+    splashCenter(c, "NETWORK", 1, y);
+    y += 11;
+    // Wrapped for the same reason as the address was: an SSID can be 32
+    // characters and a panel holds 21.
+    String ssid = WiFi.SSID();
+    for (uint16_t i = 0; i < ssid.length(); i += NET_COLS) {
+      splashCenter(c, ssid.substring(i, i + NET_COLS).c_str(), 1, y);
+      y += 10;
+    }
+#endif
   }
   pushCanvas(e, c);
 }

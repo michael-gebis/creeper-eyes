@@ -318,19 +318,24 @@ function render(s) {
     ? `on ${s.net.ssid}, ${s.net.rssi} dBm`
     : (s.net.state === 'portal' ? 'setup portal open' : 'not connected');
 
-  $('#info').innerHTML = [
-    ['host', s.net.mdns], ['mac', s.net.mac], ['ipv4', s.net.ipv4 || '—'],
-    ['ipv6', s.net.ipv6 || '—'],
+  const rows = [
+    ['host', s.net.mdns], ['mac', s.net.mac], ['ipv4', s.net.ipv4 || '—']
+  ];
+  if (s.net.ipv6) rows.push(['ipv6', s.net.ipv6]);
+  rows.push(
     ['wifi', s.net.ssid ? `${s.net.ssid} ${s.net.rssi} dBm` : '—'],
     ['tz', s.net.tz], ['panel', `${s.system.panel} ×${s.system.panels}`],
     ['heap', (s.system.freeHeap / 1024 | 0) + ' KB'],
-    ['uptime', s.system.uptimeSeconds + ' s']
-  ].map(([k, v]) => `<tr><td>${k}</td><td class=v>${v}</td></tr>`).join('');
+    ['uptime', s.system.uptimeSeconds + ' s']);
+  $('#info').innerHTML = rows
+    .map(([k, v]) => `<tr><td>${k}</td><td class=v>${v}</td></tr>`).join('');
 
-  $('#v6note').innerHTML = s.net.ipv6Served
-    ? ''
-    : 'The IPv6 address answers pings but not HTTP: the ESP32 Arduino core ' +
-      'binds an IPv4 socket only. Use the IPv4 address or <kbd>frank.local</kbd>.';
+  // Only worth explaining when there is an address on screen that does not
+  // work.  With IPv6 compiled out there is nothing to explain away.
+  $('#v6note').innerHTML = (s.net.ipv6 && !s.net.ipv6Served)
+    ? 'The IPv6 address answers pings but not HTTP: the ESP32 Arduino core ' +
+      'binds an IPv4 socket only. Use the IPv4 address or <kbd>frank.local</kbd>.'
+    : '';
 
   $('#dirty').textContent = s.system.settingsDirty ? 'unsaved changes' : 'saved';
 }

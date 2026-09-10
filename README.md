@@ -146,7 +146,7 @@ and each is `#ifndef`-guarded, so any of them can also be overridden from
 | `CLOCK_*_LEN` / `CLOCK_*_HW` | — | Hand lengths and half-widths, in pixels from the iris centre. |
 | `PUPIL_OFF_SCALE` | `64` | Iris scale used when the pupil is off. At or below 64 the pupil vanishes. |
 | `NETWORK` | `1` | WiFi, NTP, web server and OTA. `0` compiles all of it out, saving ~535 KB. |
-| `IPV6_SERVER` | `0` | Placeholder. Cannot be turned on yet — see [IPv6](#ipv6). |
+| `IPV6` | `0` | All of IPv6, compiled out. Cannot usefully be turned on yet — see [IPv6](#ipv6). |
 | `FIRMWARE_VERSION` | `1.0` | Bumped by hand, for features worth announcing. |
 | `WEB_CMD_ENDPOINT` | `1` | The `/cmd` escape hatch. `0` leaves only the REST API. Needs `COMMANDS`, since it is a passthrough to the console. |
 | `WIFI_HOSTNAME` | `frank` | DHCP and mDNS name. |
@@ -607,23 +607,34 @@ interface — prefer the API for anything you are writing against. Set
 
 ### IPv6
 
-The board brings up a link-local IPv6 address and answers pings on it, but
-**the web server is IPv4 only** — `WiFiServer` in the ESP32 Arduino core
-opens an `AF_INET` socket and nothing else, so there is nothing listening on
-the v6 address. `GET /api/v1/net` reports this as `"ipv6Served": false`
-rather than leaving you to work it out from an address that does not answer.
+**Compiled out.** `IPV6` in [`src/config.h`](src/config.h) is `0`, and with
+it the address is not brought up, not reported, and not printed on the
+address cards.
 
-Two things would have to change to make `http://[…]/` work: the core would
-have to move to 3.x, where the server is dual-stack, and the board would need
-a global address rather than a link-local one, which needs the router to
-advertise a prefix. Until then, use the IPv4 address or `frank.local`.
+The reason is that it could not be used for anything. `WiFiServer` in the
+ESP32 Arduino core opens an `AF_INET` socket and nothing else, so nothing
+listens on the v6 address — it answers pings and refuses HTTP. And the
+address `enableIpV6()` brings up is link-local, reachable only from the same
+segment and only with a zone index in the URL
+(`http://[fe80::…%2528]/`), so it would be a poor service address even if
+something were listening. An address on screen that cannot be connected to is
+just one more thing to be puzzled by.
+
+Two things have to change before it earns its place: the core has to move to
+3.x, where the server is dual-stack, and the board needs a global address,
+which needs the router to advertise a prefix. Setting `IPV6` to `1` brings
+the lot back at once when they do.
+
+`GET /api/v1/net` reports `"ipv6Served": false` either way, so a client that
+finds no `ipv6` field can tell why. Use the IPv4 address or `frank.local`.
 
 ### Address info on the panels
 
 `net` reports over serial and paints both panels for twelve seconds — Frank's
-right shows MAC, IPv4 and signal, his left shows IPv6 and the mDNS name. A
-link-local IPv6 address is 39 characters and a panel holds 21, so it is
-wrapped rather than truncated, and split across the two displays.
+right shows MAC, IPv4 and signal, his left the mDNS name and which network he
+is on. Anything longer than the 21 characters a panel holds is wrapped rather
+than truncated, since half an address is worse than none. With `IPV6` turned
+on, his left shows the IPv6 address instead.
 
 Twelve seconds is a long time to stare at a MAC address, so the cards can be
 dismissed: `net off` over serial, the same button on the control page, or

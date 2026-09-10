@@ -130,13 +130,15 @@ static void fillNet(JsonObject o) {
     o["ssid"] = WiFi.SSID();
     o["rssi"] = WiFi.RSSI();
     o["ipv4"] = WiFi.localIP().toString();
+#if IPV6
     o["ipv6"] = WiFi.localIPv6().toString();
-    // The address is real and answers pings, but nothing listens on it while
-    // IPV6_SERVER is 0 -- see config.h.  Said plainly here so a client is not
-    // left wondering why the URL does not work.
-    o["ipv6Served"] = (bool)IPV6_SERVER;
+#endif
     o["gateway"] = WiFi.gatewayIP().toString();
   }
+  // Reported unconditionally, and false while IPV6 is 0 -- see config.h.
+  // A client that gets no ipv6 field should be able to find out why without
+  // guessing.
+  o["ipv6Served"] = (bool)IPV6;
   o["timeSynced"] = timeSynced;
   o["tz"] = tzString;
   o["showingInfo"] = netShowing();
