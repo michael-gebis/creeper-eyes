@@ -24,10 +24,13 @@ IRIS_R = IRIS / 2.0   # 40
 
 
 def rgb565(r, g, b):
+    """Pack 8-bit RGB into RGB565, keeping the top 5, 6 and 5 bits."""
     return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
 
 
 def from565(v):
+    """RGB565 back to 8-bit RGB, replicating high bits into the low ones so
+    white stays white rather than drifting to 248,252,248."""
     r = (v >> 11) & 0x1F
     g = (v >> 5) & 0x3F
     b = v & 0x1F
@@ -35,6 +38,7 @@ def from565(v):
 
 
 def parse_color(c, default=0):
+    """config.eye colours are either an int or a string like "0xFFE0"."""
     if c is None:
         return default
     if isinstance(c, int):
@@ -43,6 +47,7 @@ def parse_color(c, default=0):
 
 
 def load_cfg(d):
+    """Read one eye design's config.eye."""
     with open(os.path.join(d, "config.eye")) as f:
         c = json.load(f)
     return c
@@ -207,7 +212,14 @@ def slit_distance(dx, dy, slit_r):
 
 
 def emit(path, name, sclera, iris, upper, lower, polar):
+    """Write one header in the format the renderer expects.
+
+    Symbols carry a suffix so several designs can be included at once, and
+    the dimension #defines are repeated in every header -- identical values,
+    so redefinition is harmless, and it keeps each header self-contained.
+    """
     def rows(f, decl, vals, per):
+        """Emit one array, `per` values to a line."""
         f.write(decl)
         for i, v in enumerate(vals):
             if i % per == 0:
@@ -292,10 +304,17 @@ SAMPLES = (("constricted", 150), ("normal", 250), ("dilated", 400))
 
 
 def camel(n):
+    """Design name to symbol suffix: dragon -> Dragon."""
     return n[0].upper() + n[1:]
 
 
 def main(argv):
+    """Convert every design in a TeensyEyes checkout.
+
+    Writes headers into include/eyes/ and preview renders into
+    docs/images/eyes/, then leaves the config switch and registry row to be
+    added by hand -- deliberately, so nothing is silently enabled.
+    """
     src = argv[1] if len(argv) > 1 else "teensyeyes/resources/eyes/240x240"
     if not os.path.isdir(src):
         print("usage: gen_eyes.py [path-to-TeensyEyes/resources/eyes/240x240]")

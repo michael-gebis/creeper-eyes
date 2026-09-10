@@ -309,16 +309,21 @@ static uint32_t clockRGB[3] = {CLOCK_HOUR_COLOR, CLOCK_MIN_COLOR,
                               CLOCK_SEC_COLOR};
 static uint16_t clockPix[3];
 
+// RRGGBB to RGB565: keep the top 5, 6 and 5 bits and pack them.
 static inline uint16_t rgb24to565(uint32_t v) {
   return (uint16_t)(((v >> 8) & 0xF800) | ((v >> 5) & 0x07E0) |
                     ((v >> 3) & 0x001F));
 }
 
+// Keeps both representations: the 565 one is what gets drawn, the 24-bit
+// one only so `clock` can echo back what was actually asked for.
 static void clockSetColor(uint8_t which, uint32_t rgb) {
   clockRGB[which] = rgb & 0xFFFFFF;
   clockPix[which] = rgb24to565(clockRGB[which]);
 }
 
+// Rebases the free-running origin.  Everything else derives the current
+// time from this pair, so setting the clock is just moving the origin.
 static void clockSet(uint32_t secOfDay) {
   clockBaseSec = secOfDay % 86400UL;
   clockBaseMs = millis();
@@ -339,6 +344,8 @@ static void clockDirs(void) {
   }
 }
 
+// Recomputes the three hand angles and their direction vectors.  Called
+// once per frame while the clock is on, never per pixel.
 static void clockUpdate(void) {
   uint32_t elapsed = ((millis() - clockBaseMs) / 1000UL) * clockRate;
   uint32_t t = (clockBaseSec + elapsed) % 86400UL;
@@ -351,6 +358,8 @@ static void clockUpdate(void) {
   clockDirs();
 }
 
+// Seconds since midnight, derived rather than stored, so it stays correct
+// however long the board has been up.
 static uint32_t clockNow(void) {
   uint32_t elapsed = ((millis() - clockBaseMs) / 1000UL) * clockRate;
   return (clockBaseSec + elapsed) % 86400UL;
@@ -403,6 +412,7 @@ static void saveSettings(void) {
   settingsDirty = false;
 }
 
+// Wipes the whole namespace, so the build defaults apply at the next boot.
 static void forgetSettings(void) {
   prefs.begin(PREFS_NAMESPACE, false);
   prefs.clear();
@@ -410,6 +420,9 @@ static void forgetSettings(void) {
   settingsDirty = false;
 }
 
+// Repoints the five artwork pointers at another design.  Call between
+// frames: drawEye() reads all five as it scans, so changing them underneath
+// it would tear a frame.  Out-of-range falls back to the first design.
 static void setEyeDesign(uint8_t idx) {
   if (idx >= NUM_EYE_DESIGNS)
     idx = 0;
@@ -620,6 +633,15 @@ static void showSplash(void) {
 
 #endif // STARTUP_SPLASH
 
+// Order matters here, more than it looks:
+//   - an eye design has to be selected before anything renders, because the
+//     artwork pointers start unset
+//   - every chip select is parked high before the shared reset is pulsed, so
+//     no panel is listening while another is being set up
+//   - the shared reset is pulsed exactly once, before either panel is
+//     initialised; doing it per panel would wipe the first
+//   - stored settings load before the splash, so its name cards reflect a
+//     restored panel swap and can be used to check it
 void setup(void) {
   uint8_t e;
 
@@ -965,6 +987,8 @@ static void loadSettings(void) {
 #endif
 }
 
+// Numbered listing with the current design marked, so `eye <index>` has
+// something to refer to.
 static void listEyeDesigns(void) {
   for (uint8_t i = 0; i < NUM_EYE_DESIGNS; i++)
     Serial.printf("  %u  %-10s%s\n", (unsigned)i, eyeDesigns[i].name,
@@ -994,6 +1018,8 @@ static uint16_t dilateCmdValue = (IRIS_MIN + IRIS_MAX) / 2;
 static int32_t dilateCurrent = (IRIS_MIN + IRIS_MAX) / 2;
 static uint8_t dilateEaseDiv = 8; // larger = slower approach
 
+// Percentage in, internal scale out.  The mapping is not a straight scale:
+// see the note above about IRIS_MAX being the wide end.
 static void setDilation(uint8_t pct) {
   if (pct > 100)
     pct = 100;
@@ -1017,6 +1043,8 @@ static uint8_t startleWasPct = 50;
 #define STARTLE_WINDUP_MS 1400 // slow constrict -- the tension
 #define STARTLE_HOLD_MS 1200   // eyes held wide after the jolt
 
+// Captures whatever dilation state was in effect so it can be handed back
+// when the effect finishes.
 static void startleBegin(void) {
   startleWasAuto = !dilateCmdActive; // so we can hand back what we took
   startleWasPct = dilateCmdPct;
@@ -1026,11 +1054,15 @@ static void startleBegin(void) {
   startleState = STARTLE_WINDUP;
 }
 
+// Abandons a running effect and restores the normal easing rate, which the
+// windup slows right down.
 static void startleCancel(void) {
   startleState = STARTLE_OFF;
   dilateEaseDiv = 8;
 }
 
+// Advances the effect one step.  A state machine rather than delay() so the
+// eyes keep rendering throughout.
 static void pollStartle(void) {
   if (startleState == STARTLE_OFF)
     return;
@@ -1060,6 +1092,7 @@ static void pollStartle(void) {
   }
 }
 
+// Kept in flash with F() -- the string is longer than it looks.
 static void cmdHelp(void) {
   Serial.print(F("\ncommands:\n"
                  "  eye                       list the designs built in\n"
@@ -1089,6 +1122,8 @@ static void cmdHelp(void) {
                  "  help                      this list\n"));
 }
 
+// One line of everything worth knowing, plus an (unsaved) marker when the
+// live settings differ from the stored ones.
 static void cmdStatus(void) {
   Serial.printf("eye=%u/%u %s gaze=%s", (unsigned)eyeDesign,
                 (unsigned)NUM_EYE_DESIGNS, eyeDesigns[eyeDesign].name,
@@ -1113,6 +1148,10 @@ static void cmdStatus(void) {
   Serial.println();
 }
 
+// Splits one line into a command and its arguments and dispatches it.
+// strtok chews up the buffer, which is fine -- the caller owns it and
+// discards it afterwards.  The command word is lowercased; arguments are
+// only lowercased where case should not matter, such as eye names.
 static void handleCommand(char *line) {
   char *cmd = strtok(line, " \t");
   if (!cmd)
@@ -1383,6 +1422,8 @@ static void pollCommands(void) {
   }
 }
 
+// Debounced edge detect on the BOOT button, acting on press rather than
+// release so it feels immediate.  40 ms is enough for these switches.
 static void pollBootButton(void) {
   static bool wasDown = false;
   static uint32_t lastEdge = 0;

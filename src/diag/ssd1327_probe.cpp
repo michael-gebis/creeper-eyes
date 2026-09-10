@@ -49,6 +49,8 @@ static void cmd(uint8_t c) {
   digitalWrite(DISPLAY_DC, HIGH);
 }
 
+// One-argument command.  Note the argument goes out with DC still LOW:
+// the SSD1327 takes command parameters as commands, unlike the SSD1351.
 static void cmd1(uint8_t c, uint8_t arg) {
   digitalWrite(DISPLAY_DC, LOW);
   SPI.transfer(c);
@@ -88,6 +90,8 @@ static void initSSD1327() {
   cmd(0xAF);        // display on
 }
 
+// Reset the address window to the whole panel before every fill, so a
+// glitched transfer cannot leave later writes landing in the wrong place.
 static void setWindow() {
   digitalWrite(DISPLAY_DC, LOW);
   SPI.transfer(0x15);
@@ -119,6 +123,9 @@ static void grayRamp() {
   }
 }
 
+// Black, white, then a ramp through all 16 levels.  The ramp is the useful
+// one: a panel that shows black and white but banded greys is being driven
+// at the wrong bit depth.
 static void paint(int8_t cs, const char *name) {
   SPI.beginTransaction(spiCfg);
   select(cs);
