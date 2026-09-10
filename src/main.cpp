@@ -17,9 +17,45 @@
 // Inspired by David Boccabella's (Marcwolf) hybrid servo/OLED eye concept.
 //--------------------------------------------------------------------------
 
+// NETWORK -----------------------------------------------------------------
+// Credentials come from secrets.ini via extra_configs, which is gitignored --
+// copy secrets.ini.example to get started.  Nothing secret is committed, and
+// a clone with no secrets.ini still builds: PlatformIO tolerates the missing
+// file, and an unconfigured board falls through to the setup portal.
+
+#define NETWORK 1
+
+#define WIFI_HOSTNAME "frank"
+#define WIFI_AP_NAME "frank-setup"
+
+// How long to wait on a known network before giving up and opening the
+// portal, and how long the portal itself stays up before the eyes carry on
+// regardless.  A prop with no network should still be a working prop.
+#define WIFI_CONNECT_MS 15000
+#define WIFI_PORTAL_S 180
+
+// Optional: a clone without it still builds, and an unconfigured board
+// falls through to the setup portal.
+#if defined(__has_include)
+#if __has_include("secrets.h")
+#include "secrets.h"
+#endif
+#endif
+
+#ifndef WIFI_SSID
+#define WIFI_SSID ""
+#endif
+#ifndef WIFI_PASS
+#define WIFI_PASS ""
+#endif
+
 #include <Adafruit_GFX.h>   // Core graphics lib for Adafruit displays
 #include <HardwareSerial.h> // Needed for 2nd serial port on ESP32
 #include <Preferences.h>    // NVS-backed settings, part of the ESP32 core
+#if NETWORK
+#include <WiFi.h>
+#include <WiFiManager.h> // tzapu/WiFiManager -- captive setup portal
+#endif
 #include <SPI.h>
 
 // DEBUG OUTPUT ------------------------------------------------------------
@@ -55,6 +91,7 @@
 // and the BOOT button is out of reach.  Type "help" in the serial monitor.
 
 #define COMMANDS 1
+
 
 // PUPIL -------------------------------------------------------------------
 // The iris is drawn where iScale * distance / 128 < 64, and distance peaks
@@ -367,6 +404,83 @@ static uint32_t clockNow(void) {
 
 #endif // CLOCK
 
+#if NETWORK
+
+// Defined with the splash helpers, further down.
+static void showMessage(const char *l1, const char *l2, const char *l3,
+                        const char *l4);
+
+// Tri-state so `status` can distinguish "never tried" from "tried and failed".
+enum { NET_DOWN, NET_UP, NET_PORTAL };
+static uint8_t netState = NET_DOWN;
+
+// Blocks until connected or the timeout expires.  Returns true on success.
+static bool wifiWaitConnected(uint32_t ms) {
+  uint32_t start = millis();
+  while (millis() - start < ms) {
+    if (WiFi.status() == WL_CONNECTED)
+      return true;
+    delay(100);
+  }
+  return false;
+}
+
+// Three sources of credentials, tried in order of how deliberate they are:
+//
+//   1. whatever the portal last stored, since that was an explicit choice
+//      made on this device and is probably the network it is standing in
+//   2. the build-time defaults from secrets.ini
+//   3. the portal itself
+//
+// A failure at every stage is not fatal.  The eyes are the point of the
+// device; the network is a convenience, so an unreachable one just means
+// carrying on offline.
+static void setupNetwork(void) {
+  // Hostname before mode() and begin(), or the DHCP request goes out with
+  // the default name and the router records that instead.  Learned the hard
+  // way on the wandering-hour-clock.
+  WiFi.persistent(true);
+  WiFi.setHostname(WIFI_HOSTNAME);
+  WiFi.mode(WIFI_STA);
+
+  String savedSsid = WiFi.SSID();
+  if (savedSsid.length()) {
+    DEBUG_PRINTF("[net] trying stored network '%s'" "\n", savedSsid.c_str());
+    WiFi.begin();
+    if (wifiWaitConnected(WIFI_CONNECT_MS)) {
+      netState = NET_UP;
+      return;
+    }
+  }
+
+  if (strlen(WIFI_SSID)) {
+    DEBUG_PRINTF("[net] trying built-in network '%s'" "\n", WIFI_SSID);
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    if (wifiWaitConnected(WIFI_CONNECT_MS)) {
+      netState = NET_UP;
+      return;
+    }
+  }
+
+  // Nothing worked.  Say so on the panels, because a head sitting dark with
+  // no explanation looks broken rather than unconfigured.
+  DEBUG_PRINTF("[net] no network; opening setup portal '%s'" "\n",
+               WIFI_AP_NAME);
+  showMessage("WIFI", "SETUP", "join the network", WIFI_AP_NAME);
+
+  netState = NET_PORTAL;
+  WiFiManager wm;
+  wm.setHostname(WIFI_HOSTNAME);
+  wm.setConfigPortalTimeout(WIFI_PORTAL_S);
+  wm.setConfigPortalBlocking(true);
+  bool ok = wm.startConfigPortal(WIFI_AP_NAME);
+  netState = ok ? NET_UP : NET_DOWN;
+  if (!ok)
+    DEBUG_PRINTF("[net] portal timed out; carrying on offline" "\n");
+}
+
+#endif // NETWORK
+
 // SETTINGS ----------------------------------------------------------------
 // Stored in NVS, which already has a partition, so nothing else is needed.
 //
@@ -572,6 +686,46 @@ static void splashCenter(GFXcanvas1 &c, const char *str, uint8_t size,
 // README says whose perspective SELECT_L_PIN / SELECT_R_PIN were named
 // from.  The splash prints the chip-select pin alongside the label so the
 // mapping can be read off the panels once and settled here for good.
+// Push a 1-bit canvas to one panel, in whichever format it wants.  Shared by
+// the splash and by the network messages below.
+static void pushCanvas(uint8_t e, GFXcanvas1 &canvas) {
+#if USE_SSD1327
+  // 1 bit per pixel in, 4 bits per pixel out, two pixels to a byte.
+  static uint8_t buf[SSD1327_FRAME_BYTES];
+  uint16_t o = 0;
+  for (int16_t y = 0; y < SCREEN_HEIGHT; y++)
+    for (int16_t x = 0; x < SCREEN_WIDTH; x += 2, o++)
+      buf[o] = (uint8_t)((canvas.getPixel(x, y) ? 0xF0 : 0x00) |
+                         (canvas.getPixel(x + 1, y) ? 0x0F : 0x00));
+  SPI.beginTransaction(graySPI);
+  eye[e].display.pushFrame(buf);
+  SPI.endTransaction();
+#else
+  eye[e].display.drawBitmap(0, 0, canvas.getBuffer(), SCREEN_WIDTH,
+                            SCREEN_HEIGHT, 0xFFFF, 0x0000);
+#endif
+}
+
+// Four centred lines on both panels.  Used while the eyes are not running --
+// during the setup portal, for instance -- so the head is not just sitting
+// there dark with no explanation.
+static void showMessage(const char *l1, const char *l2, const char *l3,
+                        const char *l4) {
+  GFXcanvas1 canvas(SCREEN_WIDTH, SCREEN_HEIGHT);
+  canvas.fillScreen(0);
+  canvas.setTextColor(1);
+  if (l1)
+    splashCenter(canvas, l1, 2, 14);
+  if (l2)
+    splashCenter(canvas, l2, 2, 40);
+  if (l3)
+    splashCenter(canvas, l3, 1, 70);
+  if (l4)
+    splashCenter(canvas, l4, 1, 86);
+  for (uint8_t e = 0; e < NUM_EYES; e++)
+    pushCanvas(e, canvas);
+}
+
 static void showSplash(void) {
   // One 1-bit canvas serves both panel types: 2 KB, versus 32 KB for a
   // colour one, and the text is monochrome either way.
@@ -583,10 +737,6 @@ static void showSplash(void) {
   // shown because every previous attempt to write this down was ambiguous.
   static const char *const franksSide[2] = {"RIGHT", "LEFT"};
   static const char *const yourSide[2] = {"LEFT", "RIGHT"};
-#if USE_SSD1327
-  static uint8_t splashBuf[SSD1327_FRAME_BYTES];
-#endif
-
   DEBUG_PRINTF("[creeper-eyes] splash: naming panels for %d s\n",
                SPLASH_SECONDS);
 
@@ -603,20 +753,7 @@ static void showSplash(void) {
       splashCenter(canvas, yourSide[e & 1], 2, 78);
       splashCenter(canvas, digit, 3, 100);
 
-#if USE_SSD1327
-      // 1 bit per pixel out, 4 bits per pixel in, two pixels to a byte.
-      uint16_t o = 0;
-      for (int16_t y = 0; y < SCREEN_HEIGHT; y++)
-        for (int16_t x = 0; x < SCREEN_WIDTH; x += 2, o++)
-          splashBuf[o] = (uint8_t)((canvas.getPixel(x, y) ? 0xF0 : 0x00) |
-                                   (canvas.getPixel(x + 1, y) ? 0x0F : 0x00));
-      SPI.beginTransaction(graySPI);
-      eye[e].display.pushFrame(splashBuf);
-      SPI.endTransaction();
-#else
-      eye[e].display.drawBitmap(0, 0, canvas.getBuffer(), SCREEN_WIDTH,
-                                SCREEN_HEIGHT, 0xFFFF, 0x0000);
-#endif
+      pushCanvas(e, canvas);
     }
     delay(1000);
   }
@@ -712,6 +849,9 @@ void setup(void) {
 
 #if COMMANDS
   loadSettings(); // before the splash, so its labels are correct
+#endif
+#if NETWORK
+  setupNetwork(); // may block on the portal; the eyes wait
 #endif
 #if STARTUP_SPLASH
   showSplash();

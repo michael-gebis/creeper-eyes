@@ -3,3 +3,6 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+
+# Real credentials -- see include/secrets.h.example
+include/secrets.h
