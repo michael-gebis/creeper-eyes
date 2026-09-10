@@ -22,6 +22,75 @@
 #include <Preferences.h>    // NVS-backed settings, part of the ESP32 core
 #include <SPI.h>
 
+// DEBUG OUTPUT ------------------------------------------------------------
+// Set DEBUG to 0 to compile out all serial diagnostics (no code, no strings,
+// and Serial is never opened).  DEBUG_BAUD feeds Serial.begin() here and must
+// be kept in sync with monitor_speed in platformio.ini.
+
+#define DEBUG 1
+#define DEBUG_BAUD 115200
+// On-board user LED of the DOIT ESP32 DevKit V1, silkscreened "D2".
+// Not broken out to a header pin and unused by the eyes, so it is free.
+#define DEBUG_LED_PIN 2
+
+#if DEBUG
+#define DEBUG_BEGIN() Serial.begin(DEBUG_BAUD)
+#define DEBUG_PRINTF(...) Serial.printf(__VA_ARGS__)
+#else
+#define DEBUG_BEGIN()
+#define DEBUG_PRINTF(...)
+#endif
+
+// STARTUP SPLASH ----------------------------------------------------------
+// Names each panel on screen at boot, counting down, so you can tell which
+// physical display is on which chip select without tracing wires.  Set to 0
+// to boot straight into the eyes.
+
+#define STARTUP_SPLASH 1
+#define SPLASH_SECONDS 5
+
+// COMMAND CONSOLE ---------------------------------------------------------
+// A line-oriented console on the USB serial port -- the same cable that
+// powers the board -- so the eyes can be driven once the head is assembled
+// and the BOOT button is out of reach.  Type "help" in the serial monitor.
+
+#define COMMANDS 1
+
+// CLOCK FACE --------------------------------------------------------------
+// Turns the iris into an analogue clock.  There is no real time source yet,
+// so it free-runs from millis() and the time is set from the console; `clock
+// rate` speeds it up to see the hands move.
+//
+// Hands are found from the polar table the renderer already reads: the high
+// 9 bits are the angle and the low 7 the distance, so a pixel is on a hand
+// when its angle is near the hand's and it lies within the hand's length.
+// No trigonometry and no mask buffer -- two comparisons per hand.
+
+#define CLOCK 1
+
+// 12 o'clock is 128 in the polar table's 0-511 angle, increasing clockwise.
+#define CLOCK_NOON 128
+
+// Length is 0 at the centre to 127 at the iris edge; width is in angle units.
+#define CLOCK_HOUR_LEN 62
+#define CLOCK_HOUR_W 7
+#define CLOCK_MIN_LEN 94
+#define CLOCK_MIN_W 5
+#define CLOCK_SEC_LEN 110
+#define CLOCK_SEC_W 2
+
+// Yellow rather than red for the second hand: red drops to about a tenth
+// brightness under the greyscale luma conversion and vanishes.
+#define CLOCK_HOUR_COLOR 0xFFFF
+#define CLOCK_MIN_COLOR 0xFFFF
+#define CLOCK_SEC_COLOR 0xFFE0
+
+// BOOT button.  Grounded when pressed, external pull-up on the board.
+// GPIO0 is a strapping pin, but only during reset; reading it afterwards is
+// fine.  Not broken out to a header on the 30-pin DevKit -- the button is
+// the only access.
+#define BOOT_BUTTON_PIN 0
+
 // Which designs are built in -- see include/eyes_config.h.  The headers are
 // modified from Adafruit's originals so that several can be included at once,
 // each set of symbols carrying its own suffix.
@@ -211,6 +280,69 @@ static uint8_t eyeDesign = 0;
 static bool eyesSwapped = false;
 static bool swapPending = false;
 
+#if CLOCK
+
+static bool clockOn = false;
+static bool clockSeconds = true;
+static uint16_t clockRate = 1;              // 1 = real time
+static uint32_t clockBaseSec = 10 * 3600UL + 10 * 60UL; // 10:10, watch-ad time
+static uint32_t clockBaseMs = 0;
+static uint16_t clockHourAng, clockMinAng, clockSecAng;
+
+static void clockSet(uint32_t secOfDay) {
+  clockBaseSec = secOfDay % 86400UL;
+  clockBaseMs = millis();
+}
+
+static void clockUpdate(void) {
+  uint32_t elapsed = ((millis() - clockBaseMs) / 1000UL) * clockRate;
+  uint32_t t = (clockBaseSec + elapsed) % 86400UL;
+  uint32_t sec = t % 60, min = (t / 60) % 60, hr = (t / 3600) % 12;
+  clockSecAng = (uint16_t)((CLOCK_NOON + sec * 512UL / 60UL) % 512UL);
+  clockMinAng =
+      (uint16_t)((CLOCK_NOON + (min * 60UL + sec) * 512UL / 3600UL) % 512UL);
+  clockHourAng = (uint16_t)(
+      (CLOCK_NOON + (hr * 3600UL + min * 60UL + sec) * 512UL / 43200UL) % 512UL);
+}
+
+static uint32_t clockNow(void) {
+  uint32_t elapsed = ((millis() - clockBaseMs) / 1000UL) * clockRate;
+  return (clockBaseSec + elapsed) % 86400UL;
+}
+
+// Shortest separation on the 0-511 circle.
+static inline bool clockAngNear(uint16_t a, uint16_t b, uint16_t w) {
+  uint16_t d = (a > b) ? (uint16_t)(a - b) : (uint16_t)(b - a);
+  if (d > 256)
+    d = (uint16_t)(512 - d);
+  return d <= w;
+}
+
+// polarVal is a raw entry from the polar table.  Returns true and sets *out
+// when the pixel falls on a hand.  Second hand is tested first so it draws
+// over the others.
+static inline bool clockHandPixel(uint16_t polarVal, uint16_t *out) {
+  uint8_t dist = (uint8_t)(127 - (polarVal & 0x7F)); // 0 centre .. 127 edge
+  uint16_t ang = (uint16_t)(polarVal >> 7);
+
+  if (clockSeconds && dist <= CLOCK_SEC_LEN &&
+      clockAngNear(ang, clockSecAng, CLOCK_SEC_W)) {
+    *out = CLOCK_SEC_COLOR;
+    return true;
+  }
+  if (dist <= CLOCK_MIN_LEN && clockAngNear(ang, clockMinAng, CLOCK_MIN_W)) {
+    *out = CLOCK_MIN_COLOR;
+    return true;
+  }
+  if (dist <= CLOCK_HOUR_LEN && clockAngNear(ang, clockHourAng, CLOCK_HOUR_W)) {
+    *out = CLOCK_HOUR_COLOR;
+    return true;
+  }
+  return false;
+}
+
+#endif // CLOCK
+
 // SETTINGS ----------------------------------------------------------------
 // Stored in NVS, which already has a partition, so nothing else is needed.
 //
@@ -296,46 +428,6 @@ typedef SwappableSSD1351 displayType; // Using OLED display(s)
 #define SELECT_L_PIN 15  // viewer's left  = Frank's RIGHT eye
 #define SELECT_R_PIN 04  // viewer's right = Frank's LEFT eye
 #define UART_RX_PIN 13   // Pin to receive UART commands from controller
-
-// DEBUG OUTPUT ------------------------------------------------------------
-// Set DEBUG to 0 to compile out all serial diagnostics (no code, no strings,
-// and Serial is never opened).  DEBUG_BAUD feeds Serial.begin() here and must
-// be kept in sync with monitor_speed in platformio.ini.
-
-#define DEBUG 1
-#define DEBUG_BAUD 115200
-// On-board user LED of the DOIT ESP32 DevKit V1, silkscreened "D2".
-// Not broken out to a header pin and unused by the eyes, so it is free.
-#define DEBUG_LED_PIN 2
-
-#if DEBUG
-#define DEBUG_BEGIN() Serial.begin(DEBUG_BAUD)
-#define DEBUG_PRINTF(...) Serial.printf(__VA_ARGS__)
-#else
-#define DEBUG_BEGIN()
-#define DEBUG_PRINTF(...)
-#endif
-
-// STARTUP SPLASH ----------------------------------------------------------
-// Names each panel on screen at boot, counting down, so you can tell which
-// physical display is on which chip select without tracing wires.  Set to 0
-// to boot straight into the eyes.
-
-#define STARTUP_SPLASH 1
-#define SPLASH_SECONDS 5
-
-// COMMAND CONSOLE ---------------------------------------------------------
-// A line-oriented console on the USB serial port -- the same cable that
-// powers the board -- so the eyes can be driven once the head is assembled
-// and the BOOT button is out of reach.  Type "help" in the serial monitor.
-
-#define COMMANDS 1
-
-// BOOT button.  Grounded when pressed, external pull-up on the board.
-// GPIO0 is a strapping pin, but only during reset; reading it afterwards is
-// fine.  Not broken out to a header on the 30-pin DevKit -- the button is
-// the only access.
-#define BOOT_BUTTON_PIN 0
 
 // INPUT CONFIG (for eye motion -- enable or comment out as needed) --------
 
@@ -612,13 +704,23 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
                  (irisX >= IRIS_WIDTH)) { // In sclera
         p = sclera[scleraY][scleraX];
       } else {                                   // Maybe iris...
-        p = polar[irisY][irisX];                 // Polar angle/dist
-        d = (iScale * (p & 0x7F)) / 128;         // Distance (Y)
-        if (d < IRIS_MAP_HEIGHT) {               // Within iris area
-          a = (IRIS_MAP_WIDTH * (p >> 7)) / 512; // Angle (X)
-          p = iris[d][a];                        // Pixel = iris
-        } else {                                 // Not in iris
-          p = sclera[scleraY][scleraX];          // Pixel = sclera
+        p = polar[irisY][irisX]; // Polar angle/dist
+        uint16_t hand;
+#if CLOCK
+        // Hands are drawn across the whole iris disc, pupil included,
+        // otherwise they would be cut off by the pupil hole.
+        if (clockOn && (p & 0x7F) < 127 && clockHandPixel(p, &hand)) {
+          p = hand;
+        } else
+#endif
+        {
+          d = (iScale * (p & 0x7F)) / 128;         // Distance (Y)
+          if (d < IRIS_MAP_HEIGHT) {               // Within iris area
+            a = (IRIS_MAP_WIDTH * (p >> 7)) / 512; // Angle (X)
+            p = iris[d][a];                        // Pixel = iris
+          } else {                                 // Not in iris
+            p = sclera[scleraY][scleraX];          // Pixel = sclera
+          }
         }
       }
       pBurst[screenY * SCREEN_WIDTH + screenX] = p;
@@ -839,6 +941,7 @@ static void cmdHelp(void) {
                  "  dilate auto               return to autonomous dilation\n"
                  "  startle                   constrict, then snap wide "
                  "with a blink\n"
+                 "  clock [on|off|set|rate]   analogue clock in the iris\n"
                  "  swap [on|off]             swap which panel is which "
                  "eye\n"
                  "  save                      remember eye and swap "
@@ -940,6 +1043,54 @@ static void handleCommand(char *line) {
     gazeCmdActive = true;
     gazeCmdPending = true;
     Serial.printf("ok gaze=(%ld,%ld)\n", x, y);
+#if CLOCK
+  } else if (!strcmp(cmd, "clock")) {
+    char *arg = strtok(NULL, " \t");
+    if (!arg) {
+      uint32_t t = clockNow();
+      Serial.printf("clock %s %02u:%02u:%02u rate=%ux seconds=%s\n",
+                    clockOn ? "on" : "off", (unsigned)(t / 3600),
+                    (unsigned)((t / 60) % 60), (unsigned)(t % 60),
+                    (unsigned)clockRate, clockSeconds ? "on" : "off");
+      return;
+    }
+    for (char *c = arg; *c; c++)
+      *c = (char)tolower((unsigned char)*c);
+
+    if (!strcmp(arg, "on") || !strcmp(arg, "off")) {
+      clockOn = !strcmp(arg, "on");
+      Serial.printf("ok clock=%s\n", clockOn ? "on" : "off");
+    } else if (!strcmp(arg, "set")) {
+      char *v = strtok(NULL, " \t");
+      unsigned h = 0, m = 0, sec = 0;
+      if (!v || sscanf(v, "%u:%u:%u", &h, &m, &sec) < 2) {
+        Serial.println(F("usage: clock set HH:MM[:SS]"));
+        return;
+      }
+      if (h > 23 || m > 59 || sec > 59) {
+        Serial.println(F("err: out of range"));
+        return;
+      }
+      clockSet(h * 3600UL + m * 60UL + sec);
+      Serial.printf("ok clock set %02u:%02u:%02u\n", h, m, sec);
+    } else if (!strcmp(arg, "rate")) {
+      char *v = strtok(NULL, " \t");
+      long r = v ? atol(v) : 0;
+      if (r < 1 || r > 3600) {
+        Serial.println(F("usage: clock rate <1-3600>"));
+        return;
+      }
+      clockSet(clockNow()); // rebase so the jump is not retroactive
+      clockRate = (uint16_t)r;
+      Serial.printf("ok clock rate=%ldx\n", r);
+    } else if (!strcmp(arg, "secs")) {
+      char *v = strtok(NULL, " \t");
+      clockSeconds = !(v && !strcmp(v, "off"));
+      Serial.printf("ok seconds=%s\n", clockSeconds ? "on" : "off");
+    } else {
+      Serial.println(F("usage: clock [on|off|set HH:MM[:SS]|rate N|secs on|off]"));
+    }
+#endif
   } else if (!strcmp(cmd, "swap")) {
     char *arg = strtok(NULL, " \t");
     bool want = !eyesSwapped;
@@ -1061,6 +1212,11 @@ void frame(            // Process motion for a single frame of left or right eye
 #if COMMANDS
   pollCommands();
   pollBootButton();
+
+#if CLOCK
+  if (clockOn)
+    clockUpdate();
+#endif
 
   if (swapPending) { // between frames, never mid-transaction
     swapPending = false;
