@@ -15,7 +15,8 @@ effect — without opening the head up.
 - **Serial command console** over the USB cable that already powers the board
 - **Analogue clock face** rendered in the iris, on real time from NTP
 - **WiFi** with a setup portal, reachable at `frank.local`
-- **Web interface** exposing every console command
+- **Web control page** for every eye, gaze, pupil and clock setting
+- **JSON REST API** at `/api/v1`, so other programs can drive Frank too
 - **Over-the-air updates**, so a sealed head never needs opening
 - **Startup splash** naming each panel, so you never have to trace wires
 - **BOOT button** toggles between the two eye designs
@@ -125,12 +126,14 @@ If the port is picked wrongly, pin it in `platformio.ini` with
 
 ## Build options
 
-Compile-time switches, all in `src/main.cpp` unless noted.
+Compile-time switches. All of them live in [`src/config.h`](src/config.h),
+and each is `#ifndef`-guarded, so any of them can also be overridden from
+`build_flags` in `platformio.ini` without editing a source file.
 
 | Option | Default | Effect |
 | :----- | :------ | :----- |
 | `USE_SSD1327` | `0` | Selects the grayscale panel driver. Set by the `gray` environment via `build_flags`, not edited by hand. |
-| `COMMANDS` | `1` | Serial console and BOOT-button toggle. `0` compiles both out. |
+| `COMMANDS` | `1` | Serial console and BOOT-button toggle. `0` compiles both out; the REST API still works, so a network build stays fully controllable. |
 | `DEBUG` | `1` | Serial diagnostics and the 1 Hz LED heartbeat. `0` saves ~17 KB. |
 | `DEBUG_BAUD` | `115200` | Console speed. **Must match `monitor_speed`** in `platformio.ini`. |
 | `DEBUG_LED_PIN` | `2` | On-board LED used for the heartbeat. |
@@ -143,6 +146,7 @@ Compile-time switches, all in `src/main.cpp` unless noted.
 | `CLOCK_*_LEN` / `CLOCK_*_HW` | — | Hand lengths and half-widths, in pixels from the iris centre. |
 | `PUPIL_OFF_SCALE` | `64` | Iris scale used when the pupil is off. At or below 64 the pupil vanishes. |
 | `NETWORK` | `1` | WiFi, NTP, web server and OTA. `0` compiles all of it out, saving ~535 KB. |
+| `WEB_CMD_ENDPOINT` | `1` | The `/cmd` escape hatch. `0` leaves only the REST API. Needs `COMMANDS`, since it is a passthrough to the console. |
 | `WIFI_HOSTNAME` | `frank` | DHCP and mDNS name. |
 | `WIFI_CONNECT_MS` | `15000` | How long to wait on a known network before opening the portal. |
 | `WIFI_PORTAL_S` | `180` | How long the portal stays up before carrying on offline. |
@@ -160,6 +164,13 @@ Inherited from upstream, unchanged:
 Pin assignments (`DISPLAY_DC`, `DISPLAY_RESET`, `SELECT_L_PIN`, `SELECT_R_PIN`,
 `MOSI_PIN`, `SCLK_PIN`) are wiring, not preference — change them only if you
 wire differently, and update [docs/WIRING.md](docs/WIRING.md) to match.
+
+One switch is derived rather than set: `CONTROLLABLE` is `COMMANDS || NETWORK`,
+and gates the machinery both interfaces share — the operations layer in
+[`src/state.h`](src/state.h), the settings it persists, and the state the
+renderer reads. Turning off *both* interfaces leaves the eyes running on their
+own with nothing able to change them, which builds and works but is only
+useful if you want a prop with no controls at all.
 
 ## Serial console
 
@@ -187,6 +198,7 @@ Open `pio device monitor` and type `help`. Commands are line-based at 115200.
 | `save` | Remember the eye design and swap across reboots |
 | `forget` | Clear saved settings |
 | `net [quiet]` | Address info, on the panels too |
+| `net off` | Dismiss the address cards early |
 | `tz [zone]` | Timezone by name or POSIX string |
 | `splash` | Re-show the panel name cards |
 | `status` | Current eye, gaze, dilation, heap, uptime, frame rate |
@@ -394,8 +406,8 @@ which chip select without getting at the wires.
 
 ## Network
 
-The board joins WiFi at boot, answers to **`frank.local`**, serves a web
-interface, and accepts firmware over the air.
+The board joins WiFi at boot, answers to **`frank.local`**, serves a control
+page and a REST API, and accepts firmware over the air.
 
 ### Credentials
 
@@ -451,20 +463,83 @@ they drive the free-running fallback, which is no longer what feeds the hands.
 
 ### Web interface
 
-**http://frank.local/** — status, one-click buttons, and a box to run any
-console command. `/cmd?c=<command>` runs one directly:
+**http://frank.local/** — a control page for everything the console can do:
+eye design, gaze, dilation, pupil, panel swap, clock, timezone, and the
+address details. It polls the device once a second, so two browsers looking
+at it stay in step with each other and with anything you type over serial.
+
+The page is static — one 8 KB string in [`src/page.h`](src/page.h), served
+straight out of flash. Everything on it is drawn from the API below, so there
+is no markup anywhere that has to be kept in step with device state.
+
+Requests are served from the render loop, so each one costs a dropped frame
+or two. That is why the page polls at a leisurely rate and the responses are
+kept small.
+
+### REST API
+
+Everything the page does, `curl` can do. **`/api/v1`**, JSON in and JSON out,
+CORS open so a page served from anywhere can drive the device.
+
+| Method | Path | What it does |
+| :----- | :--- | :----------- |
+| `GET` | `/api/v1/state` | Everything at once — what the page polls |
+| `GET` | `/api/v1/eyes` | The eye designs this firmware was built with |
+| `GET` | `/api/v1/net` | MAC, addresses, signal, sync state |
+| `GET` `PUT` | `/api/v1/eye` | `{"name":"dragon"}`, `{"index":2}` or `{"next":true}` |
+| `GET` `PUT` | `/api/v1/gaze` | `{"x":200,"y":800}` or `{"mode":"auto"}` |
+| `GET` `PUT` | `/api/v1/dilate` | `{"percent":40}` or `{"mode":"auto"}` |
+| `GET` `PUT` | `/api/v1/pupil` | `{"on":false}` |
+| `GET` `PUT` | `/api/v1/swap` | `{"on":true}` — swaps left and right panels |
+| `GET` `PUT` | `/api/v1/clock` | `on`, `seconds`, `rate`, `time`, `colors` — any subset |
+| `GET` `PUT` | `/api/v1/netinfo` | `{"on":true}` — address cards on the panels |
+| `GET` `PUT` | `/api/v1/tz` | `{"tz":"pacific"}` or any POSIX string |
+| `POST` | `/api/v1/action` | `{"action":"blink"}` — also `startle`, `splash`, `netinfo` |
+| `POST` | `/api/v1/settings` | `{"op":"save"}` or `{"op":"forget"}` |
 
 ```sh
-curl "http://frank.local/cmd?c=eye+dragon"
+# A body must be sent as JSON -- curl defaults to form encoding, which the
+# ESP32 web server consumes before a handler ever sees it.
+alias frank='curl -sH "Content-Type: application/json" http://frank.local/api/v1'
+
+frank/state
+frank/eye    -X PUT  -d '{"name":"dragon"}'
+frank/gaze   -X PUT  -d '{"x":200,"y":800}'
+frank/clock  -X PUT  -d '{"on":true,"colors":{"second":"FF8800"}}'
+frank/action -X POST -d '{"action":"startle"}'
+```
+
+A `PUT` returns the resource as it now stands, so there is no need to `GET`
+afterwards to find out what happened. Failures carry a reason:
+
+```json
+{"error": "x and y must each be 0-1023"}
+```
+
+`400` for a bad body or an out-of-range value, `404` for an eye design this
+build does not contain, `405` for the wrong verb on a real path.
+
+Gaze runs `0`–`1023` on each axis with **`y=1023` at the top**, the way a
+joystick reads rather than the way a screen does. `512 512` is centre. The
+control page flips it so that dragging up looks up.
+
+There is no authentication. Anything that can reach the board can drive it,
+which is the right trade for a prop on a home network and the wrong one for
+anywhere else.
+
+### The `/cmd` escape hatch
+
+For anything the API does not model yet, `/cmd?c=<command>` hands a line
+straight to the console's dispatcher:
+
+```sh
+curl "http://frank.local/cmd?c=help"
 curl "http://frank.local/cmd?c=status"
 ```
 
-There is no second implementation: the web server feeds the same dispatcher
-the serial console uses, so every command works over both, and anything added
-later works over both automatically.
-
-Requests are served from the render loop, so a response costs a dropped frame
-or two. Pages are kept small for that reason.
+It returns plain text, not JSON, and it is a convenience rather than an
+interface — prefer the API for anything you are writing against. Set
+`WEB_CMD_ENDPOINT` to `0` to leave it out.
 
 ### Address info on the panels
 
@@ -472,6 +547,11 @@ or two. Pages are kept small for that reason.
 right shows MAC, IPv4 and signal, his left shows IPv6 and the mDNS name. A
 link-local IPv6 address is 39 characters and a panel holds 21, so it is
 wrapped rather than truncated, and split across the two displays.
+
+Twelve seconds is a long time to stare at a MAC address, so the cards can be
+dismissed: `net off` over serial, the same button on the control page, or
+`PUT /api/v1/netinfo {"on":false}`. `net quiet` reports without touching the
+panels at all.
 
 ### Over-the-air updates
 

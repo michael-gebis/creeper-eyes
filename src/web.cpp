@@ -1,6 +1,9 @@
-// The web interface and over-the-air updates.  Both are thin: /cmd hands
-// straight to the console's dispatcher, so every command works over HTTP the
-// moment it is added and there is no second implementation to keep in step.
+// The web server and over-the-air updates.
+//
+// This module owns the HTTP server and serves the control page; api.cpp
+// hangs /api/v1 off the same server, and everything the page shows or does
+// goes through that API.  The page itself is a static string in flash, so
+// there is no markup here that has to be kept in step with device state.
 
 #include "config.h"
 
@@ -9,23 +12,27 @@
 #include "console.h"
 #include "display.h"
 #include "net.h"
+#include "page.h"
 #include <ArduinoOTA.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
 #include <WiFi.h>
 
 // WEB SERVER ---------------------------------------------------------------
-// Deliberately thin.  /cmd feeds the same dispatcher the serial console uses,
-// so every command is available over HTTP the moment it is added, and there
-// is no second implementation to keep in step.
-//
 // handleClient() is polled from frame(), not loop(): loop() spends ~10 s
 // inside split() per iteration, so a request handled there would sit unserved
 // for up to ten seconds.  The cost is that writing a response blocks
-// rendering, which is why the pages are kept small.
+// rendering, which is why responses are kept small and the page polls at a
+// leisurely once a second.
 
 // Not static: api.cpp hangs its routes off this one.
 WebServer server(80);
+
+#if WEB_CMD_ENDPOINT && COMMANDS
+
+// The escape hatch: hands a line straight to the console's dispatcher, so
+// every serial command is reachable over HTTP.  Useful for anything the REST
+// API does not model yet, and disabled by setting WEB_CMD_ENDPOINT to 0.
 
 // Collects a command's output so it can be sent as one response.
 class StringPrint : public Print {
@@ -57,51 +64,13 @@ void webHandleCmd(void) {
   server.send(200, "text/plain", out.buf);
 }
 
-void webHandleRoot(void) {
-  StringPrint st, nt;
-  cmdStatus(st);
-  netReport(nt);
+#endif // WEB_CMD_ENDPOINT && COMMANDS
 
-  String h;
-  h.reserve(2048);
-  h += F("<!doctype html><meta name=viewport content='width=device-width,"
-         "initial-scale=1'><title>frank</title><style>"
-         "body{font:14px system-ui;margin:0;padding:16px;background:#14161a;"
-         "color:#e6e8eb}h1{font-size:20px;margin:0 0 12px}"
-         "pre{background:#1d2026;padding:10px;border-radius:6px;overflow-x:auto}"
-         "a,button{display:inline-block;margin:2px;padding:6px 10px;"
-         "background:#2a2f38;color:#e6e8eb;border:0;border-radius:5px;"
-         "text-decoration:none;cursor:pointer}"
-         "form{margin:12px 0}input{padding:6px;width:60%;background:#1d2026;"
-         "color:#e6e8eb;border:1px solid #2a2f38;border-radius:5px}</style>"
-         "<h1>frank</h1><pre>");
-  h += st.buf;
-  h += nt.buf;
-  h += F("</pre>"
-         "<div>"
-         "<a href='/cmd?c=eye+next'>next eye</a>"
-         "<a href='/cmd?c=blink'>blink</a>"
-         "<a href='/cmd?c=startle'>startle</a>"
-         "<a href='/cmd?c=clock+on'>clock on</a>"
-         "<a href='/cmd?c=clock+off'>clock off</a>"
-         "<a href='/cmd?c=pupil'>toggle pupil</a>"
-         "<a href='/cmd?c=net'>show address</a>"
-         "<a href='/cmd?c=save'>save</a>"
-         "</div><div>");
-  h += F("<b style='opacity:.6'>timezone:</b> ");
-  for (uint8_t i = 0; i < numTzChoices; i++) {
-    h += "<a href='/cmd?c=tz+";
-    h += tzChoices[i].name;
-    h += "'>";
-    h += tzChoices[i].name;
-    h += "</a>";
-  }
-  h += F("</div>"
-         "<form action='/cmd'><input name='c' placeholder='any console command, "
-         "e.g. look 200 800' autofocus><button>run</button></form>"
-         "<p style='opacity:.6'>Every serial command works here. "
-         "<a href='/cmd?c=help'>help</a></p>");
-  server.send(200, "text/html", h);
+// The control page.  Served straight out of flash -- it is the same bytes
+// every time, and building it per request would cost RAM the renderer
+// wants and put device state back into C++ string concatenation.
+void webHandleRoot(void) {
+  server.send_P(200, "text/html", CONTROL_PAGE);
 }
 
 // OVER-THE-AIR UPDATES ------------------------------------------------------
@@ -151,7 +120,7 @@ void otaBegin(void) {
 
 void webBegin(void) {
   server.on("/", webHandleRoot);
-#if WEB_CMD_ENDPOINT
+#if WEB_CMD_ENDPOINT && COMMANDS
   server.on("/cmd", webHandleCmd);
 #endif
   apiRegister(server);
