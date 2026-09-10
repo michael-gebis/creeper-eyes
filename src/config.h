@@ -184,6 +184,16 @@
 #define FIRMWARE_COMMIT GIT_REV
 #endif
 
+// Which tab icon the control page carries.  FAVICON_FRANK is the monster's
+// head; FAVICON_EYES is the two panels on their own, for a build going into
+// something that is not a Frankenstein.  Both live in src/favicon.h and only
+// the chosen one is compiled in.
+#define FAVICON_FRANK 0
+#define FAVICON_EYES 1
+#ifndef FAVICON
+#define FAVICON FAVICON_FRANK
+#endif
+
 // IPv6.  All of it: bringing the address up, reporting it, and printing it
 // on the address cards.  Off, and not yet selectable.
 //

@@ -146,6 +146,7 @@ and each is `#ifndef`-guarded, so any of them can also be overridden from
 | `CLOCK_*_LEN` / `CLOCK_*_HW` | — | Hand lengths and half-widths, in pixels from the iris centre. |
 | `PUPIL_OFF_SCALE` | `64` | Iris scale used when the pupil is off. At or below 64 the pupil vanishes. |
 | `NETWORK` | `1` | WiFi, NTP, web server and OTA. `0` compiles all of it out, saving ~535 KB. |
+| `FAVICON` | `FAVICON_FRANK` | Tab icon. `FAVICON_EYES` is a generic alternative for a build that is not going into a Frankenstein. |
 | `IPV6` | `0` | All of IPv6, compiled out. Cannot usefully be turned on yet — see [IPv6](#ipv6). |
 | `FIRMWARE_VERSION` | `1.0` | Bumped by hand, for features worth announcing. |
 | `WEB_CMD_ENDPOINT` | `1` | The `/cmd` escape hatch. `0` leaves only the REST API. Needs `COMMANDS`, since it is a passthrough to the console. |
@@ -518,7 +519,11 @@ persistent, session only, or momentary — because that is the first question
 anyone asks of a control they have just moved.
 
 The page is static: one 17 KB string in [`src/page.h`](src/page.h), served
-straight out of flash. Everything on it is drawn from the API below, so there
+straight out of flash. Its tab icon is an inline SVG `data:` URI from
+[`src/favicon.h`](src/favicon.h) rather than a `/favicon.ico` route — no
+second handler, and no second request against a server that manages one
+client at a time. Two are bundled: Frank's head, and just the eyes for a
+build going into something that is not a Frankenstein. Pick with `FAVICON`. Everything on it is drawn from the API below, so there
 is no markup anywhere that has to be kept in step with device state.
 
 Requests are served from the render loop, so each one costs a dropped frame

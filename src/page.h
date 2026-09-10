@@ -17,11 +17,13 @@
 #ifndef PAGE_H
 #define PAGE_H
 
+#include "favicon.h"
 #include <pgmspace.h>
 
 static const char CONTROL_PAGE[] PROGMEM = R"HTML(<!doctype html>
 <html lang=en><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
+<link rel=icon href=")HTML" FAVICON_URI R"HTML(">
 <title>frank</title>
 <style>
 :root{--bg:#14161a;--card:#1d2026;--line:#2a2f38;--ink:#e6e8eb;--dim:#8b93a1;
