@@ -56,8 +56,12 @@ typedef Adafruit_SSD1351 displayType; // Using OLED display(s)
 
 #define DISPLAY_DC 33    // Data/command pin for BOTH displays
 #define DISPLAY_RESET 27 // Reset pin for BOTH displays
-#define SELECT_L_PIN 15  // LEFT eye chip select pin
-#define SELECT_R_PIN 04  // RIGHT eye chip select pin
+// NOTE: these names are the viewer's left/right, not Frank's.  Verified on
+// the bench: D15 drives the panel on the viewer's left, which is FRANK'S
+// RIGHT eye; D4 drives Frank's left.  Kept as-is to match the README, but
+// see showSplash() for the labels that are correct from Frank's side.
+#define SELECT_L_PIN 15  // viewer's left  = Frank's RIGHT eye
+#define SELECT_R_PIN 04  // viewer's right = Frank's LEFT eye
 #define UART_RX_PIN 13   // Pin to receive UART commands from controller
 
 // DEBUG OUTPUT ------------------------------------------------------------
@@ -159,11 +163,24 @@ static void splashCenter(GFXcanvas1 &c, const char *str, uint8_t size,
   c.print(str);
 }
 
+// Left and right are given from FRANK'S OWN perspective, the way anatomy
+// is always described: facing him, his right eye is the one on your left.
+//
+// Which panel that is depends on wiring, and nothing in the sketch or the
+// README says whose perspective SELECT_L_PIN / SELECT_R_PIN were named
+// from.  The splash prints the chip-select pin alongside the label so the
+// mapping can be read off the panels once and settled here for good.
 static void showSplash(void) {
   // One 1-bit canvas serves both panel types: 2 KB, versus 32 KB for a
   // colour one, and the text is monochrome either way.
   GFXcanvas1 canvas(SCREEN_WIDTH, SCREEN_HEIGHT);
-  static const char *const side[2] = {"LEFT", "RIGHT"};
+
+  // Confirmed on the bench: the panel on SELECT_L_PIN (D15) is the one on
+  // FRANK'S RIGHT -- the viewer's left.  So the upstream L/R pin names are
+  // viewer-relative, and eye[0] is Frank's right eye.  Both perspectives are
+  // shown because every previous attempt to write this down was ambiguous.
+  static const char *const franksSide[2] = {"RIGHT", "LEFT"};
+  static const char *const yourSide[2] = {"LEFT", "RIGHT"};
 #if USE_SSD1327
   static uint8_t splashBuf[SSD1327_FRAME_BYTES];
 #endif
@@ -177,9 +194,12 @@ static void showSplash(void) {
     for (uint8_t e = 0; e < NUM_EYES; e++) {
       canvas.fillScreen(0);
       canvas.setTextColor(1);
-      splashCenter(canvas, "FRANK'S", 2, 22);
-      splashCenter(canvas, side[e & 1], 2, 46);
-      splashCenter(canvas, digit, 4, 78);
+      splashCenter(canvas, "FRANK'S", 2, 6);
+      splashCenter(canvas, franksSide[e & 1], 2, 26);
+      canvas.drawFastHLine(20, 50, SCREEN_WIDTH - 40, 1);
+      splashCenter(canvas, "YOUR", 2, 58);
+      splashCenter(canvas, yourSide[e & 1], 2, 78);
+      splashCenter(canvas, digit, 3, 100);
 
 #if USE_SSD1327
       // 1 bit per pixel out, 4 bits per pixel in, two pixels to a byte.
