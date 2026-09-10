@@ -13,7 +13,10 @@ effect — without opening the head up.
 - **Runs on a generic ESP32 dev board**, not just the Adafruit Feather
 - **Two panel types supported** — SSD1351 colour and SSD1327 grayscale
 - **Serial command console** over the USB cable that already powers the board
-- **Analogue clock face** rendered in the iris (experimental)
+- **Analogue clock face** rendered in the iris, on real time from NTP
+- **WiFi** with a setup portal, reachable at `frank.local`
+- **Web interface** exposing every console command
+- **Over-the-air updates**, so a sealed head never needs opening
 - **Startup splash** naming each panel, so you never have to trace wires
 - **BOOT button** toggles between the two eye designs
 - **25 eye designs** to choose from, selected at build time
@@ -105,6 +108,7 @@ libraries — downloads automatically on the first build.
 | `gray` | Eyes, SSD1327 grayscale | Waveshare 1.5inch OLED |
 | `displaytest` | Solid-colour fills, SSD1351 | Bring-up and fault isolation |
 | `probe1327` | Raw SSD1327 init, no library | Identifying an unknown panel |
+| `esp32dev_ota` / `gray_ota` | Same firmware, flashed over WiFi | Updating a sealed head |
 
 ### Commands
 
@@ -138,6 +142,11 @@ Compile-time switches, all in `src/main.cpp` unless noted.
 | `CLOCK` | `1` | Analogue clock face. `0` compiles it out. |
 | `CLOCK_*_LEN` / `CLOCK_*_HW` | — | Hand lengths and half-widths, in pixels from the iris centre. |
 | `PUPIL_OFF_SCALE` | `64` | Iris scale used when the pupil is off. At or below 64 the pupil vanishes. |
+| `NETWORK` | `1` | WiFi, NTP, web server and OTA. `0` compiles all of it out, saving ~535 KB. |
+| `WIFI_HOSTNAME` | `frank` | DHCP and mDNS name. |
+| `WIFI_CONNECT_MS` | `15000` | How long to wait on a known network before opening the portal. |
+| `WIFI_PORTAL_S` | `180` | How long the portal stays up before carrying on offline. |
+| `TZ_DEFAULT` | US Pacific | Timezone before one is saved. |
 | `STARTLE_HOLD_MS` | `1200` | How long the eyes stay wide afterwards. |
 
 Inherited from upstream, unchanged:
@@ -177,6 +186,8 @@ Open `pio device monitor` and type `help`. Commands are line-based at 115200.
 | `swap [on\|off]` | Swap which physical panel is which eye |
 | `save` | Remember the eye design and swap across reboots |
 | `forget` | Clear saved settings |
+| `net [quiet]` | Address info, on the panels too |
+| `tz [zone]` | Timezone by name or POSIX string |
 | `splash` | Re-show the panel name cards |
 | `status` | Current eye, gaze, dilation, heap, uptime, frame rate |
 | `help` | The list above |
@@ -293,6 +304,7 @@ ok saved eye=dragon swap=on
 | Panel swap | Gaze (`look`) |
 | Pupil on/off | Dilation (`dilate`) |
 | Clock on/off, rate, second hand, hand colours | |
+| Timezone | |
 
 Gaze and dilation are deliberately transient — they are things you drive,
 not things you configure.
@@ -379,6 +391,108 @@ At boot, each panel names itself for five seconds:
 Both perspectives are shown because "left eye" is ambiguous in every wiring
 table ever written. This is the quickest way to confirm which panel is on
 which chip select without getting at the wires.
+
+## Network
+
+The board joins WiFi at boot, answers to **`frank.local`**, serves a web
+interface, and accepts firmware over the air.
+
+### Credentials
+
+Copy the template and fill it in — it is gitignored, so nothing secret is ever
+committed:
+
+```sh
+cp include/secrets.h.example include/secrets.h
+```
+
+```c
+#define WIFI_SSID "YourNetwork"
+#define WIFI_PASS "YourPassword"
+```
+
+It is optional. A build without it still compiles, and an unconfigured board
+opens a **setup portal** instead: join the `frank-setup` network from a phone
+and pick your WiFi. The panels display the network name while the portal is
+up, so a head sitting there is not a mystery.
+
+Three sources are tried in order of how deliberate they are: whatever the
+portal last stored, then the build-time defaults, then the portal. Stored
+credentials win because they were an explicit choice made on that device.
+
+Nothing here is fatal — a board that cannot reach a network carries on being a
+pair of eyes.
+
+> **Why a header rather than `secrets.ini` and `build_flags`**, which would be
+> the more idiomatic PlatformIO route: `build_flags` are processed by SCons,
+> which uses `$` as its own substitution character. A password containing `$`
+> is silently truncated there — no error, just a shorter string and a board
+> that will not associate. Doubling the `$` does not help. The preprocessor
+> reads a header directly, so only ordinary C string escaping applies.
+
+### Time
+
+Taken from NTP once connected. The timezone is a POSIX string, which carries
+the DST **rules** rather than a fixed offset, so the changeover happens by
+itself:
+
+```
+> tz pacific
+ok tz=PST8PDT,M3.2.0/2,M11.1.0/2
+> save
+```
+
+Named zones: `pacific` `mountain` `arizona` `central` `eastern` `alaska`
+`hawaii` `uk` `europe` `utc` — or pass any POSIX string for anywhere else.
+Defaults to US Pacific, and is persisted.
+
+Once time is synced, `clock set` and `clock rate` stop having any effect:
+they drive the free-running fallback, which is no longer what feeds the hands.
+
+### Web interface
+
+**http://frank.local/** — status, one-click buttons, and a box to run any
+console command. `/cmd?c=<command>` runs one directly:
+
+```sh
+curl "http://frank.local/cmd?c=eye+dragon"
+curl "http://frank.local/cmd?c=status"
+```
+
+There is no second implementation: the web server feeds the same dispatcher
+the serial console uses, so every command works over both, and anything added
+later works over both automatically.
+
+Requests are served from the render loop, so a response costs a dropped frame
+or two. Pages are kept small for that reason.
+
+### Address info on the panels
+
+`net` reports over serial and paints both panels for twelve seconds — Frank's
+right shows MAC, IPv4 and signal, his left shows IPv6 and the mDNS name. A
+link-local IPv6 address is 39 characters and a panel holds 21, so it is
+wrapped rather than truncated, and split across the two displays.
+
+### Over-the-air updates
+
+```sh
+pio run -e gray_ota -t upload
+```
+
+Progress shows on the panels. The eyes stop during the transfer — that is
+expected, not a hang.
+
+Two things bite on Windows:
+
+- **`frank.local` will not resolve** unless Bonjour is installed; Windows has
+  no mDNS resolver of its own. The device advertises correctly. Use the
+  address instead: `--upload-port 192.168.1.50`.
+- **"No response from device"** means espota advertised the wrong local
+  interface for the board to call back to, which happens when VMware, WSL or
+  VirtualBox have each added one. Pin it with
+  `upload_flags = --host_ip=192.168.1.20`.
+
+macOS and Linux need neither workaround.
 
 ## Troubleshooting
 
