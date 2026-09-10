@@ -21,19 +21,62 @@
 #include <HardwareSerial.h> // Needed for 2nd serial port on ESP32
 #include <SPI.h>
 
-// Slightly modified headers in the eye include files to be able to include 2
-// and switch between them The ESP32 has a lot of memory, so this works fine
+// Which designs are built in -- see include/eyes_config.h.  The headers are
+// modified from Adafruit's originals so that several can be included at once,
+// each set of symbols carrying its own suffix.
+#include "eyes_config.h"
+
+#if EYE_DEFAULT
 #include "defaultEye.h" // Standard human-ish hazel eye
-#include "newtEye.h"    // Eye of newt
+#endif
+#if EYE_NEWT
+#include "newtEye.h" // Eye of newt
+#endif
 
-const uint16_t (*sclera)[SCLERA_WIDTH] = scleraDefault;
-const uint8_t (*upper)[SCREEN_WIDTH] = upperDefault;
-const uint8_t (*lower)[SCREEN_WIDTH] = lowerDefault;
-const uint16_t (*polar)[80] = polarDefault;
-const uint16_t (*iris)[IRIS_MAP_WIDTH] = irisDefault;
+// The renderer reads the artwork through these.  They are pointers TO const
+// data, not const pointers, so a whole design can be swapped at runtime.
+const uint16_t (*sclera)[SCLERA_WIDTH];
+const uint8_t (*upper)[SCREEN_WIDTH];
+const uint8_t (*lower)[SCREEN_WIDTH];
+const uint16_t (*polar)[80];
+const uint16_t (*iris)[IRIS_MAP_WIDTH];
 
-// Pointers TO const data, not const pointers -- see setEyeSet() below,
-// which swaps the whole eye at runtime.
+// Registry of the designs compiled in.  Order here is the order the console
+// reports and indexes them by.
+typedef struct {
+  const char *name;
+  const uint16_t (*sclera)[SCLERA_WIDTH];
+  const uint8_t (*upper)[SCREEN_WIDTH];
+  const uint8_t (*lower)[SCREEN_WIDTH];
+  const uint16_t (*polar)[80];
+  const uint16_t (*iris)[IRIS_MAP_WIDTH];
+} EyeDesign;
+
+static const EyeDesign eyeDesigns[] = {
+#if EYE_DEFAULT
+    {"default", scleraDefault, upperDefault, lowerDefault, polarDefault,
+     irisDefault},
+#endif
+#if EYE_NEWT
+    {"newt", scleraNewt, upperNewt, lowerNewt, polarNewt, irisNewt},
+#endif
+};
+
+#define NUM_EYE_DESIGNS (sizeof(eyeDesigns) / sizeof(eyeDesigns[0]))
+
+static uint8_t eyeDesign = 0;
+
+static void setEyeDesign(uint8_t idx) {
+  if (idx >= NUM_EYE_DESIGNS)
+    idx = 0;
+  const EyeDesign *d = &eyeDesigns[idx];
+  sclera = d->sclera;
+  upper = d->upper;
+  lower = d->lower;
+  polar = d->polar;
+  iris = d->iris;
+  eyeDesign = idx;
+}
 
 // DISPLAY HARDWARE CONFIG -------------------------------------------------
 
@@ -250,6 +293,8 @@ static void showSplash(void) {
 void setup(void) {
   uint8_t e;
 
+  setEyeDesign(0); // the pointers start unset now, so pick a design first
+
   DEBUG_BEGIN();
 #if COMMANDS
 #if !DEBUG
@@ -450,23 +495,18 @@ uint32_t timeOfLastBlink = 0L, timeToNextBlink = 0L;
 // eye can be swapped at runtime -- which is exactly what the note above
 // them describes.  Swap between frames, never mid-render: drawEye() reads
 // all five as it scans, so changing them under it would tear one frame.
-static bool eyeIsNewt = false;
+// Returns NUM_EYE_DESIGNS if there is no match.
+static uint8_t eyeDesignByName(const char *name) {
+  for (uint8_t i = 0; i < NUM_EYE_DESIGNS; i++)
+    if (!strcmp(name, eyeDesigns[i].name))
+      return i;
+  return NUM_EYE_DESIGNS;
+}
 
-static void setEyeSet(bool newt) {
-  if (newt) {
-    sclera = scleraNewt;
-    upper = upperNewt;
-    lower = lowerNewt;
-    polar = polarNewt;
-    iris = irisNewt;
-  } else {
-    sclera = scleraDefault;
-    upper = upperDefault;
-    lower = lowerDefault;
-    polar = polarDefault;
-    iris = irisDefault;
-  }
-  eyeIsNewt = newt;
+static void listEyeDesigns(void) {
+  for (uint8_t i = 0; i < NUM_EYE_DESIGNS; i++)
+    Serial.printf("  %u  %-10s%s\n", (unsigned)i, eyeDesigns[i].name,
+                  i == eyeDesign ? "  <- current" : "");
 }
 
 // Gaze override.  Consumed in frame(), which sets the vestigial serEyeCtrl
@@ -560,7 +600,8 @@ static void pollStartle(void) {
 
 static void cmdHelp(void) {
   Serial.print(F("\ncommands:\n"
-                 "  eye default|newt|toggle   swap the eye artwork\n"
+                 "  eye                       list the designs built in\n"
+                 "  eye <name>|<index>|next   select an eye design\n"
                  "  look <x> <y>              aim gaze, 0-1023 each "
                  "(512 512 = centre)\n"
                  "  look auto                 return to autonomous motion\n"
@@ -576,7 +617,8 @@ static void cmdHelp(void) {
 }
 
 static void cmdStatus(void) {
-  Serial.printf("eye=%s gaze=%s", eyeIsNewt ? "newt" : "default",
+  Serial.printf("eye=%u/%u %s gaze=%s", (unsigned)eyeDesign,
+                (unsigned)NUM_EYE_DESIGNS, eyeDesigns[eyeDesign].name,
                 gazeCmdActive ? "commanded" : "auto");
   if (gazeCmdActive)
     Serial.printf("(%d,%d)", gazeCmdX, gazeCmdY);
@@ -608,20 +650,31 @@ static void handleCommand(char *line) {
     cmdStatus();
   } else if (!strcmp(cmd, "eye")) {
     char *arg = strtok(NULL, " \t");
-    if (!arg)
-      Serial.println(F("usage: eye default|newt|toggle"));
-    else if (!strcmp(arg, "toggle"))
-      setEyeSet(!eyeIsNewt);
-    else if (!strcmp(arg, "newt"))
-      setEyeSet(true);
-    else if (!strcmp(arg, "default"))
-      setEyeSet(false);
-    else {
-      Serial.println(F("usage: eye default|newt|toggle"));
+    if (!arg || !strcmp(arg, "list")) { // bare "eye" reports what is available
+      listEyeDesigns();
       return;
     }
-    if (arg)
-      Serial.printf("ok eye=%s\n", eyeIsNewt ? "newt" : "default");
+    if (!strcmp(arg, "next") || !strcmp(arg, "toggle")) {
+      setEyeDesign((uint8_t)((eyeDesign + 1) % NUM_EYE_DESIGNS));
+    } else if (arg[0] >= '0' && arg[0] <= '9') { // by index
+      long idx = atol(arg);
+      if (idx < 0 || idx >= (long)NUM_EYE_DESIGNS) {
+        Serial.printf("err: no design %ld -- %u built in\n", idx,
+                      (unsigned)NUM_EYE_DESIGNS);
+        return;
+      }
+      setEyeDesign((uint8_t)idx);
+    } else { // by name
+      uint8_t idx = eyeDesignByName(arg);
+      if (idx >= NUM_EYE_DESIGNS) {
+        Serial.printf("err: no design '%s'. built in:\n", arg);
+        listEyeDesigns();
+        return;
+      }
+      setEyeDesign(idx);
+    }
+    Serial.printf("ok eye=%u %s\n", (unsigned)eyeDesign,
+                  eyeDesigns[eyeDesign].name);
   } else if (!strcmp(cmd, "look")) {
     char *a1 = strtok(NULL, " \t");
     if (!a1) {
@@ -718,8 +771,9 @@ static void pollBootButton(void) {
     lastEdge = now;
     wasDown = isDown;
     if (isDown) { // act on press, not release
-      setEyeSet(!eyeIsNewt);
-      Serial.printf("ok eye=%s (button)\n", eyeIsNewt ? "newt" : "default");
+      setEyeDesign((uint8_t)((eyeDesign + 1) % NUM_EYE_DESIGNS));
+      Serial.printf("ok eye=%u %s (button)\n", (unsigned)eyeDesign,
+                    eyeDesigns[eyeDesign].name);
     }
   }
 }

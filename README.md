@@ -153,7 +153,10 @@ Open `pio device monitor` and type `help`. Commands are line-based at 115200.
 
 | Command | Effect |
 | :------ | :----- |
-| `eye default \| newt \| toggle` | Swap the eye artwork |
+| `eye` | List the eye designs built into this firmware |
+| `eye <name>` | Select a design by name, e.g. `eye newt` |
+| `eye <index>` | Select by number, e.g. `eye 1` |
+| `eye next` | Cycle to the next design |
 | `look <x> <y>` | Aim the gaze; each 0–1023, `512 512` is centre |
 | `look auto` | Hand gaze back to autonomous motion |
 | `dilate <0-100>` | Pupil width; `100` is fully dilated |
@@ -170,6 +173,55 @@ unreachable once the head is assembled — hence the console.
 Overrides are sticky: `look` and `dilate` hold their commanded value until you
 return them with `auto`. The autonomous animation keeps running underneath, so
 handing control back is seamless.
+
+## Choosing which eyes are built in
+
+Each eye design costs roughly **165 KB of flash**, so they are selected at
+build time rather than all being compiled in. Edit `include/eyes_config.h`:
+
+```c
+#define EYE_DEFAULT 1   // Standard human-ish hazel eye
+#define EYE_NEWT    1   // Eye of newt
+```
+
+Or override without touching the file, from `platformio.ini`:
+
+```ini
+build_flags = -DEYE_NEWT=0        ; hazel only
+```
+
+Every switch is `#ifndef`-guarded, so a `-D` always wins. Dropping the newt
+eye takes the image from 615 KB to 457 KB.
+
+At least one design must be enabled — the eye headers are also where the
+`SCLERA_*`, `IRIS_*` and `SCREEN_*` dimensions come from, so a build with none
+fails with a clear `#error`.
+
+The console lists whatever ended up in the build:
+
+```
+> eye
+  0  default     <- current
+  1  newt
+```
+
+### Adding a design
+
+1. Put its header in `include/`, with symbols suffixed like the existing ones
+   — `scleraFoo`, `irisFoo`, `upperFoo`, `lowerFoo`, `polarFoo`.
+2. Add an `EYE_FOO` switch to `include/eyes_config.h`.
+3. Add the `#include` and the registry row in `src/main.cpp`, both guarded by
+   `#if EYE_FOO`.
+
+Dimensions must match what is already built in: **SCLERA 200×200, IRIS_MAP
+256×64, SCREEN 128×128, IRIS 80×80**. The renderer reaches the artwork through
+pointers whose row width is fixed at compile time, so designs of different
+sizes cannot coexist in one build. Adafruit's `convert/tablegen.py` can
+re-render source art at these dimensions.
+
+Budget roughly four designs on the default 1.25 MB app partition alongside
+everything else; `board_build.partitions = min_spiffs.csv` buys 1.9 MB if you
+want more.
 
 ## Startup splash
 
