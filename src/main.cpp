@@ -17,60 +17,10 @@
 // Inspired by David Boccabella's (Marcwolf) hybrid servo/OLED eye concept.
 //--------------------------------------------------------------------------
 
-// NETWORK -----------------------------------------------------------------
-// Credentials come from secrets.ini via extra_configs, which is gitignored --
-// copy secrets.ini.example to get started.  Nothing secret is committed, and
-// a clone with no secrets.ini still builds: PlatformIO tolerates the missing
-// file, and an unconfigured board falls through to the setup portal.
-
-#ifndef NETWORK
-#define NETWORK 1
-#endif
-
-#define WIFI_HOSTNAME "frank"
-#define WIFI_AP_NAME "frank-setup"
-
-// How long to wait on a known network before giving up and opening the
-// portal, and how long the portal itself stays up before the eyes carry on
-// regardless.  A prop with no network should still be a working prop.
-#define WIFI_CONNECT_MS 15000
-#define WIFI_PORTAL_S 180
-
-// How long `net` leaves the address cards up before the eyes resume.
-#define NET_SHOW_MS 12000
-
-// 128 px at 6 px per character in the default font.
-#define NET_COLS 21
-
-// Time is taken from NTP with a POSIX TZ string, rather than the manual
-// hour/minute offset plus a DST checkbox the wandering-hour-clock used.
-// A TZ string carries the DST *rules*, so the changeover happens on its
-// own instead of needing a visit twice a year.
-#define NTP_SERVER_1 "pool.ntp.org"
-#define NTP_SERVER_2 "time.nist.gov"
-
-// US Pacific by default.  A POSIX TZ string carries the DST *rules*, not
-// just an offset -- "PST8PDT" names both standard and summer time, and
-// "M3.2.0/2,M11.1.0/2" is the US changeover: second Sunday in March at
-// 02:00, first Sunday in November at 02:00.  So DST is not a separate
-// setting, and nothing needs touching twice a year.
-#define TZ_DEFAULT "PST8PDT,M3.2.0/2,M11.1.0/2"
-#define TZ_MAX 48
-
-// Optional: a clone without it still builds, and an unconfigured board
-// falls through to the setup portal.
-#if defined(__has_include)
-#if __has_include("secrets.h")
-#include "secrets.h"
-#endif
-#endif
-
-#ifndef WIFI_SSID
-#define WIFI_SSID ""
-#endif
-#ifndef WIFI_PASS
-#define WIFI_PASS ""
-#endif
+#include "config.h"
+#include "console.h"
+#include "display.h"
+#include "net.h"
 
 #include <Adafruit_GFX.h>   // Core graphics lib for Adafruit displays
 #include <HardwareSerial.h> // Needed for 2nd serial port on ESP32
@@ -83,94 +33,6 @@
 #include <ArduinoOTA.h>
 #endif
 #include <SPI.h>
-
-// DEBUG OUTPUT ------------------------------------------------------------
-// Set DEBUG to 0 to compile out all serial diagnostics (no code, no strings,
-// and Serial is never opened).  DEBUG_BAUD feeds Serial.begin() here and must
-// be kept in sync with monitor_speed in platformio.ini.
-
-#ifndef DEBUG
-#define DEBUG 1
-#endif
-#define DEBUG_BAUD 115200
-// On-board user LED of the DOIT ESP32 DevKit V1, silkscreened "D2".
-// Not broken out to a header pin and unused by the eyes, so it is free.
-#define DEBUG_LED_PIN 2
-
-#if DEBUG
-#define DEBUG_BEGIN() Serial.begin(DEBUG_BAUD)
-#define DEBUG_PRINTF(...) Serial.printf(__VA_ARGS__)
-#else
-#define DEBUG_BEGIN()
-#define DEBUG_PRINTF(...)
-#endif
-
-// STARTUP SPLASH ----------------------------------------------------------
-// Names each panel on screen at boot, counting down, so you can tell which
-// physical display is on which chip select without tracing wires.  Set to 0
-// to boot straight into the eyes.
-
-#ifndef STARTUP_SPLASH
-#define STARTUP_SPLASH 1
-#endif
-#define SPLASH_SECONDS 5
-
-// COMMAND CONSOLE ---------------------------------------------------------
-// A line-oriented console on the USB serial port -- the same cable that
-// powers the board -- so the eyes can be driven once the head is assembled
-// and the BOOT button is out of reach.  Type "help" in the serial monitor.
-
-#ifndef COMMANDS
-#define COMMANDS 1
-#endif
-
-
-// PUPIL -------------------------------------------------------------------
-// The iris is drawn where iScale * distance / 128 < 64, and distance peaks
-// at 127 at the centre, so any scale at or below 64 keeps every pixel in
-// the iris and the pupil disappears, leaving a full iris disc.  Independent
-// of the clock -- see the `pupil` command.
-#define PUPIL_OFF_SCALE 64
-
-// CLOCK FACE --------------------------------------------------------------
-// Turns the iris into an analogue clock.  There is no real time source yet,
-// so it free-runs from millis() and the time is set from the console; `clock
-// rate` speeds it up to see the hands move.
-//
-// Hands are found from the polar table the renderer already reads: the high
-// 9 bits are the angle and the low 7 the distance, so a pixel is on a hand
-// when its angle is near the hand's and it lies within the hand's length.
-// No trigonometry and no mask buffer -- two comparisons per hand.
-
-#ifndef CLOCK
-#define CLOCK 1
-#endif
-
-// 12 o'clock is 128 in the polar table's 0-511 angle, increasing clockwise.
-#define CLOCK_NOON 128
-
-// Lengths and half-widths in pixels, measured from the iris centre.  The
-// iris radius is IRIS_WIDTH / 2, so 40.
-#define CLOCK_HOUR_LEN 20
-#define CLOCK_HOUR_HW 2
-#define CLOCK_MIN_LEN 30
-#define CLOCK_MIN_HW 1
-#define CLOCK_SEC_LEN 35
-#define CLOCK_SEC_HW 0
-
-// Starting colours, changeable at runtime with `clock color`.  Black reads
-// as a silhouette on a bright iris, but is invisible over the pupil, which
-// is itself black -- try a light colour on dark eyes.
-#define CLOCK_HOUR_COLOR 0x000000
-#define CLOCK_MIN_COLOR 0x000000
-#define CLOCK_SEC_COLOR 0x000000
-
-
-// BOOT button.  Grounded when pressed, external pull-up on the board.
-// GPIO0 is a strapping pin, but only during reset; reading it afterwards is
-// fine.  Not broken out to a header on the 30-pin DevKit -- the button is
-// the only access.
-#define BOOT_BUTTON_PIN 0
 
 // Which designs are built in -- see include/eyes_config.h.  The headers are
 // modified from Adafruit's originals so that several can be included at once,
@@ -365,13 +227,6 @@ static bool pupilOn = true;
 static bool eyesSwapped = false;
 static bool swapPending = false;
 
-#if NETWORK
-// Declared ahead of the clock, which reads them to decide whether to use
-// real time or free-run.
-static bool timeSynced = false;
-static char tzString[TZ_MAX] = TZ_DEFAULT;
-#endif
-
 #if CLOCK
 
 static bool clockOn = false;
@@ -457,333 +312,6 @@ static uint32_t clockNow(void) {
 
 #endif // CLOCK
 
-#if NETWORK
-
-// Defined with the splash helpers, further down.
-static void showMessage(const char *l1, const char *l2, const char *l3,
-                        const char *l4);
-static void netStartTime(void);  // defined with the time code below
-static void handleCommand(char *line, Print &out); // the console's dispatcher
-static void cmdStatus(Print &out);
-static void netReport(Print &out);
-static void webBegin(void);      // defined with the web server below
-static void otaBegin(void);      // defined alongside it
-
-// Tri-state so `status` can distinguish "never tried" from "tried and failed".
-enum { NET_DOWN, NET_UP, NET_PORTAL };
-static uint8_t netState = NET_DOWN;
-
-// Blocks until connected or the timeout expires.  Returns true on success.
-static bool wifiWaitConnected(uint32_t ms) {
-  uint32_t start = millis();
-  while (millis() - start < ms) {
-    if (WiFi.status() == WL_CONNECTED)
-      return true;
-    delay(100);
-  }
-  return false;
-}
-
-// Three sources of credentials, tried in order of how deliberate they are:
-//
-//   1. whatever the portal last stored, since that was an explicit choice
-//      made on this device and is probably the network it is standing in
-//   2. the build-time defaults from secrets.ini
-//   3. the portal itself
-//
-// A failure at every stage is not fatal.  The eyes are the point of the
-// device; the network is a convenience, so an unreachable one just means
-// carrying on offline.
-static void setupNetwork(void) {
-  // Hostname before mode() and begin(), or the DHCP request goes out with
-  // the default name and the router records that instead.  Learned the hard
-  // way on the wandering-hour-clock.
-  WiFi.persistent(true);
-  WiFi.setHostname(WIFI_HOSTNAME);
-  WiFi.mode(WIFI_STA);
-
-  String savedSsid = WiFi.SSID();
-  if (savedSsid.length()) {
-    DEBUG_PRINTF("[net] trying stored network '%s'" "\n", savedSsid.c_str());
-    WiFi.begin();
-    if (wifiWaitConnected(WIFI_CONNECT_MS)) {
-      netState = NET_UP;
-      return;
-    }
-  }
-
-  if (strlen(WIFI_SSID)) {
-    DEBUG_PRINTF("[net] trying built-in network '%s'" "\n", WIFI_SSID);
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-    if (wifiWaitConnected(WIFI_CONNECT_MS)) {
-      netState = NET_UP;
-      return;
-    }
-  }
-
-  // Nothing worked.  Say so on the panels, because a head sitting dark with
-  // no explanation looks broken rather than unconfigured.
-  DEBUG_PRINTF("[net] no network; opening setup portal '%s'" "\n",
-               WIFI_AP_NAME);
-  showMessage("WIFI", "SETUP", "join the network", WIFI_AP_NAME);
-
-  netState = NET_PORTAL;
-  WiFiManager wm;
-  wm.setHostname(WIFI_HOSTNAME);
-  wm.setConfigPortalTimeout(WIFI_PORTAL_S);
-  wm.setConfigPortalBlocking(true);
-  bool ok = wm.startConfigPortal(WIFI_AP_NAME);
-  netState = ok ? NET_UP : NET_DOWN;
-  if (!ok)
-    DEBUG_PRINTF("[net] portal timed out; carrying on offline" "\n");
-}
-
-// Everything that only makes sense once there is a link.
-static void netOnConnected(void) {
-  if (WiFi.status() != WL_CONNECTED)
-    return;
-  // Link-local IPv6 is not brought up by default, and takes a moment to be
-  // assigned, so the address can still read as :: right after boot.
-  WiFi.enableIpV6();
-  if (MDNS.begin(WIFI_HOSTNAME))
-    DEBUG_PRINTF("[net] mdns up: %s.local" "\n", WIFI_HOSTNAME);
-  else
-    DEBUG_PRINTF("[net] mdns failed to start" "\n");
-  DEBUG_PRINTF("[net] connected: %s  ipv4 %s" "\n",
-               WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
-  netStartTime();
-  webBegin();
-  otaBegin();
-}
-
-// Address cards, one panel each, because IPv6 will not fit beside the rest:
-// a link-local address is around 24 characters and a 128 px panel holds 21.
-// Splitting across the two displays is the tidiest use of having two.
-static uint32_t netShowUntil = 0;
-static void netShow(void); // defined with the display code below
-
-
-// Applies the timezone and kicks off SNTP.  Safe to call again after a TZ
-// change: the daemon is simply reconfigured.
-// Typing a POSIX string correctly is no fun, so the common zones get names.
-// A raw POSIX string is still accepted for anywhere not listed.
-struct TzChoice {
-  const char *name;
-  const char *posix;
-};
-
-static const TzChoice tzChoices[] = {
-    {"pacific", "PST8PDT,M3.2.0/2,M11.1.0/2"},
-    {"mountain", "MST7MDT,M3.2.0/2,M11.1.0/2"},
-    {"arizona", "MST7"}, // no DST
-    {"central", "CST6CDT,M3.2.0/2,M11.1.0/2"},
-    {"eastern", "EST5EDT,M3.2.0/2,M11.1.0/2"},
-    {"alaska", "AKST9AKDT,M3.2.0/2,M11.1.0/2"},
-    {"hawaii", "HST10"}, // no DST
-    {"uk", "GMT0BST,M3.5.0/1,M10.5.0/2"},
-    {"europe", "CET-1CEST,M3.5.0,M10.5.0/3"},
-    {"utc", "UTC0"},
-};
-#define NUM_TZ_CHOICES (sizeof(tzChoices) / sizeof(tzChoices[0]))
-
-// Returns the POSIX string for a shortcut, or NULL if the name is unknown.
-static const char *tzLookup(const char *name) {
-  for (uint8_t i = 0; i < NUM_TZ_CHOICES; i++)
-    if (!strcasecmp(name, tzChoices[i].name))
-      return tzChoices[i].posix;
-  return NULL;
-}
-
-static void netStartTime(void) {
-  configTzTime(tzString, NTP_SERVER_1, NTP_SERVER_2);
-}
-
-// Non-blocking check, polled until the first sync lands.  SNTP replies take
-// a second or two, and blocking on it would stall the eyes for no reason.
-static void netPollTime(void) {
-  if (timeSynced || WiFi.status() != WL_CONNECTED)
-    return;
-  struct tm t;
-  if (!getLocalTime(&t, 0)) // 0 = do not wait
-    return;
-  // The epoch starts at 1970; anything before ~2021 means SNTP has not
-  // actually answered yet and we are seeing the power-on default.
-  if (t.tm_year < (2021 - 1900))
-    return;
-  timeSynced = true;
-  DEBUG_PRINTF("[net] time synced: %04d-%02d-%02d %02d:%02d:%02d %s" "\n",
-               t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min,
-               t.tm_sec, tzString);
-}
-
-static void netReport(Print &out) {
-  out.printf("host=%s.local state=%s" "\n", WIFI_HOSTNAME,
-             WiFi.status() == WL_CONNECTED ? "up"
-             : netState == NET_PORTAL     ? "portal"
-                                          : "down");
-  out.printf("  mac  %s" "\n", WiFi.macAddress().c_str());
-  if (WiFi.status() == WL_CONNECTED) {
-    out.printf("  ssid %s (%d dBm)" "\n", WiFi.SSID().c_str(),
-               (int)WiFi.RSSI());
-    out.printf("  ipv4 %s  gw %s" "\n", WiFi.localIP().toString().c_str(),
-               WiFi.gatewayIP().toString().c_str());
-    out.printf("  ipv6 %s" "\n", WiFi.localIPv6().toString().c_str());
-  }
-  if (timeSynced) {
-    struct tm t;
-    getLocalTime(&t, 0);
-    out.printf("  time %04d-%02d-%02d %02d:%02d:%02d  tz %s" "\n",
-               t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour,
-               t.tm_min, t.tm_sec, tzString);
-  } else {
-    out.printf("  time not synced (tz %s)" "\n", tzString);
-  }
-}
-
-// WEB SERVER ---------------------------------------------------------------
-// Deliberately thin.  /cmd feeds the same dispatcher the serial console uses,
-// so every command is available over HTTP the moment it is added, and there
-// is no second implementation to keep in step.
-//
-// handleClient() is polled from frame(), not loop(): loop() spends ~10 s
-// inside split() per iteration, so a request handled there would sit unserved
-// for up to ten seconds.  The cost is that writing a response blocks
-// rendering, which is why the pages are kept small.
-
-static WebServer server(80);
-
-// Collects a command's output so it can be sent as one response.
-class StringPrint : public Print {
-public:
-  String buf;
-  size_t write(uint8_t c) override {
-    buf += (char)c;
-    return 1;
-  }
-  size_t write(const uint8_t *b, size_t n) override {
-    for (size_t i = 0; i < n; i++)
-      buf += (char)b[i];
-    return n;
-  }
-};
-
-static void webHandleCmd(void) {
-  if (!server.hasArg("c")) {
-    server.send(400, "text/plain", "usage: /cmd?c=status" "\n");
-    return;
-  }
-  String c = server.arg("c");
-  char line[96];
-  strncpy(line, c.c_str(), sizeof(line) - 1);
-  line[sizeof(line) - 1] = '\0';
-
-  StringPrint out;
-  handleCommand(line, out);
-  server.send(200, "text/plain", out.buf);
-}
-
-static void webHandleRoot(void) {
-  StringPrint st, nt;
-  cmdStatus(st);
-  netReport(nt);
-
-  String h;
-  h.reserve(2048);
-  h += F("<!doctype html><meta name=viewport content='width=device-width,"
-         "initial-scale=1'><title>frank</title><style>"
-         "body{font:14px system-ui;margin:0;padding:16px;background:#14161a;"
-         "color:#e6e8eb}h1{font-size:20px;margin:0 0 12px}"
-         "pre{background:#1d2026;padding:10px;border-radius:6px;overflow-x:auto}"
-         "a,button{display:inline-block;margin:2px;padding:6px 10px;"
-         "background:#2a2f38;color:#e6e8eb;border:0;border-radius:5px;"
-         "text-decoration:none;cursor:pointer}"
-         "form{margin:12px 0}input{padding:6px;width:60%;background:#1d2026;"
-         "color:#e6e8eb;border:1px solid #2a2f38;border-radius:5px}</style>"
-         "<h1>frank</h1><pre>");
-  h += st.buf;
-  h += nt.buf;
-  h += F("</pre>"
-         "<div>"
-         "<a href='/cmd?c=eye+next'>next eye</a>"
-         "<a href='/cmd?c=blink'>blink</a>"
-         "<a href='/cmd?c=startle'>startle</a>"
-         "<a href='/cmd?c=clock+on'>clock on</a>"
-         "<a href='/cmd?c=clock+off'>clock off</a>"
-         "<a href='/cmd?c=pupil'>toggle pupil</a>"
-         "<a href='/cmd?c=net'>show address</a>"
-         "<a href='/cmd?c=save'>save</a>"
-         "</div><div>");
-  h += F("<b style='opacity:.6'>timezone:</b> ");
-  for (uint8_t i = 0; i < NUM_TZ_CHOICES; i++) {
-    h += "<a href='/cmd?c=tz+";
-    h += tzChoices[i].name;
-    h += "'>";
-    h += tzChoices[i].name;
-    h += "</a>";
-  }
-  h += F("</div>"
-         "<form action='/cmd'><input name='c' placeholder='any console command, "
-         "e.g. look 200 800' autofocus><button>run</button></form>"
-         "<p style='opacity:.6'>Every serial command works here. "
-         "<a href='/cmd?c=help'>help</a></p>");
-  server.send(200, "text/html", h);
-}
-
-// OVER-THE-AIR UPDATES ------------------------------------------------------
-// The reason this is worth having: once the boards are inside a head, the USB
-// port is behind however much glue and foam it took to mount them.  Reflashing
-// over WiFi is the difference between a tweak and a disassembly.
-//
-// Progress is reported on the panels because an OTA takes long enough that a
-// frozen-looking prop is alarming, and the eyes stop rendering during it --
-// ArduinoOTA.handle() runs the transfer to completion once it starts.
-
-static void otaBegin(void) {
-  ArduinoOTA.setHostname(WIFI_HOSTNAME);
-
-  ArduinoOTA.onStart([]() {
-    DEBUG_PRINTF("[ota] update starting" "\n");
-    showMessage("UPDATE", "0%", NULL, NULL);
-  });
-
-  ArduinoOTA.onProgress([](unsigned int done, unsigned int total) {
-    static uint8_t last = 255;
-    uint8_t pct = total ? (uint8_t)((done * 100UL) / total) : 0;
-    // Redraw only when the number changes: pushing a panel per packet would
-    // slow the transfer down considerably.
-    if (pct == last)
-      return;
-    last = pct;
-    char buf[8];
-    snprintf(buf, sizeof(buf), "%u%%", (unsigned)pct);
-    showMessage("UPDATE", buf, NULL, NULL);
-  });
-
-  ArduinoOTA.onEnd([]() {
-    DEBUG_PRINTF("[ota] done, rebooting" "\n");
-    showMessage("UPDATE", "DONE", "rebooting", NULL);
-  });
-
-  ArduinoOTA.onError([](ota_error_t e) {
-    DEBUG_PRINTF("[ota] failed, error %u" "\n", (unsigned)e);
-    showMessage("UPDATE", "FAILED", NULL, NULL);
-  });
-
-  ArduinoOTA.begin();
-  DEBUG_PRINTF("[net] ota ready: pio run -t upload --upload-port %s.local" "\n",
-               WIFI_HOSTNAME);
-}
-
-static void webBegin(void) {
-  server.on("/", webHandleRoot);
-  server.on("/cmd", webHandleCmd);
-  server.onNotFound([]() { server.send(404, "text/plain", "not found" "\n"); });
-  server.begin();
-  MDNS.addService("http", "tcp", 80);
-  DEBUG_PRINTF("[net] web server on http://%s.local/" "\n", WIFI_HOSTNAME);
-}
-
-#endif // NETWORK
 
 // SETTINGS ----------------------------------------------------------------
 // Stored in NVS, which already has a partition, so nothing else is needed.
@@ -958,6 +486,12 @@ struct {
 };
 #define NUM_EYES (sizeof(eye) / sizeof(eye[0]))
 
+// display.h publishes these for modules that draw text but have no
+// business knowing about eye[] or the artwork headers.
+uint8_t displayCount(void) { return NUM_EYES; }
+static_assert(PANEL_W == SCREEN_WIDTH && PANEL_H == SCREEN_HEIGHT,
+              "display.h panel size must match the eye artwork");
+
 // Called between frames only: a swap landing mid-transaction would leave a
 // chip select asserted on the wrong panel.
 static void applySwap(void) {
@@ -972,7 +506,7 @@ static void applySwap(void) {
 // Used by the startup splash and by the network address cards, so these
 // live outside both feature guards.
 
-static void splashCenter(GFXcanvas1 &c, const char *str, uint8_t size,
+void splashCenter(GFXcanvas1 &c, const char *str, uint8_t size,
                          int16_t y) {
   c.setTextSize(size);
   c.setCursor((SCREEN_WIDTH - (int16_t)strlen(str) * 6 * size) / 2, y);
@@ -988,7 +522,7 @@ static void splashCenter(GFXcanvas1 &c, const char *str, uint8_t size,
 // mapping can be read off the panels once and settled here for good.
 // Push a 1-bit canvas to one panel, in whichever format it wants.  Shared by
 // the splash and by the network messages below.
-static void pushCanvas(uint8_t e, GFXcanvas1 &canvas) {
+void pushCanvas(uint8_t e, GFXcanvas1 &canvas) {
 #if USE_SSD1327
   // 1 bit per pixel in, 4 bits per pixel out, two pixels to a byte.
   static uint8_t buf[SSD1327_FRAME_BYTES];
@@ -1006,58 +540,6 @@ static void pushCanvas(uint8_t e, GFXcanvas1 &canvas) {
 #endif
 }
 
-#if NETWORK
-static void netDrawPanel(uint8_t e) {
-  GFXcanvas1 c(SCREEN_WIDTH, SCREEN_HEIGHT);
-  c.fillScreen(0);
-  c.setTextColor(1);
-  splashCenter(c, WIFI_HOSTNAME, 2, 4);
-  c.drawFastHLine(14, 26, SCREEN_WIDTH - 28, 1);
-
-  if (WiFi.status() != WL_CONNECTED) {
-    splashCenter(c, "OFFLINE", 2, 52);
-    splashCenter(c, "no network", 1, 80);
-    pushCanvas(e, c);
-    return;
-  }
-
-  int16_t y = 34;
-  if (e == 0) {
-    char line[24];
-    splashCenter(c, "MAC", 1, y);
-    y += 11;
-    splashCenter(c, WiFi.macAddress().c_str(), 1, y);
-    y += 18;
-    splashCenter(c, "IPv4", 1, y);
-    y += 11;
-    splashCenter(c, WiFi.localIP().toString().c_str(), 1, y);
-    y += 18;
-    snprintf(line, sizeof(line), "%d dBm", (int)WiFi.RSSI());
-    splashCenter(c, line, 1, y);
-  } else {
-    splashCenter(c, "IPv6", 1, y);
-    y += 11;
-    String v6 = WiFi.localIPv6().toString();
-    // Wrapped rather than truncated: a partial address is worse than useless.
-    for (uint16_t i = 0; i < v6.length(); i += NET_COLS) {
-      splashCenter(c, v6.substring(i, i + NET_COLS).c_str(), 1, y);
-      y += 10;
-    }
-    y += 10;
-    splashCenter(c, WIFI_HOSTNAME ".local", 1, y);
-  }
-  pushCanvas(e, c);
-}
-
-// Paints both panels and leaves them up for a while.  Non-blocking: frame()
-// simply skips the eye render until the deadline, so the console stays
-// responsive and a second `net` refreshes rather than queueing.
-static void netShow(void) {
-  for (uint8_t e = 0; e < NUM_EYES; e++)
-    netDrawPanel(e);
-  netShowUntil = millis() + NET_SHOW_MS;
-}
-#endif // NETWORK
 
 // INITIALIZATION -- runs once at startup ----------------------------------
 
@@ -1074,7 +556,7 @@ HardwareSerial SerialIn(1);
 // Four centred lines on both panels.  Used while the eyes are not running --
 // during the setup portal, for instance -- so the head is not just sitting
 // there dark with no explanation.
-static void showMessage(const char *l1, const char *l2, const char *l3,
+void showMessage(const char *l1, const char *l2, const char *l3,
                         const char *l4) {
   GFXcanvas1 canvas(SCREEN_WIDTH, SCREEN_HEIGHT);
   canvas.fillScreen(0);
@@ -1637,7 +1119,7 @@ static void cmdHelp(Print &out) {
 
 // One line of everything worth knowing, plus an (unsaved) marker when the
 // live settings differ from the stored ones.
-static void cmdStatus(Print &out) {
+void cmdStatus(Print &out) {
   out.printf("eye=%u/%u %s gaze=%s", (unsigned)eyeDesign,
                 (unsigned)NUM_EYE_DESIGNS, eyeDesigns[eyeDesign].name,
                 gazeCmdActive ? "commanded" : "auto");
@@ -1665,7 +1147,7 @@ static void cmdStatus(Print &out) {
 // strtok chews up the buffer, which is fine -- the caller owns it and
 // discards it afterwards.  The command word is lowercased; arguments are
 // only lowercased where case should not matter, such as eye names.
-static void handleCommand(char *line, Print &out) {
+void handleCommand(char *line, Print &out) {
   char *cmd = strtok(line, " \t");
   if (!cmd)
     return;
@@ -1842,7 +1324,7 @@ static void handleCommand(char *line, Print &out) {
       out.printf("tz %s%s" "\n", tzString,
                     timeSynced ? "" : " (not synced)");
       out.print(F("  names:"));
-      for (uint8_t i = 0; i < NUM_TZ_CHOICES; i++)
+      for (uint8_t i = 0; i < numTzChoices; i++)
         out.printf(" %s", tzChoices[i].name);
       out.println();
       out.println(F("  or any POSIX string, e.g. PST8PDT,M3.2.0/2,M11.1.0/2"));
@@ -2013,10 +1495,7 @@ void frame(            // Process motion for a single frame of left or right eye
 
 #if NETWORK
   netPollTime(); // cheap no-op once the first sync has landed
-  if (netState == NET_UP) {
-    server.handleClient();
-    ArduinoOTA.handle();
-  }
+  webPoll();
 #endif
 #if CLOCK
   if (clockOn)
