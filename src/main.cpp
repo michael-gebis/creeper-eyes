@@ -47,9 +47,12 @@
 #define NTP_SERVER_1 "pool.ntp.org"
 #define NTP_SERVER_2 "time.nist.gov"
 
-// UTC until told otherwise.  Set with `tz`, e.g. for US Central:
-//   tz CST6CDT,M3.2.0/2,M11.1.0/2
-#define TZ_DEFAULT "UTC0"
+// US Pacific by default.  A POSIX TZ string carries the DST *rules*, not
+// just an offset -- "PST8PDT" names both standard and summer time, and
+// "M3.2.0/2,M11.1.0/2" is the US changeover: second Sunday in March at
+// 02:00, first Sunday in November at 02:00.  So DST is not a separate
+// setting, and nothing needs touching twice a year.
+#define TZ_DEFAULT "PST8PDT,M3.2.0/2,M11.1.0/2"
 #define TZ_MAX 48
 
 // Optional: a clone without it still builds, and an unconfigured board
@@ -74,6 +77,7 @@
 #include <WiFi.h>
 #include <WiFiManager.h> // tzapu/WiFiManager -- captive setup portal
 #include <ESPmDNS.h>
+#include <WebServer.h>
 #endif
 #include <SPI.h>
 
@@ -448,6 +452,10 @@ static uint32_t clockNow(void) {
 static void showMessage(const char *l1, const char *l2, const char *l3,
                         const char *l4);
 static void netStartTime(void);  // defined with the time code below
+static void handleCommand(char *line, Print &out); // the console's dispatcher
+static void cmdStatus(Print &out);
+static void netReport(Print &out);
+static void webBegin(void);      // defined with the web server below
 
 // Tri-state so `status` can distinguish "never tried" from "tried and failed".
 enum { NET_DOWN, NET_UP, NET_PORTAL };
@@ -532,6 +540,7 @@ static void netOnConnected(void) {
   DEBUG_PRINTF("[net] connected: %s  ipv4 %s" "\n",
                WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
   netStartTime();
+  webBegin();
 }
 
 // Address cards, one panel each, because IPv6 will not fit beside the rest:
@@ -543,6 +552,35 @@ static void netShow(void); // defined with the display code below
 
 // Applies the timezone and kicks off SNTP.  Safe to call again after a TZ
 // change: the daemon is simply reconfigured.
+// Typing a POSIX string correctly is no fun, so the common zones get names.
+// A raw POSIX string is still accepted for anywhere not listed.
+struct TzChoice {
+  const char *name;
+  const char *posix;
+};
+
+static const TzChoice tzChoices[] = {
+    {"pacific", "PST8PDT,M3.2.0/2,M11.1.0/2"},
+    {"mountain", "MST7MDT,M3.2.0/2,M11.1.0/2"},
+    {"arizona", "MST7"}, // no DST
+    {"central", "CST6CDT,M3.2.0/2,M11.1.0/2"},
+    {"eastern", "EST5EDT,M3.2.0/2,M11.1.0/2"},
+    {"alaska", "AKST9AKDT,M3.2.0/2,M11.1.0/2"},
+    {"hawaii", "HST10"}, // no DST
+    {"uk", "GMT0BST,M3.5.0/1,M10.5.0/2"},
+    {"europe", "CET-1CEST,M3.5.0,M10.5.0/3"},
+    {"utc", "UTC0"},
+};
+#define NUM_TZ_CHOICES (sizeof(tzChoices) / sizeof(tzChoices[0]))
+
+// Returns the POSIX string for a shortcut, or NULL if the name is unknown.
+static const char *tzLookup(const char *name) {
+  for (uint8_t i = 0; i < NUM_TZ_CHOICES; i++)
+    if (!strcasecmp(name, tzChoices[i].name))
+      return tzChoices[i].posix;
+  return NULL;
+}
+
 static void netStartTime(void) {
   configTzTime(tzString, NTP_SERVER_1, NTP_SERVER_2);
 }
@@ -587,6 +625,104 @@ static void netReport(Print &out) {
   } else {
     out.printf("  time not synced (tz %s)" "\n", tzString);
   }
+}
+
+// WEB SERVER ---------------------------------------------------------------
+// Deliberately thin.  /cmd feeds the same dispatcher the serial console uses,
+// so every command is available over HTTP the moment it is added, and there
+// is no second implementation to keep in step.
+//
+// handleClient() is polled from frame(), not loop(): loop() spends ~10 s
+// inside split() per iteration, so a request handled there would sit unserved
+// for up to ten seconds.  The cost is that writing a response blocks
+// rendering, which is why the pages are kept small.
+
+static WebServer server(80);
+
+// Collects a command's output so it can be sent as one response.
+class StringPrint : public Print {
+public:
+  String buf;
+  size_t write(uint8_t c) override {
+    buf += (char)c;
+    return 1;
+  }
+  size_t write(const uint8_t *b, size_t n) override {
+    for (size_t i = 0; i < n; i++)
+      buf += (char)b[i];
+    return n;
+  }
+};
+
+static void webHandleCmd(void) {
+  if (!server.hasArg("c")) {
+    server.send(400, "text/plain", "usage: /cmd?c=status" "\n");
+    return;
+  }
+  String c = server.arg("c");
+  char line[96];
+  strncpy(line, c.c_str(), sizeof(line) - 1);
+  line[sizeof(line) - 1] = '\0';
+
+  StringPrint out;
+  handleCommand(line, out);
+  server.send(200, "text/plain", out.buf);
+}
+
+static void webHandleRoot(void) {
+  StringPrint st, nt;
+  cmdStatus(st);
+  netReport(nt);
+
+  String h;
+  h.reserve(2048);
+  h += F("<!doctype html><meta name=viewport content='width=device-width,"
+         "initial-scale=1'><title>frank</title><style>"
+         "body{font:14px system-ui;margin:0;padding:16px;background:#14161a;"
+         "color:#e6e8eb}h1{font-size:20px;margin:0 0 12px}"
+         "pre{background:#1d2026;padding:10px;border-radius:6px;overflow-x:auto}"
+         "a,button{display:inline-block;margin:2px;padding:6px 10px;"
+         "background:#2a2f38;color:#e6e8eb;border:0;border-radius:5px;"
+         "text-decoration:none;cursor:pointer}"
+         "form{margin:12px 0}input{padding:6px;width:60%;background:#1d2026;"
+         "color:#e6e8eb;border:1px solid #2a2f38;border-radius:5px}</style>"
+         "<h1>frank</h1><pre>");
+  h += st.buf;
+  h += nt.buf;
+  h += F("</pre>"
+         "<div>"
+         "<a href='/cmd?c=eye+next'>next eye</a>"
+         "<a href='/cmd?c=blink'>blink</a>"
+         "<a href='/cmd?c=startle'>startle</a>"
+         "<a href='/cmd?c=clock+on'>clock on</a>"
+         "<a href='/cmd?c=clock+off'>clock off</a>"
+         "<a href='/cmd?c=pupil'>toggle pupil</a>"
+         "<a href='/cmd?c=net'>show address</a>"
+         "<a href='/cmd?c=save'>save</a>"
+         "</div><div>");
+  h += F("<b style='opacity:.6'>timezone:</b> ");
+  for (uint8_t i = 0; i < NUM_TZ_CHOICES; i++) {
+    h += "<a href='/cmd?c=tz+";
+    h += tzChoices[i].name;
+    h += "'>";
+    h += tzChoices[i].name;
+    h += "</a>";
+  }
+  h += F("</div>"
+         "<form action='/cmd'><input name='c' placeholder='any console command, "
+         "e.g. look 200 800' autofocus><button>run</button></form>"
+         "<p style='opacity:.6'>Every serial command works here. "
+         "<a href='/cmd?c=help'>help</a></p>");
+  server.send(200, "text/html", h);
+}
+
+static void webBegin(void) {
+  server.on("/", webHandleRoot);
+  server.on("/cmd", webHandleCmd);
+  server.onNotFound([]() { server.send(404, "text/plain", "not found" "\n"); });
+  server.begin();
+  MDNS.addService("http", "tcp", 80);
+  DEBUG_PRINTF("[net] web server on http://%s.local/" "\n", WIFI_HOSTNAME);
 }
 
 #endif // NETWORK
@@ -1306,9 +1442,9 @@ static void loadSettings(void) {
 
 // Numbered listing with the current design marked, so `eye <index>` has
 // something to refer to.
-static void listEyeDesigns(void) {
+static void listEyeDesigns(Print &out) {
   for (uint8_t i = 0; i < NUM_EYE_DESIGNS; i++)
-    Serial.printf("  %u  %-10s%s\n", (unsigned)i, eyeDesigns[i].name,
+    out.printf("  %u  %-10s%s\n", (unsigned)i, eyeDesigns[i].name,
                   i == eyeDesign ? "  <- current" : "");
 }
 
@@ -1410,8 +1546,8 @@ static void pollStartle(void) {
 }
 
 // Kept in flash with F() -- the string is longer than it looks.
-static void cmdHelp(void) {
-  Serial.print(F("\ncommands:\n"
+static void cmdHelp(Print &out) {
+  out.print(F("\ncommands:\n"
                  "  eye                       list the designs built in\n"
                  "  eye <name>|<index>|next   select an eye design\n"
                  "  look <x> <y>              aim gaze, 0-1023 each "
@@ -1443,35 +1579,35 @@ static void cmdHelp(void) {
 
 // One line of everything worth knowing, plus an (unsaved) marker when the
 // live settings differ from the stored ones.
-static void cmdStatus(void) {
-  Serial.printf("eye=%u/%u %s gaze=%s", (unsigned)eyeDesign,
+static void cmdStatus(Print &out) {
+  out.printf("eye=%u/%u %s gaze=%s", (unsigned)eyeDesign,
                 (unsigned)NUM_EYE_DESIGNS, eyeDesigns[eyeDesign].name,
                 gazeCmdActive ? "commanded" : "auto");
   if (gazeCmdActive)
-    Serial.printf("(%d,%d)", gazeCmdX, gazeCmdY);
-  Serial.printf(" dilate=%s", dilateCmdActive ? "" : "auto");
+    out.printf("(%d,%d)", gazeCmdX, gazeCmdY);
+  out.printf(" dilate=%s", dilateCmdActive ? "" : "auto");
   if (dilateCmdActive)
-    Serial.printf("%u%%", (unsigned)dilateCmdPct);
+    out.printf("%u%%", (unsigned)dilateCmdPct);
   if (startleState != STARTLE_OFF)
-    Serial.print(startleState == STARTLE_WINDUP ? " startle=windup"
+    out.print(startleState == STARTLE_WINDUP ? " startle=windup"
                                                 : " startle=hold");
-  Serial.printf(" pupil=%s", pupilOn ? "on" : "off");
-  Serial.printf(" swap=%s%s", eyesSwapped ? "on" : "off",
+  out.printf(" pupil=%s", pupilOn ? "on" : "off");
+  out.printf(" swap=%s%s", eyesSwapped ? "on" : "off",
                 settingsDirty ? " (unsaved)" : "");
-  Serial.printf(" panel=%s heap=%u up=%us",
+  out.printf(" panel=%s heap=%u up=%us",
                 USE_SSD1327 ? "ssd1327" : "ssd1351",
                 (unsigned)ESP.getFreeHeap(), (unsigned)(millis() / 1000));
 #if DEBUG
-  Serial.printf(" fps=%u", lastFps);
+  out.printf(" fps=%u", lastFps);
 #endif
-  Serial.println();
+  out.println();
 }
 
 // Splits one line into a command and its arguments and dispatches it.
 // strtok chews up the buffer, which is fine -- the caller owns it and
 // discards it afterwards.  The command word is lowercased; arguments are
 // only lowercased where case should not matter, such as eye names.
-static void handleCommand(char *line) {
+static void handleCommand(char *line, Print &out) {
   char *cmd = strtok(line, " \t");
   if (!cmd)
     return;
@@ -1479,16 +1615,16 @@ static void handleCommand(char *line) {
     *c = (char)tolower((unsigned char)*c);
 
   if (!strcmp(cmd, "help") || !strcmp(cmd, "?")) {
-    cmdHelp();
+    cmdHelp(out);
   } else if (!strcmp(cmd, "status")) {
-    cmdStatus();
+    cmdStatus(out);
   } else if (!strcmp(cmd, "eye")) {
     char *arg = strtok(NULL, " \t");
     if (arg)
       for (char *c = arg; *c; c++)
         *c = (char)tolower((unsigned char)*c);
     if (!arg || !strcmp(arg, "list")) { // bare "eye" reports what is available
-      listEyeDesigns();
+      listEyeDesigns(out);
       return;
     }
     if (!strcmp(arg, "next") || !strcmp(arg, "toggle")) {
@@ -1496,7 +1632,7 @@ static void handleCommand(char *line) {
     } else if (arg[0] >= '0' && arg[0] <= '9') { // by index
       long idx = atol(arg);
       if (idx < 0 || idx >= (long)NUM_EYE_DESIGNS) {
-        Serial.printf("err: no design %ld -- %u built in\n", idx,
+        out.printf("err: no design %ld -- %u built in\n", idx,
                       (unsigned)NUM_EYE_DESIGNS);
         return;
       }
@@ -1504,50 +1640,50 @@ static void handleCommand(char *line) {
     } else { // by name
       uint8_t idx = eyeDesignByName(arg);
       if (idx >= NUM_EYE_DESIGNS) {
-        Serial.printf("err: no design '%s'. built in:\n", arg);
-        listEyeDesigns();
+        out.printf("err: no design '%s'. built in:\n", arg);
+        listEyeDesigns(out);
         return;
       }
       setEyeDesign(idx);
     }
-    Serial.printf("ok eye=%u %s\n", (unsigned)eyeDesign,
+    out.printf("ok eye=%u %s\n", (unsigned)eyeDesign,
                   eyeDesigns[eyeDesign].name);
   } else if (!strcmp(cmd, "look")) {
     char *a1 = strtok(NULL, " \t");
     if (!a1) {
-      Serial.println(F("usage: look <0-1023> <0-1023> | look auto"));
+      out.println(F("usage: look <0-1023> <0-1023> | look auto"));
       return;
     }
     if (!strcmp(a1, "auto")) {
       gazeCmdActive = false;
-      Serial.println(F("ok gaze=auto"));
+      out.println(F("ok gaze=auto"));
       return;
     }
     char *a2 = strtok(NULL, " \t");
     if (!a2) {
-      Serial.println(F("usage: look <0-1023> <0-1023> | look auto"));
+      out.println(F("usage: look <0-1023> <0-1023> | look auto"));
       return;
     }
     long x = atol(a1), y = atol(a2);
     if (x < 0 || x > 1023 || y < 0 || y > 1023) {
-      Serial.println(F("err: both values must be 0-1023"));
+      out.println(F("err: both values must be 0-1023"));
       return;
     }
     gazeCmdX = (int16_t)x;
     gazeCmdY = (int16_t)y;
     gazeCmdActive = true;
     gazeCmdPending = true;
-    Serial.printf("ok gaze=(%ld,%ld)\n", x, y);
+    out.printf("ok gaze=(%ld,%ld)\n", x, y);
 #if CLOCK
   } else if (!strcmp(cmd, "clock")) {
     char *arg = strtok(NULL, " \t");
     if (!arg) {
       uint32_t t = clockNow();
-      Serial.printf("clock %s %02u:%02u:%02u rate=%ux seconds=%s\n",
+      out.printf("clock %s %02u:%02u:%02u rate=%ux seconds=%s\n",
                     clockOn ? "on" : "off", (unsigned)(t / 3600),
                     (unsigned)((t / 60) % 60), (unsigned)(t % 60),
                     (unsigned)clockRate, clockSeconds ? "on" : "off");
-      Serial.printf("  colours hour=%06lX min=%06lX sec=%06lX\n",
+      out.printf("  colours hour=%06lX min=%06lX sec=%06lX\n",
                     (unsigned long)clockRGB[0], (unsigned long)clockRGB[1],
                     (unsigned long)clockRGB[2]);
       return;
@@ -1558,36 +1694,36 @@ static void handleCommand(char *line) {
     if (!strcmp(arg, "on") || !strcmp(arg, "off")) {
       clockOn = !strcmp(arg, "on");
       settingsDirty = true;
-      Serial.printf("ok clock=%s\n", clockOn ? "on" : "off");
+      out.printf("ok clock=%s\n", clockOn ? "on" : "off");
     } else if (!strcmp(arg, "set")) {
       char *v = strtok(NULL, " \t");
       unsigned h = 0, m = 0, sec = 0;
       if (!v || sscanf(v, "%u:%u:%u", &h, &m, &sec) < 2) {
-        Serial.println(F("usage: clock set HH:MM[:SS]"));
+        out.println(F("usage: clock set HH:MM[:SS]"));
         return;
       }
       if (h > 23 || m > 59 || sec > 59) {
-        Serial.println(F("err: out of range"));
+        out.println(F("err: out of range"));
         return;
       }
       clockSet(h * 3600UL + m * 60UL + sec);
-      Serial.printf("ok clock set %02u:%02u:%02u\n", h, m, sec);
+      out.printf("ok clock set %02u:%02u:%02u\n", h, m, sec);
     } else if (!strcmp(arg, "rate")) {
       char *v = strtok(NULL, " \t");
       long r = v ? atol(v) : 0;
       if (r < 1 || r > 3600) {
-        Serial.println(F("usage: clock rate <1-3600>"));
+        out.println(F("usage: clock rate <1-3600>"));
         return;
       }
       clockSet(clockNow()); // rebase so the jump is not retroactive
       clockRate = (uint16_t)r;
       settingsDirty = true;
-      Serial.printf("ok clock rate=%ldx\n", r);
+      out.printf("ok clock rate=%ldx\n", r);
     } else if (!strcmp(arg, "color") || !strcmp(arg, "colour")) {
       char *a = strtok(NULL, " \t");
       char *b = strtok(NULL, " \t");
       if (!a) {
-        Serial.println(F("usage: clock color [hour|min|sec] RRGGBB"));
+        out.println(F("usage: clock color [hour|min|sec] RRGGBB"));
         return;
       }
       int8_t which = -1; // -1 means all three
@@ -1602,7 +1738,7 @@ static void handleCommand(char *line) {
         else if (!strcmp(a, "sec"))
           which = 2;
         else {
-          Serial.println(F("usage: clock color [hour|min|sec] RRGGBB"));
+          out.println(F("usage: clock color [hour|min|sec] RRGGBB"));
           return;
         }
         hex = b;
@@ -1612,27 +1748,27 @@ static void handleCommand(char *line) {
       char *endp = NULL;
       unsigned long v = strtoul(hex, &endp, 16);
       if (!endp || *endp || v > 0xFFFFFFUL) {
-        Serial.println(F("err: colour must be 6 hex digits, e.g. FF8800"));
+        out.println(F("err: colour must be 6 hex digits, e.g. FF8800"));
         return;
       }
       if (which < 0) {
         for (uint8_t i = 0; i < 3; i++)
           clockSetColor(i, (uint32_t)v);
       settingsDirty = true;
-        Serial.printf("ok clock color all=%06lX\n", v);
+        out.printf("ok clock color all=%06lX\n", v);
       } else {
         clockSetColor((uint8_t)which, (uint32_t)v);
         settingsDirty = true;
-        Serial.printf("ok clock color %s=%06lX\n",
+        out.printf("ok clock color %s=%06lX\n",
                       which == 0 ? "hour" : which == 1 ? "min" : "sec", v);
       }
     } else if (!strcmp(arg, "secs")) {
       char *v = strtok(NULL, " \t");
       clockSeconds = !(v && !strcmp(v, "off"));
       settingsDirty = true;
-      Serial.printf("ok seconds=%s\n", clockSeconds ? "on" : "off");
+      out.printf("ok seconds=%s\n", clockSeconds ? "on" : "off");
     } else {
-      Serial.println(
+      out.println(
           F("usage: clock [on|off|set HH:MM[:SS]|rate N|secs on|off|"
             "color [hour|min|sec] RRGGBB]"));
     }
@@ -1645,26 +1781,34 @@ static void handleCommand(char *line) {
     while (rest && *rest == ' ')
       rest++;
     if (!rest || !*rest) {
-      Serial.printf("tz %s%s" "\n", tzString,
+      out.printf("tz %s%s" "\n", tzString,
                     timeSynced ? "" : " (not synced)");
-      Serial.println(F("  e.g. tz CST6CDT,M3.2.0/2,M11.1.0/2   or   tz UTC0"));
+      out.print(F("  names:"));
+      for (uint8_t i = 0; i < NUM_TZ_CHOICES; i++)
+        out.printf(" %s", tzChoices[i].name);
+      out.println();
+      out.println(F("  or any POSIX string, e.g. PST8PDT,M3.2.0/2,M11.1.0/2"));
       return;
     }
+    // A shortcut name wins; anything else is taken as a POSIX string.
+    const char *named = tzLookup(rest);
+    if (named)
+      rest = (char *)named;
     if (strlen(rest) >= TZ_MAX) {
-      Serial.printf("err: timezone must be under %d characters" "\n", TZ_MAX);
+      out.printf("err: timezone must be under %d characters" "\n", TZ_MAX);
       return;
     }
     strncpy(tzString, rest, sizeof(tzString) - 1);
     tzString[sizeof(tzString) - 1] = '\0';
     netStartTime(); // re-apply and re-sync
     settingsDirty = true;
-    Serial.printf("ok tz=%s" "\n", tzString);
+    out.printf("ok tz=%s" "\n", tzString);
   } else if (!strcmp(cmd, "net")) {
     char *arg = strtok(NULL, " \t");
-    netReport(Serial);
+    netReport(out);
     if (!arg || strcmp(arg, "quiet")) {
       netShow();
-      Serial.println(F("ok showing address cards on the panels"));
+      out.println(F("ok showing address cards on the panels"));
     }
 #endif
   } else if (!strcmp(cmd, "pupil")) {
@@ -1679,11 +1823,11 @@ static void handleCommand(char *line) {
     else if (!strcmp(arg, "off"))
       pupilOn = false;
     else {
-      Serial.println(F("usage: pupil [on|off]"));
+      out.println(F("usage: pupil [on|off]"));
       return;
     }
     settingsDirty = true;
-    Serial.printf("ok pupil=%s%s\n", pupilOn ? "on" : "off",
+    out.printf("ok pupil=%s%s\n", pupilOn ? "on" : "off",
                   pupilOn ? "" : " (full iris disc; dilate has no effect)");
   } else if (!strcmp(cmd, "swap")) {
     char *arg = strtok(NULL, " \t");
@@ -1694,7 +1838,7 @@ static void handleCommand(char *line) {
       else if (!strcmp(arg, "off"))
         want = false;
       else {
-        Serial.println(F("usage: swap [on|off]"));
+        out.println(F("usage: swap [on|off]"));
         return;
       }
     }
@@ -1703,48 +1847,48 @@ static void handleCommand(char *line) {
       swapPending = true; // applied between frames
       settingsDirty = true;
     }
-    Serial.printf("ok swap=%s\n", eyesSwapped ? "on" : "off");
+    out.printf("ok swap=%s\n", eyesSwapped ? "on" : "off");
   } else if (!strcmp(cmd, "save")) {
     saveSettings();
-    Serial.printf("ok saved eye=%s swap=%s\n",
+    out.printf("ok saved eye=%s swap=%s\n",
                   eyeDesigns[eyeDesign].name, eyesSwapped ? "on" : "off");
   } else if (!strcmp(cmd, "forget")) {
     forgetSettings();
-    Serial.println(F("ok settings cleared; build defaults apply at next boot"));
+    out.println(F("ok settings cleared; build defaults apply at next boot"));
   } else if (!strcmp(cmd, "startle")) {
     startleBegin();
-    Serial.println(F("ok startle"));
+    out.println(F("ok startle"));
   } else if (!strcmp(cmd, "dilate")) {
     startleCancel(); // an explicit width wins over a running effect
     char *arg = strtok(NULL, " \t");
     if (!arg) {
-      Serial.println(F("usage: dilate <0-100> | dilate auto"));
+      out.println(F("usage: dilate <0-100> | dilate auto"));
       return;
     }
     if (!strcmp(arg, "auto")) {
       dilateCmdActive = false;
-      Serial.println(F("ok dilate=auto"));
+      out.println(F("ok dilate=auto"));
       return;
     }
     long pct = atol(arg);
     if (pct < 0 || pct > 100) {
-      Serial.println(F("err: dilation must be 0-100"));
+      out.println(F("err: dilation must be 0-100"));
       return;
     }
     setDilation((uint8_t)pct);
-    Serial.printf("ok dilate=%ld%%\n", pct);
+    out.printf("ok dilate=%ld%%\n", pct);
 #ifdef AUTOBLINK
   } else if (!strcmp(cmd, "blink")) {
     timeToNextBlink = 0; // due immediately on the next frame
-    Serial.println(F("ok blink"));
+    out.println(F("ok blink"));
 #endif
 #if STARTUP_SPLASH
   } else if (!strcmp(cmd, "splash")) {
     showSplash();
-    Serial.println(F("ok splash"));
+    out.println(F("ok splash"));
 #endif
   } else {
-    Serial.printf("unknown command '%s' -- try 'help'\n", cmd);
+    out.printf("unknown command '%s' -- try 'help'\n", cmd);
   }
 }
 
@@ -1761,7 +1905,7 @@ static void pollCommands(void) {
     if (c == '\n') {
       line[len] = '\0';
       if (len)
-        handleCommand(line);
+        handleCommand(line, Serial);
       len = 0;
     } else if (len < sizeof(line) - 1) {
       line[len++] = c;
@@ -1811,6 +1955,8 @@ void frame(            // Process motion for a single frame of left or right eye
 
 #if NETWORK
   netPollTime(); // cheap no-op once the first sync has landed
+  if (netState == NET_UP)
+    server.handleClient();
 #endif
 #if CLOCK
   if (clockOn)
