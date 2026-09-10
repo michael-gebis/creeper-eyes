@@ -34,6 +34,12 @@
 #define WIFI_CONNECT_MS 15000
 #define WIFI_PORTAL_S 180
 
+// How long `net` leaves the address cards up before the eyes resume.
+#define NET_SHOW_MS 12000
+
+// 128 px at 6 px per character in the default font.
+#define NET_COLS 21
+
 // Optional: a clone without it still builds, and an unconfigured board
 // falls through to the setup portal.
 #if defined(__has_include)
@@ -55,6 +61,7 @@
 #if NETWORK
 #include <WiFi.h>
 #include <WiFiManager.h> // tzapu/WiFiManager -- captive setup portal
+#include <ESPmDNS.h>
 #endif
 #include <SPI.h>
 
@@ -479,6 +486,42 @@ static void setupNetwork(void) {
     DEBUG_PRINTF("[net] portal timed out; carrying on offline" "\n");
 }
 
+// Everything that only makes sense once there is a link.
+static void netOnConnected(void) {
+  if (WiFi.status() != WL_CONNECTED)
+    return;
+  // Link-local IPv6 is not brought up by default, and takes a moment to be
+  // assigned, so the address can still read as :: right after boot.
+  WiFi.enableIpV6();
+  if (MDNS.begin(WIFI_HOSTNAME))
+    DEBUG_PRINTF("[net] mdns up: %s.local" "\n", WIFI_HOSTNAME);
+  else
+    DEBUG_PRINTF("[net] mdns failed to start" "\n");
+  DEBUG_PRINTF("[net] connected: %s  ipv4 %s" "\n",
+               WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
+}
+
+// Address cards, one panel each, because IPv6 will not fit beside the rest:
+// a link-local address is around 24 characters and a 128 px panel holds 21.
+// Splitting across the two displays is the tidiest use of having two.
+static uint32_t netShowUntil = 0;
+static void netShow(void); // defined with the display code below
+
+static void netReport(Print &out) {
+  out.printf("host=%s.local state=%s" "\n", WIFI_HOSTNAME,
+             WiFi.status() == WL_CONNECTED ? "up"
+             : netState == NET_PORTAL     ? "portal"
+                                          : "down");
+  out.printf("  mac  %s" "\n", WiFi.macAddress().c_str());
+  if (WiFi.status() == WL_CONNECTED) {
+    out.printf("  ssid %s (%d dBm)" "\n", WiFi.SSID().c_str(),
+               (int)WiFi.RSSI());
+    out.printf("  ipv4 %s  gw %s" "\n", WiFi.localIP().toString().c_str(),
+               WiFi.gatewayIP().toString().c_str());
+    out.printf("  ipv6 %s" "\n", WiFi.localIPv6().toString().c_str());
+  }
+}
+
 #endif // NETWORK
 
 // SETTINGS ----------------------------------------------------------------
@@ -660,18 +703,10 @@ static void applySwap(void) {
   eye[1].display.setCS((int8_t)a);
 }
 
-// INITIALIZATION -- runs once at startup ----------------------------------
+// SHARED TEXT RENDERING ----------------------------------------------------
+// Used by the startup splash and by the network address cards, so these
+// live outside both feature guards.
 
-#if COMMANDS
-static void loadSettings(void); // defined with the console, below setup()
-#endif
-
-HardwareSerial SerialIn(1);
-
-#if STARTUP_SPLASH
-
-// The default GFX font is a 6x8 cell, so a string's width is just its
-// length scaled up.
 static void splashCenter(GFXcanvas1 &c, const char *str, uint8_t size,
                          int16_t y) {
   c.setTextSize(size);
@@ -706,6 +741,71 @@ static void pushCanvas(uint8_t e, GFXcanvas1 &canvas) {
 #endif
 }
 
+#if NETWORK
+static void netDrawPanel(uint8_t e) {
+  GFXcanvas1 c(SCREEN_WIDTH, SCREEN_HEIGHT);
+  c.fillScreen(0);
+  c.setTextColor(1);
+  splashCenter(c, WIFI_HOSTNAME, 2, 4);
+  c.drawFastHLine(14, 26, SCREEN_WIDTH - 28, 1);
+
+  if (WiFi.status() != WL_CONNECTED) {
+    splashCenter(c, "OFFLINE", 2, 52);
+    splashCenter(c, "no network", 1, 80);
+    pushCanvas(e, c);
+    return;
+  }
+
+  int16_t y = 34;
+  if (e == 0) {
+    char line[24];
+    splashCenter(c, "MAC", 1, y);
+    y += 11;
+    splashCenter(c, WiFi.macAddress().c_str(), 1, y);
+    y += 18;
+    splashCenter(c, "IPv4", 1, y);
+    y += 11;
+    splashCenter(c, WiFi.localIP().toString().c_str(), 1, y);
+    y += 18;
+    snprintf(line, sizeof(line), "%d dBm", (int)WiFi.RSSI());
+    splashCenter(c, line, 1, y);
+  } else {
+    splashCenter(c, "IPv6", 1, y);
+    y += 11;
+    String v6 = WiFi.localIPv6().toString();
+    // Wrapped rather than truncated: a partial address is worse than useless.
+    for (uint16_t i = 0; i < v6.length(); i += NET_COLS) {
+      splashCenter(c, v6.substring(i, i + NET_COLS).c_str(), 1, y);
+      y += 10;
+    }
+    y += 10;
+    splashCenter(c, WIFI_HOSTNAME ".local", 1, y);
+  }
+  pushCanvas(e, c);
+}
+
+// Paints both panels and leaves them up for a while.  Non-blocking: frame()
+// simply skips the eye render until the deadline, so the console stays
+// responsive and a second `net` refreshes rather than queueing.
+static void netShow(void) {
+  for (uint8_t e = 0; e < NUM_EYES; e++)
+    netDrawPanel(e);
+  netShowUntil = millis() + NET_SHOW_MS;
+}
+#endif // NETWORK
+
+// INITIALIZATION -- runs once at startup ----------------------------------
+
+#if COMMANDS
+static void loadSettings(void); // defined with the console, below setup()
+#endif
+
+HardwareSerial SerialIn(1);
+
+#if STARTUP_SPLASH
+
+// The default GFX font is a 6x8 cell, so a string's width is just its
+// length scaled up.
 // Four centred lines on both panels.  Used while the eyes are not running --
 // during the setup portal, for instance -- so the head is not just sitting
 // there dark with no explanation.
@@ -852,6 +952,7 @@ void setup(void) {
 #endif
 #if NETWORK
   setupNetwork(); // may block on the portal; the eyes wait
+  netOnConnected();
 #endif
 #if STARTUP_SPLASH
   showSplash();
@@ -1250,6 +1351,7 @@ static void cmdHelp(void) {
                  "  clock rate <1-3600>       run it faster, for testing\n"
                  "  clock secs [on|off]       show the second hand\n"
                  "  clock color [hour|min|sec] RRGGBB\n"
+                 "  net [quiet]               address info, on screen too\n"
                  "  pupil [on|off]            pupil, or a full iris disc\n"
                  "  swap [on|off]             swap which panel is which "
                  "eye\n"
@@ -1456,6 +1558,15 @@ static void handleCommand(char *line) {
       Serial.println(
           F("usage: clock [on|off|set HH:MM[:SS]|rate N|secs on|off|"
             "color [hour|min|sec] RRGGBB]"));
+    }
+#endif
+#if NETWORK
+  } else if (!strcmp(cmd, "net")) {
+    char *arg = strtok(NULL, " \t");
+    netReport(Serial);
+    if (!arg || strcmp(arg, "quiet")) {
+      netShow();
+      Serial.println(F("ok showing address cards on the panels"));
     }
 #endif
   } else if (!strcmp(cmd, "pupil")) {
@@ -1819,6 +1930,14 @@ void frame(            // Process motion for a single frame of left or right eye
   }
 
   // Pass all the derived values to the eye-rendering function:
+#if NETWORK
+  // The address cards own the panels until their deadline passes.
+  if (netShowUntil) {
+    if ((int32_t)(millis() - netShowUntil) < 0)
+      return;
+    netShowUntil = 0;
+  }
+#endif
   drawEye(eyeIndex, iScale, eyeX, eyeY, n, lThreshold);
 }
 
