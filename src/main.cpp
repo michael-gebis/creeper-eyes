@@ -79,6 +79,14 @@ typedef Adafruit_SSD1351 displayType; // Using OLED display(s)
 #define DEBUG_PRINTF(...)
 #endif
 
+// STARTUP SPLASH ----------------------------------------------------------
+// Names each panel on screen at boot, counting down, so you can tell which
+// physical display is on which chip select without tracing wires.  Set to 0
+// to boot straight into the eyes.
+
+#define STARTUP_SPLASH 1
+#define SPLASH_SECONDS 5
+
 // INPUT CONFIG (for eye motion -- enable or comment out as needed) --------
 
 #define TRACKING    // If enabled, eyelid tracks pupil
@@ -140,6 +148,69 @@ struct {
 
 HardwareSerial SerialIn(1);
 
+#if STARTUP_SPLASH
+
+// The default GFX font is a 6x8 cell, so a string's width is just its
+// length scaled up.
+static void splashCenter(GFXcanvas1 &c, const char *str, uint8_t size,
+                         int16_t y) {
+  c.setTextSize(size);
+  c.setCursor((SCREEN_WIDTH - (int16_t)strlen(str) * 6 * size) / 2, y);
+  c.print(str);
+}
+
+static void showSplash(void) {
+  // One 1-bit canvas serves both panel types: 2 KB, versus 32 KB for a
+  // colour one, and the text is monochrome either way.
+  GFXcanvas1 canvas(SCREEN_WIDTH, SCREEN_HEIGHT);
+  static const char *const side[2] = {"LEFT", "RIGHT"};
+#if USE_SSD1327
+  static uint8_t splashBuf[SSD1327_FRAME_BYTES];
+#endif
+
+  DEBUG_PRINTF("[creeper-eyes] splash: naming panels for %d s\n",
+               SPLASH_SECONDS);
+
+  for (int8_t remain = SPLASH_SECONDS; remain > 0; remain--) {
+    char digit[2] = {(char)('0' + remain), '\0'};
+
+    for (uint8_t e = 0; e < NUM_EYES; e++) {
+      canvas.fillScreen(0);
+      canvas.setTextColor(1);
+      splashCenter(canvas, "FRANK'S", 2, 22);
+      splashCenter(canvas, side[e & 1], 2, 46);
+      splashCenter(canvas, digit, 4, 78);
+
+#if USE_SSD1327
+      // 1 bit per pixel out, 4 bits per pixel in, two pixels to a byte.
+      uint16_t o = 0;
+      for (int16_t y = 0; y < SCREEN_HEIGHT; y++)
+        for (int16_t x = 0; x < SCREEN_WIDTH; x += 2, o++)
+          splashBuf[o] = (uint8_t)((canvas.getPixel(x, y) ? 0xF0 : 0x00) |
+                                   (canvas.getPixel(x + 1, y) ? 0x0F : 0x00));
+      SPI.beginTransaction(graySPI);
+      eye[e].display.pushFrame(splashBuf);
+      SPI.endTransaction();
+#else
+      eye[e].display.drawBitmap(0, 0, canvas.getBuffer(), SCREEN_WIDTH,
+                                SCREEN_HEIGHT, 0xFFFF, 0x0000);
+#endif
+    }
+    delay(1000);
+  }
+
+  // Hand a clean screen to the eyes.
+  for (uint8_t e = 0; e < NUM_EYES; e++) {
+#if USE_SSD1327
+    eye[e].display.fill(graySPI, 0x0);
+#else
+    eye[e].display.fillScreen(0x0000);
+#endif
+  }
+}
+
+#endif // STARTUP_SPLASH
+
 void setup(void) {
   uint8_t e;
 
@@ -195,6 +266,10 @@ void setup(void) {
   // mirror gaze direction and cross the eyes, so leave it off.
   // eye[0].display.writeCommand(SSD1351_CMD_SETREMAP);
   // eye[0].display.write16(0x76);
+
+#if STARTUP_SPLASH
+  showSplash();
+#endif
 }
 
 // EYE-RENDERING FUNCTION --------------------------------------------------9
