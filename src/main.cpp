@@ -19,6 +19,7 @@
 
 #include "config.h"
 #include "console.h"
+#include "state.h"
 #include "display.h"
 #include "net.h"
 
@@ -1085,6 +1086,191 @@ static void pollStartle(void) {
   }
 }
 
+
+// DEVICE OPERATIONS ---------------------------------------------------------
+// The implementation of state.h.  Thin by design: each of these does one
+// thing to the device and reports whether it worked, leaving every decision
+// about wording, status codes and formatting to the caller.
+
+void stateGet(DeviceState &o) {
+  o.eyeIndex = eyeDesign;
+  o.eyeCount = NUM_EYE_DESIGNS;
+  o.eyeName = eyeDesigns[eyeDesign].name;
+
+  o.gazeManual = gazeCmdActive;
+  o.gazeX = gazeCmdX;
+  o.gazeY = gazeCmdY;
+
+  o.dilateManual = dilateCmdActive;
+  o.dilatePercent = dilateCmdPct;
+  o.pupilOn = pupilOn;
+
+  o.swapped = eyesSwapped;
+#if CLOCK
+  o.startleActive = (startleState != STARTLE_OFF);
+  o.clockOn = clockOn;
+  o.clockSeconds = clockSeconds;
+  o.clockRate = clockRate;
+  o.clockSecOfDay = clockNow();
+  for (uint8_t i = 0; i < 3; i++)
+    o.clockColor[i] = clockRGB[i];
+#else
+  o.startleActive = false;
+  o.clockOn = o.clockSeconds = false;
+  o.clockRate = 0;
+  o.clockSecOfDay = 0;
+  o.clockColor[0] = o.clockColor[1] = o.clockColor[2] = 0;
+#endif
+
+  o.settingsDirty = settingsDirty;
+  o.fps = lastFps;
+  o.freeHeap = ESP.getFreeHeap();
+  o.uptimeSec = millis() / 1000UL;
+}
+
+uint8_t stateEyeCount(void) { return NUM_EYE_DESIGNS; }
+
+const char *stateEyeName(uint8_t i) {
+  return i < NUM_EYE_DESIGNS ? eyeDesigns[i].name : NULL;
+}
+
+bool stateSetEyeIndex(uint8_t i) {
+  if (i >= NUM_EYE_DESIGNS)
+    return false;
+  setEyeDesign(i);
+  return true;
+}
+
+bool stateSetEyeName(const char *name) {
+  uint8_t i = eyeDesignByName(name);
+  if (i >= NUM_EYE_DESIGNS)
+    return false;
+  setEyeDesign(i);
+  return true;
+}
+
+void stateNextEye(void) {
+  setEyeDesign((uint8_t)((eyeDesign + 1) % NUM_EYE_DESIGNS));
+}
+
+bool stateSetGaze(int16_t x, int16_t y) {
+  if (x < 0 || x > 1023 || y < 0 || y > 1023)
+    return false;
+  gazeCmdX = x;
+  gazeCmdY = y;
+  gazeCmdActive = true;
+  gazeCmdPending = true;
+  return true;
+}
+
+void stateGazeAuto(void) { gazeCmdActive = false; }
+
+bool stateSetDilation(uint8_t pct) {
+  if (pct > 100)
+    return false;
+#if CLOCK
+  startleCancel(); // an explicit width wins over a running effect
+#endif
+  setDilation(pct);
+  return true;
+}
+
+void stateDilationAuto(void) {
+#if CLOCK
+  startleCancel(); // else it restores a commanded width a moment later
+#endif
+  dilateCmdActive = false;
+}
+
+void stateSetPupil(bool on) { pupilOn = on; }
+
+void stateSetSwap(bool sw) {
+  if (sw == eyesSwapped)
+    return;
+  eyesSwapped = sw;
+  swapPending = true; // applied between frames
+  settingsDirty = true;
+}
+
+void stateBlink(void) {
+#ifdef AUTOBLINK
+  timeToNextBlink = 0; // due on the next frame
+#endif
+}
+
+void stateStartle(void) {
+#if CLOCK
+  startleBegin();
+#endif
+}
+
+void stateSplash(void) {
+#if STARTUP_SPLASH
+  showSplash();
+#endif
+}
+
+void stateClockSetOn(bool on) {
+#if CLOCK
+  clockOn = on;
+  settingsDirty = true;
+#endif
+}
+
+void stateClockSetSeconds(bool on) {
+#if CLOCK
+  clockSeconds = on;
+  settingsDirty = true;
+#endif
+}
+
+bool stateClockSetRate(uint16_t rate) {
+#if CLOCK
+  if (rate < 1 || rate > 3600)
+    return false;
+  clockSet(clockNow()); // rebase so the change is not retroactive
+  clockRate = rate;
+  settingsDirty = true;
+  return true;
+#else
+  (void)rate;
+  return false;
+#endif
+}
+
+bool stateClockSetTime(uint8_t h, uint8_t m, uint8_t sec) {
+#if CLOCK
+  if (h > 23 || m > 59 || sec > 59)
+    return false;
+  // Deliberately not marked dirty: the time is not persisted.
+  clockSet((uint32_t)h * 3600UL + (uint32_t)m * 60UL + sec);
+  return true;
+#else
+  (void)h; (void)m; (void)sec;
+  return false;
+#endif
+}
+
+bool stateClockSetColor(int8_t which, uint32_t rgb) {
+#if CLOCK
+  if (which >= 3)
+    return false;
+  if (which < 0)
+    for (uint8_t i = 0; i < 3; i++)
+      clockSetColor(i, rgb);
+  else
+    clockSetColor((uint8_t)which, rgb);
+  settingsDirty = true;
+  return true;
+#else
+  (void)which; (void)rgb;
+  return false;
+#endif
+}
+
+void stateSave(void) { saveSettings(); }
+void stateForget(void) { forgetSettings(); }
+
 // Kept in flash with F() -- the string is longer than it looks.
 static void cmdHelp(Print &out) {
   out.print(F("\ncommands:\n"
@@ -1168,23 +1354,18 @@ void handleCommand(char *line, Print &out) {
       return;
     }
     if (!strcmp(arg, "next") || !strcmp(arg, "toggle")) {
-      setEyeDesign((uint8_t)((eyeDesign + 1) % NUM_EYE_DESIGNS));
+      stateNextEye();
     } else if (arg[0] >= '0' && arg[0] <= '9') { // by index
       long idx = atol(arg);
-      if (idx < 0 || idx >= (long)NUM_EYE_DESIGNS) {
+      if (idx < 0 || !stateSetEyeIndex((uint8_t)idx)) {
         out.printf("err: no design %ld -- %u built in\n", idx,
-                      (unsigned)NUM_EYE_DESIGNS);
+                   (unsigned)stateEyeCount());
         return;
       }
-      setEyeDesign((uint8_t)idx);
-    } else { // by name
-      uint8_t idx = eyeDesignByName(arg);
-      if (idx >= NUM_EYE_DESIGNS) {
+    } else if (!stateSetEyeName(arg)) { // by name
         out.printf("err: no design '%s'. built in:\n", arg);
-        listEyeDesigns(out);
-        return;
-      }
-      setEyeDesign(idx);
+      listEyeDesigns(out);
+      return;
     }
     out.printf("ok eye=%u %s\n", (unsigned)eyeDesign,
                   eyeDesigns[eyeDesign].name);
@@ -1195,7 +1376,7 @@ void handleCommand(char *line, Print &out) {
       return;
     }
     if (!strcmp(a1, "auto")) {
-      gazeCmdActive = false;
+      stateGazeAuto();
       out.println(F("ok gaze=auto"));
       return;
     }
@@ -1205,14 +1386,10 @@ void handleCommand(char *line, Print &out) {
       return;
     }
     long x = atol(a1), y = atol(a2);
-    if (x < 0 || x > 1023 || y < 0 || y > 1023) {
+    if (!stateSetGaze((int16_t)x, (int16_t)y)) {
       out.println(F("err: both values must be 0-1023"));
       return;
     }
-    gazeCmdX = (int16_t)x;
-    gazeCmdY = (int16_t)y;
-    gazeCmdActive = true;
-    gazeCmdPending = true;
     out.printf("ok gaze=(%ld,%ld)\n", x, y);
 #if CLOCK
   } else if (!strcmp(cmd, "clock")) {
@@ -1357,11 +1534,11 @@ void handleCommand(char *line, Print &out) {
       for (char *c = arg; *c; c++)
         *c = (char)tolower((unsigned char)*c);
     if (!arg)
-      pupilOn = !pupilOn;
+      stateSetPupil(!pupilOn);
     else if (!strcmp(arg, "on"))
-      pupilOn = true;
+      stateSetPupil(true);
     else if (!strcmp(arg, "off"))
-      pupilOn = false;
+      stateSetPupil(false);
     else {
       out.println(F("usage: pupil [on|off]"));
       return;
@@ -1382,49 +1559,43 @@ void handleCommand(char *line, Print &out) {
         return;
       }
     }
-    if (want != eyesSwapped) {
-      eyesSwapped = want;
-      swapPending = true; // applied between frames
-      settingsDirty = true;
-    }
+    stateSetSwap(want);
     out.printf("ok swap=%s\n", eyesSwapped ? "on" : "off");
   } else if (!strcmp(cmd, "save")) {
-    saveSettings();
+    stateSave();
     out.printf("ok saved eye=%s swap=%s\n",
                   eyeDesigns[eyeDesign].name, eyesSwapped ? "on" : "off");
   } else if (!strcmp(cmd, "forget")) {
-    forgetSettings();
+    stateForget();
     out.println(F("ok settings cleared; build defaults apply at next boot"));
   } else if (!strcmp(cmd, "startle")) {
-    startleBegin();
+    stateStartle();
     out.println(F("ok startle"));
   } else if (!strcmp(cmd, "dilate")) {
-    startleCancel(); // an explicit width wins over a running effect
     char *arg = strtok(NULL, " \t");
     if (!arg) {
       out.println(F("usage: dilate <0-100> | dilate auto"));
       return;
     }
     if (!strcmp(arg, "auto")) {
-      dilateCmdActive = false;
+      stateDilationAuto();
       out.println(F("ok dilate=auto"));
       return;
     }
     long pct = atol(arg);
-    if (pct < 0 || pct > 100) {
+    if (pct < 0 || !stateSetDilation((uint8_t)pct)) {
       out.println(F("err: dilation must be 0-100"));
       return;
     }
-    setDilation((uint8_t)pct);
     out.printf("ok dilate=%ld%%\n", pct);
 #ifdef AUTOBLINK
   } else if (!strcmp(cmd, "blink")) {
-    timeToNextBlink = 0; // due immediately on the next frame
+    stateBlink();
     out.println(F("ok blink"));
 #endif
 #if STARTUP_SPLASH
   } else if (!strcmp(cmd, "splash")) {
-    showSplash();
+    stateSplash();
     out.println(F("ok splash"));
 #endif
   } else {
@@ -1467,7 +1638,7 @@ static void pollBootButton(void) {
     lastEdge = now;
     wasDown = isDown;
     if (isDown) { // act on press, not release
-      setEyeDesign((uint8_t)((eyeDesign + 1) % NUM_EYE_DESIGNS));
+      stateNextEye();
       Serial.printf("ok eye=%u %s (button)\n", (unsigned)eyeDesign,
                     eyeDesigns[eyeDesign].name);
     }
