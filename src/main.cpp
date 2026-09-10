@@ -373,17 +373,32 @@ static bool settingsDirty = false;
 #define PREFS_KEY_EYE "eye"
 #define PREFS_KEY_SWAP "swap"
 #define PREFS_KEY_PUPIL "pupil"
+#define PREFS_KEY_CLK_ON "clkOn"
+#define PREFS_KEY_CLK_SEC "clkSec"
+#define PREFS_KEY_CLK_RATE "clkRate"
+#define PREFS_KEY_CLK_C0 "clkC0"
+#define PREFS_KEY_CLK_C1 "clkC1"
+#define PREFS_KEY_CLK_C2 "clkC2"
 
-// The clock is deliberately not persisted.  Without a real time source it
-// would come back wrong by however long the power was off, and restoring a
-// running clock showing the wrong time is worse than not restoring it.
-// Revisit once there is something to sync against.
+// The clock's display preferences are saved; the time itself is not.
+// Restoring a time from whenever the power went off would be wrong by
+// exactly that interval, and the plan is to get the time from NTP, which
+// makes a stored one pointless as well as misleading.
 
 static void saveSettings(void) {
   prefs.begin(PREFS_NAMESPACE, false);
   prefs.putString(PREFS_KEY_EYE, eyeDesigns[eyeDesign].name);
   prefs.putBool(PREFS_KEY_SWAP, eyesSwapped);
   prefs.putBool(PREFS_KEY_PUPIL, pupilOn);
+#if CLOCK
+  prefs.putBool(PREFS_KEY_CLK_ON, clockOn);
+  prefs.putBool(PREFS_KEY_CLK_SEC, clockSeconds);
+  prefs.putUShort(PREFS_KEY_CLK_RATE, clockRate);
+  prefs.putULong(PREFS_KEY_CLK_C0, clockRGB[0]);
+  prefs.putULong(PREFS_KEY_CLK_C1, clockRGB[1]);
+  prefs.putULong(PREFS_KEY_CLK_C2, clockRGB[2]);
+  // Not the time -- see the note by the keys.
+#endif
   prefs.end();
   settingsDirty = false;
 }
@@ -903,7 +918,24 @@ static void loadSettings(void) {
   String saved = prefs.getString(PREFS_KEY_EYE, "");
   bool sw = prefs.getBool(PREFS_KEY_SWAP, false);
   pupilOn = prefs.getBool(PREFS_KEY_PUPIL, pupilOn);
+#if CLOCK
+  clockOn = prefs.getBool(PREFS_KEY_CLK_ON, clockOn);
+  clockSeconds = prefs.getBool(PREFS_KEY_CLK_SEC, clockSeconds);
+  clockRate = prefs.getUShort(PREFS_KEY_CLK_RATE, clockRate);
+  uint32_t c0 = prefs.getULong(PREFS_KEY_CLK_C0, clockRGB[0]);
+  uint32_t c1 = prefs.getULong(PREFS_KEY_CLK_C1, clockRGB[1]);
+  uint32_t c2 = prefs.getULong(PREFS_KEY_CLK_C2, clockRGB[2]);
+#endif
   prefs.end();
+
+#if CLOCK
+  clockSetColor(0, c0);
+  clockSetColor(1, c1);
+  clockSetColor(2, c2);
+  // The time starts at its built-in default; only the hand angles need
+  // settling before the first frame.
+  clockUpdate();
+#endif
 
   if (sw) {
     eyesSwapped = true;
@@ -926,6 +958,11 @@ static void loadSettings(void) {
   DEBUG_PRINTF("[creeper-eyes] settings: eye=%s swap=%s pupil=%s\n",
                eyeDesigns[eyeDesign].name, eyesSwapped ? "yes" : "no",
                pupilOn ? "on" : "off");
+#if CLOCK
+  DEBUG_PRINTF("[creeper-eyes] clock: %s rate=%ux seconds=%s (time not restored)\n",
+               clockOn ? "on" : "off", (unsigned)clockRate,
+               clockSeconds ? "on" : "off");
+#endif
 }
 
 static void listEyeDesigns(void) {
@@ -1158,6 +1195,7 @@ static void handleCommand(char *line) {
 
     if (!strcmp(arg, "on") || !strcmp(arg, "off")) {
       clockOn = !strcmp(arg, "on");
+      settingsDirty = true;
       Serial.printf("ok clock=%s\n", clockOn ? "on" : "off");
     } else if (!strcmp(arg, "set")) {
       char *v = strtok(NULL, " \t");
@@ -1181,6 +1219,7 @@ static void handleCommand(char *line) {
       }
       clockSet(clockNow()); // rebase so the jump is not retroactive
       clockRate = (uint16_t)r;
+      settingsDirty = true;
       Serial.printf("ok clock rate=%ldx\n", r);
     } else if (!strcmp(arg, "color") || !strcmp(arg, "colour")) {
       char *a = strtok(NULL, " \t");
@@ -1217,15 +1256,18 @@ static void handleCommand(char *line) {
       if (which < 0) {
         for (uint8_t i = 0; i < 3; i++)
           clockSetColor(i, (uint32_t)v);
+      settingsDirty = true;
         Serial.printf("ok clock color all=%06lX\n", v);
       } else {
         clockSetColor((uint8_t)which, (uint32_t)v);
+        settingsDirty = true;
         Serial.printf("ok clock color %s=%06lX\n",
                       which == 0 ? "hour" : which == 1 ? "min" : "sec", v);
       }
     } else if (!strcmp(arg, "secs")) {
       char *v = strtok(NULL, " \t");
       clockSeconds = !(v && !strcmp(v, "off"));
+      settingsDirty = true;
       Serial.printf("ok seconds=%s\n", clockSeconds ? "on" : "off");
     } else {
       Serial.println(
