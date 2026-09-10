@@ -189,10 +189,10 @@ void setup(void) {
   DEBUG_PRINTF("[creeper-eyes] %u panel(s) initialised (%s)\n",
                (unsigned)NUM_EYES, USE_SSD1327 ? "SSD1327 grey" : "SSD1351 rgb");
 
-  // One of the displays is configured to mirror on the X axis.  Simplifies
-  // eyelid handling in the drawEye() function -- no need for distinct
-  // L-to-R or R-to-L inner loops.  Just the X coordinate of the iris is
-  // then reversed when drawing this eye, so they move the same.  Magic!
+  // Eyelid mirroring for the left eye is done in software, in drawEye(), so
+  // it behaves the same on both panel types.  The hardware alternative below
+  // mirrors the whole SSD1351 panel in its controller -- which would also
+  // mirror gaze direction and cross the eyes, so leave it off.
   // eye[0].display.writeCommand(SSD1351_CMD_SETREMAP);
   // eye[0].display.write16(0x76);
 }
@@ -208,8 +208,17 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
 
   uint8_t screenX, screenY, scleraXsave;
   int16_t irisX, irisY;
-  uint16_t p, a, burstIdx;
+  uint16_t p, a;
   uint32_t d;
+
+  // The left eye's EYELIDS are mirrored so the pair reads as a matched set,
+  // tear ducts inboard, the way real eyes are shaped.
+  //
+  // The eyeball is deliberately NOT mirrored.  Gaze direction comes from
+  // panning the window into the sclera and iris, so mirroring that too makes
+  // the pupils pan in opposite directions and the eyes go cross-eyed.
+  // Eyelids mirror; gaze does not.
+  const bool mirrorLids = (e == 0);
   static uint16_t pBurst[SCREEN_WIDTH *
                          SCREEN_HEIGHT]; // Full frame buffer possible on ESP32
 
@@ -219,14 +228,16 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
 
   scleraXsave = scleraX; // Save initial X value to reset on each line
   irisY = scleraY - (SCLERA_HEIGHT - IRIS_HEIGHT) / 2;
-  burstIdx = 0;
   for (screenY = 0; screenY < SCREEN_HEIGHT; screenY++, scleraY++, irisY++) {
     scleraX = scleraXsave;
     irisX = scleraXsave - (SCLERA_WIDTH - IRIS_WIDTH) / 2;
     for (screenX = 0; screenX < SCREEN_WIDTH; screenX++, scleraX++, irisX++) {
-      int effectiveX = e == 1 ? screenX : SCREEN_WIDTH - screenX;
-      if ((lower[screenY][effectiveX] <= lT) ||
-          (upper[screenY][effectiveX] <= uT)) { // Covered by eyelid
+      // SCREEN_WIDTH - 1 - screenX, not SCREEN_WIDTH - screenX: the latter
+      // yields 128 at screenX == 0, one past the end of the row.
+      const uint8_t lidX =
+          mirrorLids ? (uint8_t)(SCREEN_WIDTH - 1 - screenX) : screenX;
+      if ((lower[screenY][lidX] <= lT) ||
+          (upper[screenY][lidX] <= uT)) { // Covered by eyelid
         p = 0;
       } else if ((irisY < 0) || (irisY >= IRIS_HEIGHT) || (irisX < 0) ||
                  (irisX >= IRIS_WIDTH)) { // In sclera
@@ -241,7 +252,7 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
           p = sclera[scleraY][scleraX];          // Pixel = sclera
         }
       }
-      pBurst[burstIdx++] = p;
+      pBurst[screenY * SCREEN_WIDTH + screenX] = p;
     }
   }
 
