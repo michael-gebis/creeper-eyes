@@ -487,6 +487,11 @@ static bool dilateCmdActive = false;
 static uint8_t dilateCmdPct = 50;
 static uint16_t dilateCmdValue = (IRIS_MIN + IRIS_MAX) / 2;
 
+// Easing state lives at file scope so the startle effect can retune the
+// rate, and snap the pupil open instantly when it wants to.
+static int32_t dilateCurrent = (IRIS_MIN + IRIS_MAX) / 2;
+static uint8_t dilateEaseDiv = 8; // larger = slower approach
+
 static void setDilation(uint8_t pct) {
   if (pct > 100)
     pct = 100;
@@ -494,6 +499,63 @@ static void setDilation(uint8_t pct) {
   dilateCmdValue =
       (uint16_t)(IRIS_MAX - ((uint32_t)pct * (IRIS_MAX - IRIS_MIN)) / 100);
   dilateCmdActive = true;
+}
+
+// STARTLE -----------------------------------------------------------------
+// Squeeze the pupil down slowly, then blow it wide open with a blink.  Run
+// as a state machine polled once per frame rather than with delay(), which
+// would freeze rendering for the duration of the effect.
+
+enum { STARTLE_OFF, STARTLE_WINDUP, STARTLE_HOLD };
+static uint8_t startleState = STARTLE_OFF;
+static uint32_t startleMark = 0;
+static bool startleWasAuto = true;
+static uint8_t startleWasPct = 50;
+
+#define STARTLE_WINDUP_MS 1400 // slow constrict -- the tension
+#define STARTLE_HOLD_MS 1200   // eyes held wide after the jolt
+
+static void startleBegin(void) {
+  startleWasAuto = !dilateCmdActive; // so we can hand back what we took
+  startleWasPct = dilateCmdPct;
+  setDilation(0);      // constrict to a pinpoint
+  dilateEaseDiv = 48;  // ...slowly
+  startleMark = millis();
+  startleState = STARTLE_WINDUP;
+}
+
+static void startleCancel(void) {
+  startleState = STARTLE_OFF;
+  dilateEaseDiv = 8;
+}
+
+static void pollStartle(void) {
+  if (startleState == STARTLE_OFF)
+    return;
+
+  uint32_t now = millis();
+
+  if (startleState == STARTLE_WINDUP) {
+    if (now - startleMark >= STARTLE_WINDUP_MS) {
+      setDilation(100);            // full open
+      dilateCurrent = dilateCmdValue; // ...instantly, no ease
+      dilateEaseDiv = 8;
+#ifdef AUTOBLINK
+      timeToNextBlink = 0; // flinch
+#endif
+      startleMark = now;
+      startleState = STARTLE_HOLD;
+    }
+  } else if (startleState == STARTLE_HOLD) {
+    if (now - startleMark >= STARTLE_HOLD_MS) {
+      if (startleWasAuto)
+        dilateCmdActive = false;
+      else
+        setDilation(startleWasPct);
+      startleState = STARTLE_OFF;
+      Serial.println(F("ok startle complete"));
+    }
+  }
 }
 
 static void cmdHelp(void) {
@@ -505,6 +567,8 @@ static void cmdHelp(void) {
                  "  dilate <0-100>            pupil width, 100 = fully "
                  "dilated\n"
                  "  dilate auto               return to autonomous dilation\n"
+                 "  startle                   constrict, then snap wide "
+                 "with a blink\n"
                  "  blink                     blink both eyes now\n"
                  "  splash                    re-show the panel name cards\n"
                  "  status                    report current state\n"
@@ -519,6 +583,9 @@ static void cmdStatus(void) {
   Serial.printf(" dilate=%s", dilateCmdActive ? "" : "auto");
   if (dilateCmdActive)
     Serial.printf("%u%%", (unsigned)dilateCmdPct);
+  if (startleState != STARTLE_OFF)
+    Serial.print(startleState == STARTLE_WINDUP ? " startle=windup"
+                                                : " startle=hold");
   Serial.printf(" panel=%s heap=%u up=%us",
                 USE_SSD1327 ? "ssd1327" : "ssd1351",
                 (unsigned)ESP.getFreeHeap(), (unsigned)(millis() / 1000));
@@ -581,7 +648,11 @@ static void handleCommand(char *line) {
     gazeCmdActive = true;
     gazeCmdPending = true;
     Serial.printf("ok gaze=(%ld,%ld)\n", x, y);
+  } else if (!strcmp(cmd, "startle")) {
+    startleBegin();
+    Serial.println(F("ok startle"));
   } else if (!strcmp(cmd, "dilate")) {
+    startleCancel(); // an explicit width wins over a running effect
     char *arg = strtok(NULL, " \t");
     if (!arg) {
       Serial.println(F("usage: dilate <0-100> | dilate auto"));
@@ -672,16 +743,24 @@ void frame(            // Process motion for a single frame of left or right eye
   pollCommands();
   pollBootButton();
 
+  pollStartle();
+
   // Ease toward the commanded width rather than snapping.  While released,
   // track the autonomous value so handing control back is seamless.
-  {
-    static int32_t dilateNow = (IRIS_MIN + IRIS_MAX) / 2;
-    if (dilateCmdActive) {
-      dilateNow += ((int32_t)dilateCmdValue - dilateNow) / 8;
-      iScale = (uint16_t)dilateNow;
-    } else {
-      dilateNow = (int32_t)iScale;
+  if (dilateCmdActive) {
+    int32_t diff = (int32_t)dilateCmdValue - dilateCurrent;
+    if (diff) {
+      // Integer division alone stalls once the gap is smaller than the
+      // divisor, leaving the pupil short of the commanded width, so always
+      // move at least one step.
+      int32_t step = diff / (int32_t)dilateEaseDiv;
+      if (!step)
+        step = (diff > 0) ? 1 : -1;
+      dilateCurrent += step;
     }
+    iScale = (uint16_t)dilateCurrent;
+  } else {
+    dilateCurrent = (int32_t)iScale;
   }
 #endif
 
