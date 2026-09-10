@@ -6,6 +6,8 @@
 
 #include "display.h"
 #include <ESPmDNS.h>
+#include <Preferences.h>
+#include <esp_wifi.h>
 #include <WiFi.h>
 #include <WiFiManager.h>
 
@@ -43,6 +45,110 @@ bool wifiWaitConnected(uint32_t ms) {
 // A failure at every stage is not fatal.  The eyes are the point of the
 // device; the network is a convenience, so an unreachable one just means
 // carrying on offline.
+// Its own namespace rather than the console's: this is the network module's
+// business, and keeping it separate means `forget` on the settings side cannot
+// wipe the flag by accident.
+#define NET_PREFS "frank-net"
+#define NET_KEY_PORTAL "portal"
+
+static uint8_t pendingOp = 0; // 0 none, 1 join, 2 forget, 3 portal
+static char pendingSsid[33];
+static char pendingPass[64];
+
+// What NVS held when this boot started.  Captured once, because it is only
+// true once: esp_wifi_get_config() returns the driver's *running* config,
+// which is loaded from NVS at init but overwritten by the first begin().
+static char bootSsid[33];
+
+// WiFi.SSID() reports the access point currently associated, not what is in
+// NVS: it calls esp_wifi_sta_get_ap_info(), which is empty until a connection
+// exists.  Using it to ask "do we have stored credentials?" therefore always
+// answered no, and the stored-network branch below had never once run -- a
+// board configured through the portal went back to the portal on every boot.
+static void readStoredSsid(void) {
+  wifi_config_t conf;
+  bootSsid[0] = '\0';
+  if (esp_wifi_get_config(WIFI_IF_STA, &conf) != ESP_OK)
+    return;
+  strncpy(bootSsid, (const char *)conf.sta.ssid, sizeof(bootSsid) - 1);
+  bootSsid[sizeof(bootSsid) - 1] = '\0';
+}
+
+bool netStoredSsid(char *out, size_t n) {
+  if (!out || n == 0)
+    return false;
+  strncpy(out, bootSsid, n - 1);
+  out[n - 1] = '\0';
+  return out[0] != '\0';
+}
+
+bool netRequestJoin(const char *ssid, const char *pass) {
+  if (!ssid || !*ssid || strlen(ssid) > 32)
+    return false;
+  if (pass && strlen(pass) > 63)
+    return false;
+  strncpy(pendingSsid, ssid, sizeof(pendingSsid) - 1);
+  pendingSsid[sizeof(pendingSsid) - 1] = 0;
+  strncpy(pendingPass, pass ? pass : "", sizeof(pendingPass) - 1);
+  pendingPass[sizeof(pendingPass) - 1] = 0;
+  pendingOp = 1;
+  return true;
+}
+
+void netRequestForget(void) { pendingOp = 2; }
+void netRequestPortal(void) { pendingOp = 3; }
+bool netRebootPending(void) { return pendingOp != 0; }
+
+// Whether the last boot was asked to go straight to the portal.  Reading it
+// clears it, so a portal request is honoured exactly once.
+static bool takePortalRequest(void) {
+  Preferences p;
+  if (!p.begin(NET_PREFS, false))
+    return false;
+  bool want = p.getBool(NET_KEY_PORTAL, false);
+  if (want)
+    p.remove(NET_KEY_PORTAL);
+  p.end();
+  return want;
+}
+
+void netPollPending(void) {
+  uint8_t op = pendingOp;
+  if (!op)
+    return;
+  pendingOp = 0;
+
+  switch (op) {
+  case 1:
+    DEBUG_PRINTF("[net] storing network '%s' and rebooting" "\n", pendingSsid);
+    showMessage("WIFI", "JOIN", pendingSsid, "rebooting");
+    // persistent(true) is set in setupNetwork, so begin() writes the
+    // credentials to NVS.  The connection attempt itself is incidental --
+    // the reboot is what applies them, through the usual path.
+    WiFi.begin(pendingSsid, pendingPass);
+    break;
+  case 2:
+    DEBUG_PRINTF("[net] forgetting the stored network and rebooting" "\n");
+    showMessage("WIFI", "FORGET", NULL, "rebooting");
+    WiFi.disconnect(true, true); // radio off, erase the stored AP
+    break;
+  case 3:
+    DEBUG_PRINTF("[net] portal requested; rebooting into it" "\n");
+    showMessage("WIFI", "SETUP", NULL, "rebooting");
+    {
+      Preferences p;
+      if (p.begin(NET_PREFS, false)) {
+        p.putBool(NET_KEY_PORTAL, true);
+        p.end();
+      }
+    }
+    break;
+  }
+
+  delay(600); // long enough for the panels to be read, and the socket to drain
+  ESP.restart();
+}
+
 void setupNetwork(void) {
   // Hostname before mode() and begin(), or the DHCP request goes out with
   // the default name and the router records that instead.  Learned the hard
@@ -51,9 +157,15 @@ void setupNetwork(void) {
   WiFi.setHostname(WIFI_HOSTNAME);
   WiFi.mode(WIFI_STA);
 
-  String savedSsid = WiFi.SSID();
-  if (savedSsid.length()) {
-    DEBUG_PRINTF("[net] trying stored network '%s'" "\n", savedSsid.c_str());
+  bool forcePortal = takePortalRequest();
+  if (forcePortal)
+    DEBUG_PRINTF("[net] portal was requested; skipping stored networks" "\n");
+
+  readStoredSsid(); // before any begin() overwrites the running config
+
+  char savedSsid[33];
+  if (!forcePortal && netStoredSsid(savedSsid, sizeof(savedSsid))) {
+    DEBUG_PRINTF("[net] trying stored network '%s'" "\n", savedSsid);
     WiFi.begin();
     if (wifiWaitConnected(WIFI_CONNECT_MS)) {
       netState = NET_UP;
@@ -61,10 +173,18 @@ void setupNetwork(void) {
     }
   }
 
-  if (strlen(WIFI_SSID)) {
+  if (!forcePortal && strlen(WIFI_SSID)) {
     DEBUG_PRINTF("[net] trying built-in network '%s'" "\n", WIFI_SSID);
+    // Deliberately not written to NVS.  The driver persists whatever begin()
+    // is given, which would quietly turn the build-time fallback into a
+    // stored network -- and then `wifi forget` would look like it had not
+    // worked, because something would still be stored the moment the board
+    // reconnected.  Only a portal setup or an explicit join get to persist.
+    esp_wifi_set_storage(WIFI_STORAGE_RAM);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
-    if (wifiWaitConnected(WIFI_CONNECT_MS)) {
+    bool ok = wifiWaitConnected(WIFI_CONNECT_MS);
+    esp_wifi_set_storage(WIFI_STORAGE_FLASH);
+    if (ok) {
       netState = NET_UP;
       return;
     }
@@ -116,17 +236,104 @@ void netShow(void); // defined with the display code below
 // Typing a POSIX string correctly is no fun, so the common zones get names.
 // A raw POSIX string is still accepted for anywhere not listed.
 
+// Enough of the world to cover wherever the head ends up.  These are POSIX
+// TZ strings, not the IANA database -- the database is megabytes and needs a
+// filesystem, while a POSIX string is thirty bytes and is what the C library
+// wants anyway.  The trade is that a country changing its DST rules needs a
+// firmware update, which for a Halloween prop is the right side of the deal.
+// Anything not listed can still be set: `tz` takes a raw POSIX string.
+//
+// Offsets are inverted relative to how people say them: UTC+2 is written -2.
+// Zones without DST are a single field.
 const TzChoice tzChoices[] = {
-    {"pacific", "PST8PDT,M3.2.0/2,M11.1.0/2"},
-    {"mountain", "MST7MDT,M3.2.0/2,M11.1.0/2"},
-    {"arizona", "MST7"}, // no DST
-    {"central", "CST6CDT,M3.2.0/2,M11.1.0/2"},
-    {"eastern", "EST5EDT,M3.2.0/2,M11.1.0/2"},
-    {"alaska", "AKST9AKDT,M3.2.0/2,M11.1.0/2"},
-    {"hawaii", "HST10"}, // no DST
-    {"uk", "GMT0BST,M3.5.0/1,M10.5.0/2"},
-    {"europe", "CET-1CEST,M3.5.0,M10.5.0/3"},
-    {"utc", "UTC0"},
+    // North America
+    {"los_angeles", "North America", "PST8PDT,M3.2.0/2,M11.1.0/2"},
+    {"denver", "North America", "MST7MDT,M3.2.0/2,M11.1.0/2"},
+    {"phoenix", "North America", "MST7"},
+    {"chicago", "North America", "CST6CDT,M3.2.0/2,M11.1.0/2"},
+    {"new_york", "North America", "EST5EDT,M3.2.0/2,M11.1.0/2"},
+    {"halifax", "North America", "AST4ADT,M3.2.0/2,M11.1.0/2"},
+    {"st_johns", "North America", "NST3:30NDT,M3.2.0/2,M11.1.0/2"},
+    {"anchorage", "North America", "AKST9AKDT,M3.2.0/2,M11.1.0/2"},
+    {"honolulu", "North America", "HST10"},
+    {"mexico_city", "North America", "CST6"}, // DST abolished in 2022
+    {"panama", "North America", "EST5"},
+
+    // South America
+    {"bogota", "South America", "<-05>5"},
+    {"lima", "South America", "<-05>5"},
+    {"caracas", "South America", "<-04>4"},
+    {"santiago", "South America", "<-04>4<-03>,M9.1.6/24,M4.1.6/24"},
+    {"sao_paulo", "South America", "<-03>3"}, // DST abolished in 2019
+    {"buenos_aires", "South America", "<-03>3"},
+
+    // Europe
+    {"reykjavik", "Europe", "GMT0"},
+    {"london", "Europe", "GMT0BST,M3.5.0/1,M10.5.0/2"},
+    {"dublin", "Europe", "GMT0IST,M3.5.0/1,M10.5.0/2"},
+    {"lisbon", "Europe", "WET0WEST,M3.5.0/1,M10.5.0/2"},
+    {"madrid", "Europe", "CET-1CEST,M3.5.0,M10.5.0/3"},
+    {"paris", "Europe", "CET-1CEST,M3.5.0,M10.5.0/3"},
+    {"berlin", "Europe", "CET-1CEST,M3.5.0,M10.5.0/3"},
+    {"rome", "Europe", "CET-1CEST,M3.5.0,M10.5.0/3"},
+    {"warsaw", "Europe", "CET-1CEST,M3.5.0,M10.5.0/3"},
+    {"athens", "Europe", "EET-2EEST,M3.5.0/3,M10.5.0/4"},
+    {"helsinki", "Europe", "EET-2EEST,M3.5.0/3,M10.5.0/4"},
+    {"kyiv", "Europe", "EET-2EEST,M3.5.0/3,M10.5.0/4"},
+    {"moscow", "Europe", "MSK-3"},
+
+    // Africa and the Middle East
+    {"casablanca", "Africa / Middle East", "<+01>-1"},
+    {"lagos", "Africa / Middle East", "WAT-1"},
+    {"cairo", "Africa / Middle East", "EET-2EEST,M4.5.5/0,M10.5.4/24"},
+    {"johannesburg", "Africa / Middle East", "SAST-2"},
+    {"jerusalem", "Africa / Middle East", "IST-2IDT,M3.4.4/26,M10.5.0"},
+    {"nairobi", "Africa / Middle East", "EAT-3"},
+    {"istanbul", "Africa / Middle East", "<+03>-3"},
+    {"riyadh", "Africa / Middle East", "<+03>-3"},
+    {"tehran", "Africa / Middle East", "<+0330>-3:30"},
+    {"dubai", "Africa / Middle East", "<+04>-4"},
+
+    // Asia
+    {"karachi", "Asia", "PKT-5"},
+    {"kolkata", "Asia", "IST-5:30"},
+    {"kathmandu", "Asia", "<+0545>-5:45"},
+    {"dhaka", "Asia", "<+06>-6"},
+    {"bangkok", "Asia", "<+07>-7"},
+    {"jakarta", "Asia", "WIB-7"},
+    {"singapore", "Asia", "<+08>-8"},
+    {"hong_kong", "Asia", "HKT-8"},
+    {"shanghai", "Asia", "CST-8"},
+    {"taipei", "Asia", "CST-8"},
+    {"manila", "Asia", "PST-8"},
+    {"seoul", "Asia", "KST-9"},
+    {"tokyo", "Asia", "JST-9"},
+
+    // Oceania
+    {"perth", "Oceania", "AWST-8"},
+    {"adelaide", "Oceania", "ACST-9:30ACDT,M10.1.0,M4.1.0/3"},
+    {"brisbane", "Oceania", "AEST-10"},
+    {"sydney", "Oceania", "AEST-10AEDT,M10.1.0,M4.1.0/3"},
+    {"melbourne", "Oceania", "AEST-10AEDT,M10.1.0,M4.1.0/3"},
+    {"auckland", "Oceania", "NZST-12NZDT,M9.5.0,M4.1.0/3"},
+    {"fiji", "Oceania", "<+12>-12"},
+
+    // Universal
+    {"utc", "Universal", "UTC0"},
+};
+
+// The names this project shipped with before the list went worldwide.  Kept
+// working because they are documented and people have them in scripts, but
+// left out of tzChoices so the picker offers one name per place.
+static const struct {
+  const char *alias;
+  const char *of;
+} tzAliases[] = {
+    {"pacific", "los_angeles"}, {"mountain", "denver"},
+    {"arizona", "phoenix"},     {"central", "chicago"},
+    {"eastern", "new_york"},    {"alaska", "anchorage"},
+    {"hawaii", "honolulu"},     {"uk", "london"},
+    {"europe", "paris"},
 };
 const uint8_t numTzChoices = sizeof(tzChoices) / sizeof(tzChoices[0]);
 
@@ -135,6 +342,9 @@ const char *tzLookup(const char *name) {
   for (uint8_t i = 0; i < numTzChoices; i++)
     if (!strcasecmp(name, tzChoices[i].name))
       return tzChoices[i].posix;
+  for (uint8_t i = 0; i < sizeof(tzAliases) / sizeof(tzAliases[0]); i++)
+    if (!strcasecmp(name, tzAliases[i].alias))
+      return tzLookup(tzAliases[i].of);
   return NULL;
 }
 

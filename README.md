@@ -199,6 +199,10 @@ Open `pio device monitor` and type `help`. Commands are line-based at 115200.
 | `forget` | Clear saved settings |
 | `net [quiet]` | Address info, on the panels too |
 | `net off` | Dismiss the address cards early |
+| `wifi` | The network, and how to change it |
+| `wifi join <ssid> [pass]` | Store a network and reboot into it |
+| `wifi forget` | Clear the stored network |
+| `wifi portal` | Reboot into the setup portal |
 | `tz [zone]` | Timezone by name or POSIX string |
 | `splash` | Re-show the panel name cards |
 | `status` | Current eye, gaze, dilation, heap, uptime, frame rate |
@@ -317,6 +321,11 @@ ok saved eye=dragon swap=on
 | Pupil on/off | Dilation (`dilate`) |
 | Clock on/off, rate, second hand, hand colours | |
 | Timezone | |
+
+Wi-Fi credentials are the exception to all of this: they are stored by the
+radio in its own part of NVS, not by `save`, and `forget` does not clear
+them. `wifi forget` does. The control page says the same thing on each card,
+so you never have to come back here to find out what a control will do.
 
 Gaze and dilation are deliberately transient — they are things you drive,
 not things you configure.
@@ -442,6 +451,29 @@ pair of eyes.
 > that will not associate. Doubling the `$` does not help. The preprocessor
 > reads a header directly, so only ordinary C string escaping applies.
 
+### Changing networks later
+
+The portal is not the only way in once the head is sealed. `wifi join`, over
+serial or from the control page, stores a network and reboots into it:
+
+```
+> wifi join spare-network hunter2
+ok storing 'spare-network'; rebooting
+```
+
+`wifi portal` reboots into the setup portal on demand, and `wifi forget`
+clears the stored network so the build-time credentials apply again.
+
+Each of these reboots rather than reconnecting in place. Reconnecting would
+mean re-running mDNS, SNTP, the web server and OTA and getting every one of
+them idempotent; rebooting reuses the path that already works, and the board
+is back in about eight seconds.
+
+The three sources of credentials are genuinely distinct: the build-time
+defaults are applied with the radio's storage set to RAM, so connecting with
+them does not quietly turn them into a stored network — otherwise `wifi
+forget` would look like it had not worked the moment the board reconnected.
+
 ### Time
 
 Taken from NTP once connected. The timezone is a POSIX string, which carries
@@ -454,8 +486,17 @@ ok tz=PST8PDT,M3.2.0/2,M11.1.0/2
 > save
 ```
 
-Named zones: `pacific` `mountain` `arizona` `central` `eastern` `alaska`
-`hawaii` `uk` `europe` `utc` — or pass any POSIX string for anywhere else.
+`tz` with no argument lists the sixty-odd named zones, grouped by region:
+they are IANA city names — `los_angeles`, `kolkata`, `auckland`, `kathmandu`
+— so the one you want is the one you would guess. The regional names this
+project started with (`pacific`, `eastern`, `uk`, …) still work.
+
+Anywhere not on the list works too: `tz` takes a raw POSIX string, which is
+what the C library wants in the end. The full IANA database is megabytes and
+needs a filesystem; a POSIX string is thirty bytes, and the trade is that a
+country changing its DST rules needs a firmware update rather than a data
+one. For a Halloween prop that is the right side of the deal.
+
 Defaults to US Pacific, and is persisted.
 
 Once time is synced, `clock set` and `clock rate` stop having any effect:
@@ -464,11 +505,16 @@ they drive the free-running fallback, which is no longer what feeds the hands.
 ### Web interface
 
 **http://frank.local/** — a control page for everything the console can do:
-eye design, gaze, dilation, pupil, panel swap, clock, timezone, and the
-address details. It polls the device once a second, so two browsers looking
-at it stay in step with each other and with anything you type over serial.
+eye design, gaze, dilation, pupil, panel swap, clock and hand colours,
+timezone, Wi-Fi, and the address details. It polls the device once a second,
+so two browsers looking at it stay in step with each other and with anything
+you type over serial.
 
-The page is static — one 8 KB string in [`src/page.h`](src/page.h), served
+Each card says what happens to its settings when the power goes off — saved,
+session only, or momentary — because that is the first question anyone asks
+of a control they have just moved.
+
+The page is static: one 17 KB string in [`src/page.h`](src/page.h), served
 straight out of flash. Everything on it is drawn from the API below, so there
 is no markup anywhere that has to be kept in step with device state.
 
@@ -493,6 +539,7 @@ CORS open so a page served from anywhere can drive the device.
 | `GET` `PUT` | `/api/v1/swap` | `{"on":true}` — swaps left and right panels |
 | `GET` `PUT` | `/api/v1/clock` | `on`, `seconds`, `rate`, `time`, `colors` — any subset |
 | `GET` `PUT` | `/api/v1/netinfo` | `{"on":true}` — address cards on the panels |
+| `GET` `PUT` | `/api/v1/wifi` | `{"ssid":…,"pass":…}`, `{"op":"forget"}`, `{"op":"portal"}` |
 | `GET` `PUT` | `/api/v1/tz` | `{"tz":"pacific"}` or any POSIX string |
 | `POST` | `/api/v1/action` | `{"action":"blink"}` — also `startle`, `splash`, `netinfo` |
 | `POST` | `/api/v1/settings` | `{"op":"save"}` or `{"op":"forget"}` |
@@ -519,6 +566,10 @@ afterwards to find out what happened. Failures carry a reason:
 `400` for a bad body or an out-of-range value, `404` for an eye design this
 build does not contain, `405` for the wrong verb on a real path.
 
+Every write to `/wifi` answers first and then reboots the board, so the reply
+arrives but the connection it arrived over does not survive. `GET /wifi`
+never returns a password.
+
 Gaze runs `0`–`1023` on each axis with **`y=1023` at the top**, the way a
 joystick reads rather than the way a screen does. `512 512` is centre. The
 control page flips it so that dragging up looks up.
@@ -540,6 +591,19 @@ curl "http://frank.local/cmd?c=status"
 It returns plain text, not JSON, and it is a convenience rather than an
 interface — prefer the API for anything you are writing against. Set
 `WEB_CMD_ENDPOINT` to `0` to leave it out.
+
+### IPv6
+
+The board brings up a link-local IPv6 address and answers pings on it, but
+**the web server is IPv4 only** — `WiFiServer` in the ESP32 Arduino core
+opens an `AF_INET` socket and nothing else, so there is nothing listening on
+the v6 address. `GET /api/v1/net` reports this as `"ipv6Served": false`
+rather than leaving you to work it out from an address that does not answer.
+
+Two things would have to change to make `http://[…]/` work: the core would
+have to move to 3.x, where the server is dual-stack, and the board would need
+a global address rather than a link-local one, which needs the router to
+advertise a prefix. Until then, use the IPv4 address or `frank.local`.
 
 ### Address info on the panels
 

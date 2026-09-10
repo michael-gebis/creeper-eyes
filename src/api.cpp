@@ -13,6 +13,7 @@
 
 #if NETWORK
 
+#include "display.h"
 #include "net.h"
 #include "state.h"
 #include <ArduinoJson.h>
@@ -130,6 +131,10 @@ static void fillNet(JsonObject o) {
     o["rssi"] = WiFi.RSSI();
     o["ipv4"] = WiFi.localIP().toString();
     o["ipv6"] = WiFi.localIPv6().toString();
+    // The address is real and answers pings, but nothing listens on it: the
+    // Arduino core's server binds AF_INET only.  Said plainly here so a
+    // client is not left wondering why the URL does not work.
+    o["ipv6Served"] = false;
     o["gateway"] = WiFi.gatewayIP().toString();
   }
   o["timeSynced"] = timeSynced;
@@ -152,6 +157,14 @@ static void getState(void) {
   fillClock(d["clock"].to<JsonObject>(), s);
   fillNet(d["net"].to<JsonObject>());
   JsonObject sys = d["system"].to<JsonObject>();
+  // The panel type matters to a client: on a greyscale panel every colour
+  // it sets will come back as a brightness.
+#if USE_SSD1327
+  sys["panel"] = "ssd1327";
+#else
+  sys["panel"] = "ssd1351";
+#endif
+  sys["panels"] = displayCount();
   sys["fps"] = s.fps;
   sys["freeHeap"] = s.freeHeap;
   sys["uptimeSeconds"] = s.uptimeSec;
@@ -382,9 +395,13 @@ static void getTz(void) {
   JsonDocument d;
   d["tz"] = tzString;
   d["synced"] = timeSynced;
-  JsonArray a = d["names"].to<JsonArray>();
-  for (uint8_t i = 0; i < numTzChoices; i++)
-    a.add(tzChoices[i].name);
+  JsonArray a = d["zones"].to<JsonArray>();
+  for (uint8_t i = 0; i < numTzChoices; i++) {
+    JsonObject o = a.add<JsonObject>();
+    o["name"] = tzChoices[i].name;
+    o["region"] = tzChoices[i].region;
+    o["tz"] = tzChoices[i].posix;
+  }
   sendJson(200, d);
 }
 
@@ -408,6 +425,57 @@ static void putTz(void) {
   tzString[TZ_MAX - 1] = '\0';
   netStartTime(); // re-apply and re-sync
   getTz();
+}
+
+// WiFi.  The password goes in and never comes out -- there is no
+// authentication on this API, so anything readable here is readable by
+// anyone on the network, and a stored password does not need to be.
+static void getWifi(void) {
+  JsonDocument d;
+  bool up = WiFi.status() == WL_CONNECTED;
+  d["state"] = up ? "up" : (netState == NET_PORTAL ? "portal" : "down");
+  d["ssid"] = WiFi.SSID(); // the one it is on, "" if none
+  char saved[33];
+  netStoredSsid(saved, sizeof(saved)); // the one it would try at boot
+  d["stored"] = saved;
+  if (up)
+    d["rssi"] = WiFi.RSSI();
+  d["portalName"] = WIFI_AP_NAME;
+  d["rebooting"] = netRebootPending();
+  sendJson(200, d);
+}
+
+// Every branch here ends in a reboot, applied a moment after this response
+// goes out.  See the note in net.h for why reconnecting in place is not
+// worth the trouble.
+static void putWifi(void) {
+  JsonDocument b;
+  if (!readBody(b))
+    return;
+
+  const char *op = b["op"] | "";
+  if (!strcmp(op, "forget")) {
+    netRequestForget();
+  } else if (!strcmp(op, "portal")) {
+    netRequestPortal();
+  } else if (b["ssid"].is<const char *>()) {
+    if (!netRequestJoin(b["ssid"], b["pass"] | "")) {
+      sendError(400, "ssid must be 1-32 characters and pass at most 63");
+      return;
+    }
+  } else {
+    sendError(400, "expected ssid, or op=forget or op=portal");
+    return;
+  }
+
+  // Answered before the radio moves, and deliberately not getWifi(): what
+  // this reports is the request, not a state that has taken effect yet.
+  JsonDocument d;
+  d["ok"] = true;
+  d["rebooting"] = true;
+  d["note"] = "the board reboots in a moment; it may come back on a "
+              "different address";
+  sendJson(200, d);
 }
 
 // Verbs that are not state: things the device *does* rather than *is*.
@@ -492,6 +560,11 @@ void apiRegister(WebServer &s) {
   s.on(API "/clock", HTTP_PUT, putClock);
   s.on(API "/clock", HTTP_OPTIONS, handleOptions);
   s.on(API "/clock", HTTP_ANY, notAllowed);
+
+  s.on(API "/wifi", HTTP_GET, getWifi);
+  s.on(API "/wifi", HTTP_PUT, putWifi);
+  s.on(API "/wifi", HTTP_OPTIONS, handleOptions);
+  s.on(API "/wifi", HTTP_ANY, notAllowed);
 
   s.on(API "/netinfo", HTTP_GET, getNetInfo);
   s.on(API "/netinfo", HTTP_PUT, putNetInfo);

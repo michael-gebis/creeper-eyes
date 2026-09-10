@@ -1301,6 +1301,8 @@ static void cmdHelp(Print &out) {
                  "  clock color [hour|min|sec] RRGGBB\n"
                  "  net [quiet]               address info, on screen too\n"
                  "  net off                   dismiss the address cards\n"
+                 "  wifi                      the network, and how to change "
+                 "it\n"
                  "  tz [POSIX string]         timezone, e.g. CST6CDT,M3.2.0/2\n"
                  "  pupil [on|off]            pupil, or a full iris disc\n"
                  "  swap [on|off]             swap which panel is which "
@@ -1511,9 +1513,14 @@ void handleCommand(char *line, Print &out) {
     if (!rest || !*rest) {
       out.printf("tz %s%s" "\n", tzString,
                     timeSynced ? "" : " (not synced)");
-      out.print(F("  names:"));
-      for (uint8_t i = 0; i < numTzChoices; i++)
+      const char *region = NULL;
+      for (uint8_t i = 0; i < numTzChoices; i++) {
+        if (!region || strcmp(region, tzChoices[i].region)) {
+          region = tzChoices[i].region;
+          out.printf("\n  %s:\n   ", region);
+        }
         out.printf(" %s", tzChoices[i].name);
+      }
       out.println();
       out.println(F("  or any POSIX string, e.g. PST8PDT,M3.2.0/2,M11.1.0/2"));
       return;
@@ -1531,6 +1538,50 @@ void handleCommand(char *line, Print &out) {
     netStartTime(); // re-apply and re-sync
     settingsDirty = true;
     out.printf("ok tz=%s" "\n", tzString);
+  } else if (!strcmp(cmd, "wifi")) {
+    char *arg = strtok(NULL, " \t");
+    if (!arg) {
+      out.printf("wifi ssid=%s state=%s", WiFi.SSID().c_str(),
+                 WiFi.status() == WL_CONNECTED ? "up" : "down");
+      if (WiFi.status() == WL_CONNECTED)
+        out.printf(" rssi=%d", WiFi.RSSI());
+      out.println();
+      out.println(F("  wifi join <ssid> [password]   store and reboot into it"
+                    "\n  wifi forget                   clear the stored network"
+                    "\n  wifi portal                   reboot into the setup "
+                    "portal"));
+      return;
+    }
+    if (!strcmp(arg, "forget")) {
+      netRequestForget();
+      out.println(F("ok forgetting the stored network; rebooting"));
+    } else if (!strcmp(arg, "portal")) {
+      netRequestPortal();
+      out.printf("ok rebooting into the portal; join '%s'" "\n", WIFI_AP_NAME);
+    } else if (!strcmp(arg, "join")) {
+      // The SSID may contain spaces, the password may not -- so the password
+      // is taken as the last word and the SSID as everything before it.
+      char *rest = strtok(NULL, "");
+      while (rest && *rest == ' ')
+        rest++;
+      if (!rest || !*rest) {
+        out.println(F("err: usage: wifi join <ssid> [password]"));
+        return;
+      }
+      char *pass = strrchr(rest, ' ');
+      if (pass) {
+        *pass++ = '\0';
+        while (*pass == ' ')
+          pass++;
+      }
+      if (!netRequestJoin(rest, pass ? pass : "")) {
+        out.println(F("err: ssid must be 1-32 characters, password under 64"));
+        return;
+      }
+      out.printf("ok storing '%s'; rebooting" "\n", rest);
+    } else {
+      out.println(F("err: wifi takes join, forget or portal"));
+    }
   } else if (!strcmp(cmd, "net")) {
     char *arg = strtok(NULL, " \t");
     if (arg && !strcmp(arg, "off")) { // take the panels back early
@@ -1685,6 +1736,7 @@ void frame(            // Process motion for a single frame of left or right eye
 #if NETWORK
   netPollTime(); // cheap no-op once the first sync has landed
   webPoll();
+  netPollPending(); // after webPoll, so a reply is sent before any reboot
 #endif
 
 #if CLOCK
