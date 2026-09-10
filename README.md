@@ -164,6 +164,9 @@ Open `pio device monitor` and type `help`. Commands are line-based at 115200.
 | `dilate auto` | Hand dilation back to autonomous |
 | `startle` | Constrict slowly, then snap wide with a blink |
 | `blink` | Blink both eyes now |
+| `swap [on\|off]` | Swap which physical panel is which eye |
+| `save` | Remember the eye design and swap across reboots |
+| `forget` | Clear saved settings |
 | `splash` | Re-show the panel name cards |
 | `status` | Current eye, gaze, dilation, heap, uptime, frame rate |
 | `help` | The list above |
@@ -243,6 +246,47 @@ sizes cannot coexist in one build.
 
 Budget roughly four designs on the default 1.25 MB app partition;
 `board_build.partitions = min_spiffs.csv` buys 1.9 MB while keeping OTA.
+
+## If the panels are wired the wrong way round
+
+`swap` exchanges the chip-select pins in software, so the panel on `D15`
+becomes the one on `D4` and vice versa:
+
+```
+> swap
+ok swap=on
+```
+
+This is a real swap, not a relabelling — everything belonging to an eye moves
+with it, including its mirrored eyelids and its splash label. Verify with
+`splash`, or reboot and read the name cards.
+
+The swap is applied between frames, never mid-transaction, so it cannot leave
+a chip select asserted on the wrong panel.
+
+## Remembering settings
+
+The eye design and the swap flag can be stored in NVS, so a sealed head comes
+back the way you left it:
+
+```
+> eye dragon
+> swap on
+> save
+ok saved eye=dragon swap=on
+```
+
+`status` marks unsaved changes with `(unsaved)`. `forget` clears the stored
+settings and the build defaults apply again at the next boot.
+
+Saving is explicit rather than automatic: NVS writes have finite endurance,
+and the BOOT button cycles eye designs, so auto-saving would write flash on
+every press.
+
+The design is stored **by name**, not by index. Indices shift whenever the set
+of `EYE_*` switches changes, so a saved index could silently select a
+different design after a rebuild. If a saved design is not in the current
+build, the console says so at boot and falls back to the first one.
 
 ## Startup splash
 

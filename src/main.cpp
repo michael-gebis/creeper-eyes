@@ -19,6 +19,7 @@
 
 #include <Adafruit_GFX.h>   // Core graphics lib for Adafruit displays
 #include <HardwareSerial.h> // Needed for 2nd serial port on ESP32
+#include <Preferences.h>    // NVS-backed settings, part of the ESP32 core
 #include <SPI.h>
 
 // Which designs are built in -- see include/eyes_config.h.  The headers are
@@ -203,6 +204,43 @@ static const EyeDesign eyeDesigns[] = {
 
 static uint8_t eyeDesign = 0;
 
+// Panel assignment.  Swapping the chip-select pins moves everything that
+// belongs to an eye -- its mirrored eyelids and its splash label -- to the
+// other physical panel, which is what makes this a real fix for a miswire
+// rather than a cosmetic one.
+static bool eyesSwapped = false;
+static bool swapPending = false;
+
+// SETTINGS ----------------------------------------------------------------
+// Stored in NVS, which already has a partition, so nothing else is needed.
+//
+// The eye design is saved by NAME rather than index: indices shift whenever
+// the set of EYE_* switches changes, so a saved index could silently select a
+// different design after a rebuild.  A name that is no longer built in falls
+// back to the first design and says so.
+
+static Preferences prefs;
+static bool settingsDirty = false;
+
+#define PREFS_NAMESPACE "creeper"
+#define PREFS_KEY_EYE "eye"
+#define PREFS_KEY_SWAP "swap"
+
+static void saveSettings(void) {
+  prefs.begin(PREFS_NAMESPACE, false);
+  prefs.putString(PREFS_KEY_EYE, eyeDesigns[eyeDesign].name);
+  prefs.putBool(PREFS_KEY_SWAP, eyesSwapped);
+  prefs.end();
+  settingsDirty = false;
+}
+
+static void forgetSettings(void) {
+  prefs.begin(PREFS_NAMESPACE, false);
+  prefs.clear();
+  prefs.end();
+  settingsDirty = false;
+}
+
 static void setEyeDesign(uint8_t idx) {
   if (idx >= NUM_EYE_DESIGNS)
     idx = 0;
@@ -213,6 +251,9 @@ static void setEyeDesign(uint8_t idx) {
   polar = d->polar;
   iris = d->iris;
   eyeDesign = idx;
+#if COMMANDS
+  settingsDirty = true;
+#endif
 }
 
 // DISPLAY HARDWARE CONFIG -------------------------------------------------
@@ -234,7 +275,16 @@ static SPISettings graySPI(SSD1327_SPI_HZ, MSBFIRST, SPI_MODE0);
 #else
 #include <Adafruit_SSD1351.h> // OLED display library -OR-
 
-typedef Adafruit_SSD1351 displayType; // Using OLED display(s)
+// Adafruit_SPITFT keeps its chip-select pin in a protected member with no
+// setter, so a thin subclass exposes it.  That lets a miswired pair of
+// panels be swapped in software rather than rewired -- see `swap`.
+class SwappableSSD1351 : public Adafruit_SSD1351 {
+public:
+  using Adafruit_SSD1351::Adafruit_SSD1351;
+  void setCS(int8_t pin) { _cs = pin; }
+};
+
+typedef SwappableSSD1351 displayType; // Using OLED display(s)
 #endif
 
 #define DISPLAY_DC 33    // Data/command pin for BOTH displays
@@ -334,17 +384,31 @@ struct {
     // inside begin(), and because both panels share one reset line that
     // would wipe the first panel's init while starting the second.  setup()
     // pulses the shared line once instead.
-    {Adafruit_SSD1351(128, 128, &SPI, SELECT_L_PIN, DISPLAY_DC, -1),
+    {SwappableSSD1351(128, 128, &SPI, SELECT_L_PIN, DISPLAY_DC, -1),
      SELECT_L_PIN,
      {NOBLINK}},
-    {Adafruit_SSD1351(128, 128, &SPI, SELECT_R_PIN, DISPLAY_DC, -1),
+    {SwappableSSD1351(128, 128, &SPI, SELECT_R_PIN, DISPLAY_DC, -1),
      SELECT_R_PIN,
      {NOBLINK}},
 #endif
 };
 #define NUM_EYES (sizeof(eye) / sizeof(eye[0]))
 
+// Called between frames only: a swap landing mid-transaction would leave a
+// chip select asserted on the wrong panel.
+static void applySwap(void) {
+  uint8_t a = eye[0].cs, b = eye[1].cs;
+  eye[0].cs = b;
+  eye[1].cs = a;
+  eye[0].display.setCS((int8_t)b);
+  eye[1].display.setCS((int8_t)a);
+}
+
 // INITIALIZATION -- runs once at startup ----------------------------------
+
+#if COMMANDS
+static void loadSettings(void); // defined with the console, below setup()
+#endif
 
 HardwareSerial SerialIn(1);
 
@@ -491,6 +555,9 @@ void setup(void) {
   // eye[0].display.writeCommand(SSD1351_CMD_SETREMAP);
   // eye[0].display.write16(0x76);
 
+#if COMMANDS
+  loadSettings(); // before the splash, so its labels are correct
+#endif
 #if STARTUP_SPLASH
   showSplash();
 #endif
@@ -640,6 +707,31 @@ static uint8_t eyeDesignByName(const char *name) {
   return NUM_EYE_DESIGNS;
 }
 
+// Runs before the splash, so the labels reflect a restored swap.
+static void loadSettings(void) {
+  prefs.begin(PREFS_NAMESPACE, true); // read-only
+  String saved = prefs.getString(PREFS_KEY_EYE, "");
+  bool sw = prefs.getBool(PREFS_KEY_SWAP, false);
+  prefs.end();
+
+  if (sw) {
+    eyesSwapped = true;
+    applySwap();
+  }
+  if (saved.length()) {
+    uint8_t idx = eyeDesignByName(saved.c_str());
+    if (idx < NUM_EYE_DESIGNS) {
+      setEyeDesign(idx);
+    } else {
+      DEBUG_PRINTF("[creeper-eyes] saved eye '%s' is not in this build, "
+                   "using %s\n",
+                   saved.c_str(), eyeDesigns[0].name);
+    }
+  }
+  DEBUG_PRINTF("[creeper-eyes] settings: eye=%s swap=%s\n",
+               eyeDesigns[eyeDesign].name, eyesSwapped ? "yes" : "no");
+}
+
 static void listEyeDesigns(void) {
   for (uint8_t i = 0; i < NUM_EYE_DESIGNS; i++)
     Serial.printf("  %u  %-10s%s\n", (unsigned)i, eyeDesigns[i].name,
@@ -747,6 +839,11 @@ static void cmdHelp(void) {
                  "  dilate auto               return to autonomous dilation\n"
                  "  startle                   constrict, then snap wide "
                  "with a blink\n"
+                 "  swap [on|off]             swap which panel is which "
+                 "eye\n"
+                 "  save                      remember eye and swap "
+                 "across reboots\n"
+                 "  forget                    clear saved settings\n"
                  "  blink                     blink both eyes now\n"
                  "  splash                    re-show the panel name cards\n"
                  "  status                    report current state\n"
@@ -765,6 +862,8 @@ static void cmdStatus(void) {
   if (startleState != STARTLE_OFF)
     Serial.print(startleState == STARTLE_WINDUP ? " startle=windup"
                                                 : " startle=hold");
+  Serial.printf(" swap=%s%s", eyesSwapped ? "on" : "off",
+                settingsDirty ? " (unsaved)" : "");
   Serial.printf(" panel=%s heap=%u up=%us",
                 USE_SSD1327 ? "ssd1327" : "ssd1351",
                 (unsigned)ESP.getFreeHeap(), (unsigned)(millis() / 1000));
@@ -841,6 +940,32 @@ static void handleCommand(char *line) {
     gazeCmdActive = true;
     gazeCmdPending = true;
     Serial.printf("ok gaze=(%ld,%ld)\n", x, y);
+  } else if (!strcmp(cmd, "swap")) {
+    char *arg = strtok(NULL, " \t");
+    bool want = !eyesSwapped;
+    if (arg) {
+      if (!strcmp(arg, "on"))
+        want = true;
+      else if (!strcmp(arg, "off"))
+        want = false;
+      else {
+        Serial.println(F("usage: swap [on|off]"));
+        return;
+      }
+    }
+    if (want != eyesSwapped) {
+      eyesSwapped = want;
+      swapPending = true; // applied between frames
+      settingsDirty = true;
+    }
+    Serial.printf("ok swap=%s\n", eyesSwapped ? "on" : "off");
+  } else if (!strcmp(cmd, "save")) {
+    saveSettings();
+    Serial.printf("ok saved eye=%s swap=%s\n",
+                  eyeDesigns[eyeDesign].name, eyesSwapped ? "on" : "off");
+  } else if (!strcmp(cmd, "forget")) {
+    forgetSettings();
+    Serial.println(F("ok settings cleared; build defaults apply at next boot"));
   } else if (!strcmp(cmd, "startle")) {
     startleBegin();
     Serial.println(F("ok startle"));
@@ -936,6 +1061,11 @@ void frame(            // Process motion for a single frame of left or right eye
 #if COMMANDS
   pollCommands();
   pollBootButton();
+
+  if (swapPending) { // between frames, never mid-transaction
+    swapPending = false;
+    applySwap();
+  }
 
   pollStartle();
 

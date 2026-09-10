@@ -27,6 +27,10 @@ public:
 
   // Park chip select high.  Call for every panel before initialising any of
   // them, so a shared bus never reaches a panel that isn't listening.
+  // Chip select can be reassigned after construction so a miswired pair
+  // of panels can be swapped in software.  See the `swap` console command.
+  void setCS(int8_t pin) { _cs = pin; }
+
   void parkCS() const {
     pinMode(_cs, OUTPUT);
     digitalWrite(_cs, HIGH);
