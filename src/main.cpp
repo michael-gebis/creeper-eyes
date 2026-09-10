@@ -32,6 +32,9 @@ const uint8_t (*lower)[SCREEN_WIDTH] = lowerDefault;
 const uint16_t (*polar)[80] = polarDefault;
 const uint16_t (*iris)[IRIS_MAP_WIDTH] = irisDefault;
 
+// Pointers TO const data, not const pointers -- see setEyeSet() below,
+// which swaps the whole eye at runtime.
+
 // DISPLAY HARDWARE CONFIG -------------------------------------------------
 
 // Which panel is fitted.  Set from platformio.ini build_flags; the SSD1351
@@ -90,6 +93,19 @@ typedef Adafruit_SSD1351 displayType; // Using OLED display(s)
 
 #define STARTUP_SPLASH 1
 #define SPLASH_SECONDS 5
+
+// COMMAND CONSOLE ---------------------------------------------------------
+// A line-oriented console on the USB serial port -- the same cable that
+// powers the board -- so the eyes can be driven once the head is assembled
+// and the BOOT button is out of reach.  Type "help" in the serial monitor.
+
+#define COMMANDS 1
+
+// BOOT button.  Grounded when pressed, external pull-up on the board.
+// GPIO0 is a strapping pin, but only during reset; reading it afterwards is
+// fine.  Not broken out to a header on the 30-pin DevKit -- the button is
+// the only access.
+#define BOOT_BUTTON_PIN 0
 
 // INPUT CONFIG (for eye motion -- enable or comment out as needed) --------
 
@@ -235,6 +251,12 @@ void setup(void) {
   uint8_t e;
 
   DEBUG_BEGIN();
+#if COMMANDS
+#if !DEBUG
+  Serial.begin(DEBUG_BAUD); // the console needs the port even without DEBUG
+#endif
+  pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
+#endif
 #if DEBUG
   pinMode(DEBUG_LED_PIN, OUTPUT);
 #endif
@@ -289,6 +311,9 @@ void setup(void) {
 
 #if STARTUP_SPLASH
   showSplash();
+#endif
+#if COMMANDS
+  Serial.println(F("[creeper-eyes] console ready -- type 'help'"));
 #endif
 }
 
@@ -419,9 +444,173 @@ const uint8_t ease[] = { // Ease in/out curve for eye movements 3*t^2-2*t^3
 uint32_t timeOfLastBlink = 0L, timeToNextBlink = 0L;
 #endif
 
-#define BCAST_ADDR 0
-#define SER_CMD_SIZE 9
-uint16_t serAddr = 1;
+#if COMMANDS
+
+// These five are pointers TO const data, not const pointers, so the whole
+// eye can be swapped at runtime -- which is exactly what the note above
+// them describes.  Swap between frames, never mid-render: drawEye() reads
+// all five as it scans, so changing them under it would tear one frame.
+static bool eyeIsNewt = false;
+
+static void setEyeSet(bool newt) {
+  if (newt) {
+    sclera = scleraNewt;
+    upper = upperNewt;
+    lower = lowerNewt;
+    polar = polarNewt;
+    iris = irisNewt;
+  } else {
+    sclera = scleraDefault;
+    upper = upperDefault;
+    lower = lowerDefault;
+    polar = polarDefault;
+    iris = irisDefault;
+  }
+  eyeIsNewt = newt;
+}
+
+// Gaze override.  Consumed in frame(), which sets the vestigial serEyeCtrl
+// flag from it -- that flag is the one piece of the original UART command
+// plumbing still wired into the motion state machine.
+static bool gazeCmdActive = false;
+static bool gazeCmdPending = false;
+static int16_t gazeCmdX = 512, gazeCmdY = 512;
+static uint16_t lastFps = 0;
+
+static void cmdHelp(void) {
+  Serial.print(F("\ncommands:\n"
+                 "  eye default|newt|toggle   swap the eye artwork\n"
+                 "  look <x> <y>              aim gaze, 0-1023 each "
+                 "(512 512 = centre)\n"
+                 "  look auto                 return to autonomous motion\n"
+                 "  blink                     blink both eyes now\n"
+                 "  splash                    re-show the panel name cards\n"
+                 "  status                    report current state\n"
+                 "  help                      this list\n"));
+}
+
+static void cmdStatus(void) {
+  Serial.printf("eye=%s gaze=%s", eyeIsNewt ? "newt" : "default",
+                gazeCmdActive ? "commanded" : "auto");
+  if (gazeCmdActive)
+    Serial.printf("(%d,%d)", gazeCmdX, gazeCmdY);
+  Serial.printf(" panel=%s heap=%u up=%us",
+                USE_SSD1327 ? "ssd1327" : "ssd1351",
+                (unsigned)ESP.getFreeHeap(), (unsigned)(millis() / 1000));
+#if DEBUG
+  Serial.printf(" fps=%u", lastFps);
+#endif
+  Serial.println();
+}
+
+static void handleCommand(char *line) {
+  char *cmd = strtok(line, " \t");
+  if (!cmd)
+    return;
+  for (char *c = cmd; *c; c++)
+    *c = (char)tolower((unsigned char)*c);
+
+  if (!strcmp(cmd, "help") || !strcmp(cmd, "?")) {
+    cmdHelp();
+  } else if (!strcmp(cmd, "status")) {
+    cmdStatus();
+  } else if (!strcmp(cmd, "eye")) {
+    char *arg = strtok(NULL, " \t");
+    if (!arg)
+      Serial.println(F("usage: eye default|newt|toggle"));
+    else if (!strcmp(arg, "toggle"))
+      setEyeSet(!eyeIsNewt);
+    else if (!strcmp(arg, "newt"))
+      setEyeSet(true);
+    else if (!strcmp(arg, "default"))
+      setEyeSet(false);
+    else {
+      Serial.println(F("usage: eye default|newt|toggle"));
+      return;
+    }
+    if (arg)
+      Serial.printf("ok eye=%s\n", eyeIsNewt ? "newt" : "default");
+  } else if (!strcmp(cmd, "look")) {
+    char *a1 = strtok(NULL, " \t");
+    if (!a1) {
+      Serial.println(F("usage: look <0-1023> <0-1023> | look auto"));
+      return;
+    }
+    if (!strcmp(a1, "auto")) {
+      gazeCmdActive = false;
+      Serial.println(F("ok gaze=auto"));
+      return;
+    }
+    char *a2 = strtok(NULL, " \t");
+    if (!a2) {
+      Serial.println(F("usage: look <0-1023> <0-1023> | look auto"));
+      return;
+    }
+    long x = atol(a1), y = atol(a2);
+    if (x < 0 || x > 1023 || y < 0 || y > 1023) {
+      Serial.println(F("err: both values must be 0-1023"));
+      return;
+    }
+    gazeCmdX = (int16_t)x;
+    gazeCmdY = (int16_t)y;
+    gazeCmdActive = true;
+    gazeCmdPending = true;
+    Serial.printf("ok gaze=(%ld,%ld)\n", x, y);
+#ifdef AUTOBLINK
+  } else if (!strcmp(cmd, "blink")) {
+    timeToNextBlink = 0; // due immediately on the next frame
+    Serial.println(F("ok blink"));
+#endif
+#if STARTUP_SPLASH
+  } else if (!strcmp(cmd, "splash")) {
+    showSplash();
+    Serial.println(F("ok splash"));
+#endif
+  } else {
+    Serial.printf("unknown command '%s' -- try 'help'\n", cmd);
+  }
+}
+
+// Non-blocking: called once per rendered frame, never from loop(), which
+// spends ~10 s inside split() and would make the console feel dead.
+static void pollCommands(void) {
+  static char line[64];
+  static uint8_t len = 0;
+
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\r')
+      continue;
+    if (c == '\n') {
+      line[len] = '\0';
+      if (len)
+        handleCommand(line);
+      len = 0;
+    } else if (len < sizeof(line) - 1) {
+      line[len++] = c;
+    } else {
+      len = 0; // overlong line, discard rather than truncate
+    }
+  }
+}
+
+static void pollBootButton(void) {
+  static bool wasDown = false;
+  static uint32_t lastEdge = 0;
+  bool isDown = (digitalRead(BOOT_BUTTON_PIN) == LOW);
+  uint32_t now = millis();
+
+  if (isDown != wasDown && (now - lastEdge) > 40) { // debounce
+    lastEdge = now;
+    wasDown = isDown;
+    if (isDown) { // act on press, not release
+      setEyeSet(!eyeIsNewt);
+      Serial.printf("ok eye=%s (button)\n", eyeIsNewt ? "newt" : "default");
+    }
+  }
+}
+
+#endif // COMMANDS
 
 void frame(            // Process motion for a single frame of left or right eye
     uint16_t iScale) { // Iris scale (0-1023) passed in
@@ -429,13 +618,17 @@ void frame(            // Process motion for a single frame of left or right eye
   static uint8_t eyeIndex = 0; // eye[] array counter
   int16_t eyeX, eyeY;
   uint32_t t; // Time at start of function
-  static char serCmd[SER_CMD_SIZE + 1];
-  static uint16_t serCmdIdx = 0;
-  static uint16_t serNewEyeCtrl = 0;
+  // The only survivor of the original UART command protocol: while set, the
+  // motion code below holds the commanded gaze instead of drifting.
   static uint16_t serEyeCtrl = 0;
 
   if (++eyeIndex >= NUM_EYES)
     eyeIndex = 0; // Cycle through eyes, 1 per call
+
+#if COMMANDS
+  pollCommands();
+  pollBootButton();
+#endif
 
 #if DEBUG
   // Heartbeat: proves the render loop is alive even with no displays wired.
@@ -447,6 +640,9 @@ void frame(            // Process motion for a single frame of left or right eye
       DEBUG_PRINTF("[creeper-eyes] fps=%u heap=%u\n", (unsigned)frames,
                    (unsigned)ESP.getFreeHeap());
       digitalWrite(DEBUG_LED_PIN, !digitalRead(DEBUG_LED_PIN));
+#if COMMANDS
+      lastFps = (uint16_t)frames;
+#endif
       frames = 0;
       lastReport = now;
     }
@@ -466,6 +662,20 @@ void frame(            // Process motion for a single frame of left or right eye
                  eyeNewX = 512, eyeNewY = 512;
   static uint32_t eyeMoveStartTime = 0L;
   static int32_t eyeMoveDuration = 0L;
+
+#if COMMANDS
+  serEyeCtrl = gazeCmdActive ? 1 : 0;
+  if (gazeCmdPending) { // new target from the console
+    gazeCmdPending = false;
+    eyeOldX = eyeCurX; // glide from wherever the eye is now
+    eyeOldY = eyeCurY;
+    eyeNewX = gazeCmdX;
+    eyeNewY = gazeCmdY;
+    eyeMoveDuration = 150000; // ~0.15 s
+    eyeMoveStartTime = t;
+    eyeInMotion = true;
+  }
+#endif
 
   int32_t dt = t - eyeMoveStartTime; // uS elapsed since last eye event
 
