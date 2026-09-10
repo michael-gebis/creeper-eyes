@@ -71,19 +71,28 @@
 // 12 o'clock is 128 in the polar table's 0-511 angle, increasing clockwise.
 #define CLOCK_NOON 128
 
-// Length is 0 at the centre to 127 at the iris edge; width is in angle units.
+// Length is 0 at the centre to 127 at the iris edge; width is in angle
+// units, so a hand is a wedge -- narrow at the centre, widest at the tip.
 #define CLOCK_HOUR_LEN 62
-#define CLOCK_HOUR_W 7
+#define CLOCK_HOUR_W 14
 #define CLOCK_MIN_LEN 94
-#define CLOCK_MIN_W 5
+#define CLOCK_MIN_W 10
 #define CLOCK_SEC_LEN 110
-#define CLOCK_SEC_W 2
+#define CLOCK_SEC_W 4
 
-// Yellow rather than red for the second hand: red drops to about a tenth
-// brightness under the greyscale luma conversion and vanishes.
-#define CLOCK_HOUR_COLOR 0xFFFF
-#define CLOCK_MIN_COLOR 0xFFFF
-#define CLOCK_SEC_COLOR 0xFFE0
+// Starting colours, changeable at runtime with `clock color`.  Black reads
+// as a silhouette on a bright iris, but is invisible over the pupil, which
+// is itself black -- try a light colour on dark eyes.
+#define CLOCK_HOUR_COLOR 0x000000
+#define CLOCK_MIN_COLOR 0x000000
+#define CLOCK_SEC_COLOR 0x000000
+
+// The iris is drawn where iScale * distance / 128 < 64, and distance peaks
+// at 127 in the centre, so any scale at or below 64 keeps every pixel in
+// the iris and the pupil disappears.  That matters: the pupil is black and
+// fills most of the disc, so hands drawn across it are swallowed whole.
+// Opening it out turns the iris into a proper dial.
+#define CLOCK_FACE_SCALE 64
 
 // BOOT button.  Grounded when pressed, external pull-up on the board.
 // GPIO0 is a strapping pin, but only during reset; reading it afterwards is
@@ -284,10 +293,27 @@ static bool swapPending = false;
 
 static bool clockOn = false;
 static bool clockSeconds = true;
+static bool clockPupil = false; // keep the pupil instead of a full dial
 static uint16_t clockRate = 1;              // 1 = real time
 static uint32_t clockBaseSec = 10 * 3600UL + 10 * 60UL; // 10:10, watch-ad time
 static uint32_t clockBaseMs = 0;
 static uint16_t clockHourAng, clockMinAng, clockSecAng;
+
+// [0] hour, [1] minute, [2] second.  The 24-bit copies are kept only so
+// `clock` can report what was asked for rather than the lossy 565 value.
+static uint32_t clockRGB[3] = {CLOCK_HOUR_COLOR, CLOCK_MIN_COLOR,
+                              CLOCK_SEC_COLOR};
+static uint16_t clockPix[3];
+
+static inline uint16_t rgb24to565(uint32_t v) {
+  return (uint16_t)(((v >> 8) & 0xF800) | ((v >> 5) & 0x07E0) |
+                    ((v >> 3) & 0x001F));
+}
+
+static void clockSetColor(uint8_t which, uint32_t rgb) {
+  clockRGB[which] = rgb & 0xFFFFFF;
+  clockPix[which] = rgb24to565(clockRGB[which]);
+}
 
 static void clockSet(uint32_t secOfDay) {
   clockBaseSec = secOfDay % 86400UL;
@@ -327,15 +353,15 @@ static inline bool clockHandPixel(uint16_t polarVal, uint16_t *out) {
 
   if (clockSeconds && dist <= CLOCK_SEC_LEN &&
       clockAngNear(ang, clockSecAng, CLOCK_SEC_W)) {
-    *out = CLOCK_SEC_COLOR;
+    *out = clockPix[2];
     return true;
   }
   if (dist <= CLOCK_MIN_LEN && clockAngNear(ang, clockMinAng, CLOCK_MIN_W)) {
-    *out = CLOCK_MIN_COLOR;
+    *out = clockPix[1];
     return true;
   }
   if (dist <= CLOCK_HOUR_LEN && clockAngNear(ang, clockHourAng, CLOCK_HOUR_W)) {
-    *out = CLOCK_HOUR_COLOR;
+    *out = clockPix[0];
     return true;
   }
   return false;
@@ -587,6 +613,10 @@ void setup(void) {
   uint8_t e;
 
   setEyeDesign(0); // the pointers start unset now, so pick a design first
+#if CLOCK
+  for (uint8_t i = 0; i < 3; i++)
+    clockSetColor(i, clockRGB[i]);
+#endif
 
   DEBUG_BEGIN();
 #if COMMANDS
@@ -1052,6 +1082,10 @@ static void handleCommand(char *line) {
                     clockOn ? "on" : "off", (unsigned)(t / 3600),
                     (unsigned)((t / 60) % 60), (unsigned)(t % 60),
                     (unsigned)clockRate, clockSeconds ? "on" : "off");
+      Serial.printf("  pupil=%s\n", clockPupil ? "on" : "off (full dial)");
+      Serial.printf("  colours hour=%06lX min=%06lX sec=%06lX\n",
+                    (unsigned long)clockRGB[0], (unsigned long)clockRGB[1],
+                    (unsigned long)clockRGB[2]);
       return;
     }
     for (char *c = arg; *c; c++)
@@ -1083,12 +1117,60 @@ static void handleCommand(char *line) {
       clockSet(clockNow()); // rebase so the jump is not retroactive
       clockRate = (uint16_t)r;
       Serial.printf("ok clock rate=%ldx\n", r);
+    } else if (!strcmp(arg, "color") || !strcmp(arg, "colour")) {
+      char *a = strtok(NULL, " \t");
+      char *b = strtok(NULL, " \t");
+      if (!a) {
+        Serial.println(F("usage: clock color [hour|min|sec] RRGGBB"));
+        return;
+      }
+      int8_t which = -1; // -1 means all three
+      char *hex = a;
+      if (b) {
+        for (char *c = a; *c; c++)
+          *c = (char)tolower((unsigned char)*c);
+        if (!strcmp(a, "hour"))
+          which = 0;
+        else if (!strcmp(a, "min"))
+          which = 1;
+        else if (!strcmp(a, "sec"))
+          which = 2;
+        else {
+          Serial.println(F("usage: clock color [hour|min|sec] RRGGBB"));
+          return;
+        }
+        hex = b;
+      }
+      if (*hex == '#')
+        hex++;
+      char *endp = NULL;
+      unsigned long v = strtoul(hex, &endp, 16);
+      if (!endp || *endp || v > 0xFFFFFFUL) {
+        Serial.println(F("err: colour must be 6 hex digits, e.g. FF8800"));
+        return;
+      }
+      if (which < 0) {
+        for (uint8_t i = 0; i < 3; i++)
+          clockSetColor(i, (uint32_t)v);
+        Serial.printf("ok clock color all=%06lX\n", v);
+      } else {
+        clockSetColor((uint8_t)which, (uint32_t)v);
+        Serial.printf("ok clock color %s=%06lX\n",
+                      which == 0 ? "hour" : which == 1 ? "min" : "sec", v);
+      }
+    } else if (!strcmp(arg, "pupil")) {
+      char *v = strtok(NULL, " \t");
+      clockPupil = (v && !strcmp(v, "on"));
+      Serial.printf("ok pupil=%s (%s)\n", clockPupil ? "on" : "off",
+                    clockPupil ? "hands cut off by the pupil" : "full dial");
     } else if (!strcmp(arg, "secs")) {
       char *v = strtok(NULL, " \t");
       clockSeconds = !(v && !strcmp(v, "off"));
       Serial.printf("ok seconds=%s\n", clockSeconds ? "on" : "off");
     } else {
-      Serial.println(F("usage: clock [on|off|set HH:MM[:SS]|rate N|secs on|off]"));
+      Serial.println(
+          F("usage: clock [on|off|set HH:MM[:SS]|rate N|secs on|off|"
+            "color [hour|min|sec] RRGGBB|pupil on|off]"));
     }
 #endif
   } else if (!strcmp(cmd, "swap")) {
@@ -1242,6 +1324,13 @@ void frame(            // Process motion for a single frame of left or right eye
   } else {
     dilateCurrent = (int32_t)iScale;
   }
+#endif
+
+#if CLOCK
+  // Open the pupil right out so the whole iris reads as a dial.  Applied
+  // after the dilation override, which it deliberately outranks.
+  if (clockOn && !clockPupil)
+    iScale = CLOCK_FACE_SCALE;
 #endif
 
 #if DEBUG
