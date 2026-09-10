@@ -477,12 +477,34 @@ static bool gazeCmdPending = false;
 static int16_t gazeCmdX = 512, gazeCmdY = 512;
 static uint16_t lastFps = 0;
 
+// Pupil dilation override.  loop() walks the iris scale randomly between
+// IRIS_MIN and IRIS_MAX; while this is active frame() ignores that walk.
+//
+// The scale runs backwards: it divides into the iris map, so IRIS_MIN is
+// the WIDEST pupil and IRIS_MAX the narrowest.  The command takes a plain
+// percentage and does the inversion here, so 100 means fully dilated.
+static bool dilateCmdActive = false;
+static uint8_t dilateCmdPct = 50;
+static uint16_t dilateCmdValue = (IRIS_MIN + IRIS_MAX) / 2;
+
+static void setDilation(uint8_t pct) {
+  if (pct > 100)
+    pct = 100;
+  dilateCmdPct = pct;
+  dilateCmdValue =
+      (uint16_t)(IRIS_MAX - ((uint32_t)pct * (IRIS_MAX - IRIS_MIN)) / 100);
+  dilateCmdActive = true;
+}
+
 static void cmdHelp(void) {
   Serial.print(F("\ncommands:\n"
                  "  eye default|newt|toggle   swap the eye artwork\n"
                  "  look <x> <y>              aim gaze, 0-1023 each "
                  "(512 512 = centre)\n"
                  "  look auto                 return to autonomous motion\n"
+                 "  dilate <0-100>            pupil width, 100 = fully "
+                 "dilated\n"
+                 "  dilate auto               return to autonomous dilation\n"
                  "  blink                     blink both eyes now\n"
                  "  splash                    re-show the panel name cards\n"
                  "  status                    report current state\n"
@@ -494,6 +516,9 @@ static void cmdStatus(void) {
                 gazeCmdActive ? "commanded" : "auto");
   if (gazeCmdActive)
     Serial.printf("(%d,%d)", gazeCmdX, gazeCmdY);
+  Serial.printf(" dilate=%s", dilateCmdActive ? "" : "auto");
+  if (dilateCmdActive)
+    Serial.printf("%u%%", (unsigned)dilateCmdPct);
   Serial.printf(" panel=%s heap=%u up=%us",
                 USE_SSD1327 ? "ssd1327" : "ssd1351",
                 (unsigned)ESP.getFreeHeap(), (unsigned)(millis() / 1000));
@@ -556,6 +581,24 @@ static void handleCommand(char *line) {
     gazeCmdActive = true;
     gazeCmdPending = true;
     Serial.printf("ok gaze=(%ld,%ld)\n", x, y);
+  } else if (!strcmp(cmd, "dilate")) {
+    char *arg = strtok(NULL, " \t");
+    if (!arg) {
+      Serial.println(F("usage: dilate <0-100> | dilate auto"));
+      return;
+    }
+    if (!strcmp(arg, "auto")) {
+      dilateCmdActive = false;
+      Serial.println(F("ok dilate=auto"));
+      return;
+    }
+    long pct = atol(arg);
+    if (pct < 0 || pct > 100) {
+      Serial.println(F("err: dilation must be 0-100"));
+      return;
+    }
+    setDilation((uint8_t)pct);
+    Serial.printf("ok dilate=%ld%%\n", pct);
 #ifdef AUTOBLINK
   } else if (!strcmp(cmd, "blink")) {
     timeToNextBlink = 0; // due immediately on the next frame
@@ -628,6 +671,18 @@ void frame(            // Process motion for a single frame of left or right eye
 #if COMMANDS
   pollCommands();
   pollBootButton();
+
+  // Ease toward the commanded width rather than snapping.  While released,
+  // track the autonomous value so handing control back is seamless.
+  {
+    static int32_t dilateNow = (IRIS_MIN + IRIS_MAX) / 2;
+    if (dilateCmdActive) {
+      dilateNow += ((int32_t)dilateCmdValue - dilateNow) / 8;
+      iScale = (uint16_t)dilateNow;
+    } else {
+      dilateNow = (int32_t)iScale;
+    }
+  }
 #endif
 
 #if DEBUG
