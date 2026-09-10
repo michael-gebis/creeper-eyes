@@ -15,6 +15,7 @@ effect — without opening the head up.
 - **Serial command console** over the USB cable that already powers the board
 - **Startup splash** naming each panel, so you never have to trace wires
 - **BOOT button** toggles between the two eye designs
+- **25 eye designs** to choose from, selected at build time
 - **Display diagnostics** for bringing up new hardware
 - Fixes for three rendering and initialisation bugs — see [Credits](#credits)
 
@@ -176,52 +177,72 @@ handing control back is seamless.
 
 ## Choosing which eyes are built in
 
-Each eye design costs roughly **165 KB of flash**, so they are selected at
-build time rather than all being compiled in. Edit `include/eyes_config.h`:
+**[See the gallery: every design rendered in colour and greyscale &rarr;](docs/EYES.md)**
+
+25 designs ship with the project: two from Adafruit's original Uncanny Eyes,
+and 23 converted from [TeensyEyes](https://github.com/chrismiller/TeensyEyes).
+Each costs roughly **158 KB of flash**, so about four fit alongside everything
+else on the default partition — they are chosen at build time rather than all
+compiled in.
+
+Edit `include/eyes_config.h`:
 
 ```c
 #define EYE_DEFAULT 1   // Standard human-ish hazel eye
 #define EYE_NEWT    1   // Eye of newt
+#define EYE_DRAGON  0   // Fiery dragon, slit pupil
+...
 ```
 
 Or override without touching the file, from `platformio.ini`:
 
 ```ini
-build_flags = -DEYE_NEWT=0        ; hazel only
+build_flags = -DEYE_DEFAULT=0 -DEYE_NEWT=0 -DEYE_DRAGON=1 -DEYE_SKULL=1
 ```
 
-Every switch is `#ifndef`-guarded, so a `-D` always wins. Dropping the newt
-eye takes the image from 615 KB to 457 KB.
+Every switch is `#ifndef`-guarded, so a `-D` always wins. Enabling none fails
+with a clear `#error` — the eye headers are also where the `SCLERA_*`,
+`IRIS_*` and `SCREEN_*` dimensions come from.
 
-At least one design must be enabled — the eye headers are also where the
-`SCLERA_*`, `IRIS_*` and `SCREEN_*` dimensions come from, so a build with none
-fails with a clear `#error`.
-
-The console lists whatever ended up in the build:
+The console lists whatever ended up in the build, and selects by name or
+number:
 
 ```
 > eye
   0  default     <- current
-  1  newt
+  1  dragon
+  2  skull
+> eye dragon
+ok eye=1 dragon
 ```
 
-### Adding a design
+### On greyscale panels
 
-1. Put its header in `include/`, with symbols suffixed like the existing ones
-   — `scleraFoo`, `irisFoo`, `upperFoo`, `lowerFoo`, `polarFoo`.
-2. Add an `EYE_FOO` switch to `include/eyes_config.h`.
-3. Add the `#include` and the registry row in `src/main.cpp`, both guarded by
-   `#if EYE_FOO`.
+Designs that carry their character in *hue* rather than *brightness* flatten
+out badly once converted to 16 grey levels. The gallery shows both side by
+side — compare before committing. Designs with strong tonal structure, like
+`skull`, `demon` and `spikes`, survive the conversion best.
+
+### Adding or regenerating designs
+
+The converted headers are generated, and the generator is checked in:
+
+```sh
+git clone --depth 1 https://github.com/chrismiller/TeensyEyes.git
+pip install pillow
+python tools/gen_eyes.py TeensyEyes/resources/eyes/240x240
+```
+
+That writes `include/eyes/*.h` and the gallery images. Then add an `EYE_FOO`
+switch to `include/eyes_config.h` and a registry row to `src/main.cpp`.
 
 Dimensions must match what is already built in: **SCLERA 200×200, IRIS_MAP
 256×64, SCREEN 128×128, IRIS 80×80**. The renderer reaches the artwork through
 pointers whose row width is fixed at compile time, so designs of different
-sizes cannot coexist in one build. Adafruit's `convert/tablegen.py` can
-re-render source art at these dimensions.
+sizes cannot coexist in one build.
 
-Budget roughly four designs on the default 1.25 MB app partition alongside
-everything else; `board_build.partitions = min_spiffs.csv` buys 1.9 MB if you
-want more.
+Budget roughly four designs on the default 1.25 MB app partition;
+`board_build.partitions = min_spiffs.csv` buys 1.9 MB while keeping OTA.
 
 ## Startup splash
 
@@ -265,6 +286,7 @@ Lineage, oldest first:
 - **[Adafruit Uncanny Eyes](https://learn.adafruit.com/animated-electronic-eyes)** — Phil Burgess / Paint Your Dragon, for Adafruit Industries. The rendering engine and the eye artwork. SPI FIFO insight from Paul Stoffregen's `ILI9341_t3`; concept inspired by David Boccabella (Marcwolf).
 - **Laurent Moll**, 2018 — [Uncanny Eyes costume](https://www.hackster.io/projects/376a13/), dual-display ESP32 work.
 - **[bitcldr/creeper-eyes](https://github.com/bitcldr/creeper-eyes)** — the PlatformIO project this forks from.
+- **[TeensyEyes](https://github.com/chrismiller/TeensyEyes)** — Chris Miller. MIT. 23 of the 25 eye designs are converted from its artwork by [`tools/gen_eyes.py`](tools/gen_eyes.py).
 - This fork — generic ESP32 support, grayscale panels, console, splash, diagnostics.
 
 Three bugs fixed here also affect the upstream colour build: an out-of-range

@@ -32,6 +32,75 @@
 #if EYE_NEWT
 #include "newtEye.h" // Eye of newt
 #endif
+#if EYE_ANIME
+#include "eyes/anime.h" // Large violet anime iris
+#endif
+#if EYE_BIGBLUE
+#include "eyes/bigBlue.h" // Pale blue, heavy limbal ring
+#endif
+#if EYE_BLUEFLAME1
+#include "eyes/blueFlame1.h" // Blue flame ring on black
+#endif
+#if EYE_BLUEFLAME2
+#include "eyes/blueFlame2.h" // Blue flame, slit pupil
+#endif
+#if EYE_BROWN
+#include "eyes/brown.h" // Warm brown, veined sclera
+#endif
+#if EYE_CAT
+#include "eyes/cat.h" // Yellow cat eye, slit pupil
+#endif
+#if EYE_DEMON
+#include "eyes/demon.h" // Red demon, slit pupil
+#endif
+#if EYE_DOE
+#include "eyes/doe.h" // Soft brown doe eye
+#endif
+#if EYE_DOOMRED
+#include "eyes/doomRed.h" // Red on white, cartoon
+#endif
+#if EYE_DOOMSPIRAL
+#include "eyes/doomSpiral.h" // Red spiral
+#endif
+#if EYE_DRAGON
+#include "eyes/dragon.h" // Fiery dragon, slit pupil
+#endif
+#if EYE_FIREBOX
+#include "eyes/firebox.h" // Orange fire ring
+#endif
+#if EYE_FISH
+#include "eyes/fish.h" // Pale fish eye, no eyelids
+#endif
+#if EYE_FIZZGIG
+#include "eyes/fizzgig.h" // Orange fizzgig
+#endif
+#if EYE_FLAME
+#include "eyes/flame.h" // Flame iris, slit pupil
+#endif
+#if EYE_HAZEL
+#include "eyes/hazel.h" // Hazel, veined sclera
+#endif
+#if EYE_HYPNORED
+#include "eyes/hypnoRed.h" // Red hypnotic rings
+#endif
+#if EYE_LEOPARD
+#include "eyes/leopard.h" // Golden leopard
+#endif
+#if EYE_NEWT2
+#include "eyes/newt2.h" // Eye of newt (TeensyEyes)
+#endif
+#if EYE_SKULL
+#include "eyes/skull.h" // Red on bone, no eyelids
+#endif
+#if EYE_SNAKEGREEN
+#include "eyes/snakeGreen.h" // Green snake, slit pupil
+#endif
+#if EYE_SPIKES
+#include "eyes/spikes.h" // Geometric spikes
+#endif
+#if EYE_TOONSTRIPE
+#include "eyes/toonstripe.h" // Striped cartoon, no eyelids
+#endif
 
 // The renderer reads the artwork through these.  They are pointers TO const
 // data, not const pointers, so a whole design can be swapped at runtime.
@@ -54,11 +123,79 @@ typedef struct {
 
 static const EyeDesign eyeDesigns[] = {
 #if EYE_DEFAULT
-    {"default", scleraDefault, upperDefault, lowerDefault, polarDefault,
-     irisDefault},
+    {"default", scleraDefault, upperDefault, lowerDefault, polarDefault, irisDefault},
 #endif
 #if EYE_NEWT
     {"newt", scleraNewt, upperNewt, lowerNewt, polarNewt, irisNewt},
+#endif
+#if EYE_ANIME
+    {"anime", scleraAnime, upperAnime, lowerAnime, polarAnime, irisAnime},
+#endif
+#if EYE_BIGBLUE
+    {"bigblue", scleraBigBlue, upperBigBlue, lowerBigBlue, polarBigBlue, irisBigBlue},
+#endif
+#if EYE_BLUEFLAME1
+    {"blueflame1", scleraBlueFlame1, upperBlueFlame1, lowerBlueFlame1, polarBlueFlame1, irisBlueFlame1},
+#endif
+#if EYE_BLUEFLAME2
+    {"blueflame2", scleraBlueFlame2, upperBlueFlame2, lowerBlueFlame2, polarBlueFlame2, irisBlueFlame2},
+#endif
+#if EYE_BROWN
+    {"brown", scleraBrown, upperBrown, lowerBrown, polarBrown, irisBrown},
+#endif
+#if EYE_CAT
+    {"cat", scleraCat, upperCat, lowerCat, polarCat, irisCat},
+#endif
+#if EYE_DEMON
+    {"demon", scleraDemon, upperDemon, lowerDemon, polarDemon, irisDemon},
+#endif
+#if EYE_DOE
+    {"doe", scleraDoe, upperDoe, lowerDoe, polarDoe, irisDoe},
+#endif
+#if EYE_DOOMRED
+    {"doomred", scleraDoomRed, upperDoomRed, lowerDoomRed, polarDoomRed, irisDoomRed},
+#endif
+#if EYE_DOOMSPIRAL
+    {"doomspiral", scleraDoomSpiral, upperDoomSpiral, lowerDoomSpiral, polarDoomSpiral, irisDoomSpiral},
+#endif
+#if EYE_DRAGON
+    {"dragon", scleraDragon, upperDragon, lowerDragon, polarDragon, irisDragon},
+#endif
+#if EYE_FIREBOX
+    {"firebox", scleraFirebox, upperFirebox, lowerFirebox, polarFirebox, irisFirebox},
+#endif
+#if EYE_FISH
+    {"fish", scleraFish, upperFish, lowerFish, polarFish, irisFish},
+#endif
+#if EYE_FIZZGIG
+    {"fizzgig", scleraFizzgig, upperFizzgig, lowerFizzgig, polarFizzgig, irisFizzgig},
+#endif
+#if EYE_FLAME
+    {"flame", scleraFlame, upperFlame, lowerFlame, polarFlame, irisFlame},
+#endif
+#if EYE_HAZEL
+    {"hazel", scleraHazel, upperHazel, lowerHazel, polarHazel, irisHazel},
+#endif
+#if EYE_HYPNORED
+    {"hypnored", scleraHypnoRed, upperHypnoRed, lowerHypnoRed, polarHypnoRed, irisHypnoRed},
+#endif
+#if EYE_LEOPARD
+    {"leopard", scleraLeopard, upperLeopard, lowerLeopard, polarLeopard, irisLeopard},
+#endif
+#if EYE_NEWT2
+    {"newt2", scleraNewt2, upperNewt2, lowerNewt2, polarNewt2, irisNewt2},
+#endif
+#if EYE_SKULL
+    {"skull", scleraSkull, upperSkull, lowerSkull, polarSkull, irisSkull},
+#endif
+#if EYE_SNAKEGREEN
+    {"snakegreen", scleraSnakeGreen, upperSnakeGreen, lowerSnakeGreen, polarSnakeGreen, irisSnakeGreen},
+#endif
+#if EYE_SPIKES
+    {"spikes", scleraSpikes, upperSpikes, lowerSpikes, polarSpikes, irisSpikes},
+#endif
+#if EYE_TOONSTRIPE
+    {"toonstripe", scleraToonstripe, upperToonstripe, lowerToonstripe, polarToonstripe, irisToonstripe},
 #endif
 };
 
@@ -520,9 +657,9 @@ static uint16_t lastFps = 0;
 // Pupil dilation override.  loop() walks the iris scale randomly between
 // IRIS_MIN and IRIS_MAX; while this is active frame() ignores that walk.
 //
-// The scale runs backwards: it divides into the iris map, so IRIS_MIN is
-// the WIDEST pupil and IRIS_MAX the narrowest.  The command takes a plain
-// percentage and does the inversion here, so 100 means fully dilated.
+// The scale divides into the iris map: a larger value pushes pixels out of
+// the iris sooner, so IRIS_MAX is the WIDEST pupil and IRIS_MIN the
+// narrowest.  The command takes a plain percentage, 100 = fully dilated.
 static bool dilateCmdActive = false;
 static uint8_t dilateCmdPct = 50;
 static uint16_t dilateCmdValue = (IRIS_MIN + IRIS_MAX) / 2;
@@ -537,7 +674,7 @@ static void setDilation(uint8_t pct) {
     pct = 100;
   dilateCmdPct = pct;
   dilateCmdValue =
-      (uint16_t)(IRIS_MAX - ((uint32_t)pct * (IRIS_MAX - IRIS_MIN)) / 100);
+      (uint16_t)(IRIS_MIN + ((uint32_t)pct * (IRIS_MAX - IRIS_MIN)) / 100);
   dilateCmdActive = true;
 }
 
@@ -650,6 +787,9 @@ static void handleCommand(char *line) {
     cmdStatus();
   } else if (!strcmp(cmd, "eye")) {
     char *arg = strtok(NULL, " \t");
+    if (arg)
+      for (char *c = arg; *c; c++)
+        *c = (char)tolower((unsigned char)*c);
     if (!arg || !strcmp(arg, "list")) { // bare "eye" reports what is available
       listEyeDesigns();
       return;

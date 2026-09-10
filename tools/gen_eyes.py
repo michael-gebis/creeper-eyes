@@ -1,0 +1,339 @@
+"""Convert TeensyEyes eye artwork into creeper-eyes header format.
+
+TeensyEyes stores sclera and iris polar-unwrapped (width = angle, height =
+radial position) and renders them with a per-eye radius.  creeper-eyes wants
+a Cartesian 200x200 sclera that a 128x128 window pans across, plus a
+256x64 polar iris strip, 128x128 eyelid threshold maps, and a packed
+angle/distance table.
+
+Also renders preview PNGs using the same arithmetic the firmware uses, so the
+result can be checked without flashing.
+"""
+
+import json
+import math
+import os
+import sys
+from PIL import Image
+
+SCLERA = 200          # SCLERA_WIDTH / SCLERA_HEIGHT
+IRIS_MAP_W, IRIS_MAP_H = 256, 64
+SCREEN = 128          # SCREEN_WIDTH / SCREEN_HEIGHT
+IRIS = 80             # IRIS_WIDTH / IRIS_HEIGHT
+IRIS_R = IRIS / 2.0   # 40
+
+
+def rgb565(r, g, b):
+    return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+
+
+def from565(v):
+    r = (v >> 11) & 0x1F
+    g = (v >> 5) & 0x3F
+    b = v & 0x1F
+    return ((r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2))
+
+
+def parse_color(c, default=0):
+    if c is None:
+        return default
+    if isinstance(c, int):
+        return c
+    return int(str(c), 0)
+
+
+def load_cfg(d):
+    with open(os.path.join(d, "config.eye")) as f:
+        c = json.load(f)
+    return c
+
+
+def strip(path):
+    """Load a polar-unwrapped texture as RGB."""
+    return Image.open(path).convert("RGB")
+
+
+def build_sclera(d, cfg):
+    """Polar strip -> Cartesian 200x200, black hole where the iris sits."""
+    eye_r_src = float(cfg.get("radius", 125))
+    iris_r_src = float(cfg.get("iris", {}).get("radius", 90))
+    # Keep the design's own iris-to-eyeball proportion.
+    eye_r = IRIS_R * (eye_r_src / max(iris_r_src, 1.0))
+
+    back = parse_color(cfg.get("backColor"), 0)
+    scl = cfg.get("sclera", {})
+    src = None
+    for name in ("sclera.png",):
+        p = os.path.join(d, name)
+        if os.path.exists(p):
+            src = strip(p)
+    flat = parse_color(scl.get("color"), back)
+
+    out = Image.new("RGB", (SCLERA, SCLERA))
+    px = out.load()
+    if src is not None:
+        sp = src.load()
+        sw, sh = src.size
+        outer = sp[0, 0]
+    cx = cy = SCLERA / 2.0
+
+    for y in range(SCLERA):
+        dy = y - cy + 0.5
+        for x in range(SCLERA):
+            dx = x - cx + 0.5
+            r = math.hypot(dx, dy)
+            if r < IRIS_R:
+                px[x, y] = (0, 0, 0)  # iris/pupil hole; the renderer draws over it
+                continue
+            if src is None:
+                px[x, y] = from565(flat)
+                continue
+            if r <= eye_r:
+                # row 0 is the outer edge, last row sits against the iris
+                t = (r - IRIS_R) / max(eye_r - IRIS_R, 1e-6)
+                row = int((1.0 - t) * (sh - 1))
+            else:
+                row = 0  # extend the outermost ring out to the corners
+            ang = math.atan2(dy, dx) + math.pi   # 0..2pi
+            col = int(ang / (2 * math.pi) * sw) % sw
+            px[x, y] = sp[col, max(0, min(sh - 1, row))]
+    return out
+
+
+def build_iris(d, cfg):
+    """Polar strip -> 256x64.  Row 0 = outer edge, row 63 = pupil edge."""
+    for name in ("iris.png", "spiral.png"):
+        p = os.path.join(d, name)
+        if os.path.exists(p):
+            return strip(p).resize((IRIS_MAP_W, IRIS_MAP_H), Image.LANCZOS)
+    flat = parse_color(cfg.get("iris", {}).get("color"),
+                       parse_color(cfg.get("backColor"), 0))
+    return Image.new("RGB", (IRIS_MAP_W, IRIS_MAP_H), from565(flat))
+
+
+def build_lid(d, which):
+    """Eyelid threshold map -> 128x128 greyscale.
+
+    TeensyEyes ships a binary mask of the eye aperture; this format needs a
+    threshold map, where the value is the blink position at which a pixel
+    becomes covered (0 = always covered, 254 = only when fully shut).  The
+    lid sweeps as a vertical ramp starting along its resting curve -- which
+    is the aperture edge -- and finishing at a roughly constant row, which is
+    how Adafruit's own maps are built.
+    """
+    src = None
+    for name in ("%s.png" % which, "%s-symmetrical.png" % which):
+        p = os.path.join(d, name)
+        if os.path.exists(p):
+            src = Image.open(p).convert("L").resize((SCREEN, SCREEN), Image.LANCZOS)
+            break
+    if src is None:
+        return Image.new("L", (SCREEN, SCREEN), 255)  # no lid art: always open
+
+    sp = src.load()
+    open_px = [[sp[x, y] >= 128 for y in range(SCREEN)] for x in range(SCREEN)]
+    rows = [y for x in range(SCREEN) for y in range(SCREEN) if open_px[x][y]]
+    if not rows:
+        return Image.new("L", (SCREEN, SCREEN), 255)
+
+    out = Image.new("L", (SCREEN, SCREEN))
+    op = out.load()
+    if which == "upper":
+        y_end = max(rows)
+        for x in range(SCREEN):
+            col = [y for y in range(SCREEN) if open_px[x][y]]
+            y_top = min(col) if col else y_end
+            span = max(y_end - y_top, 1)
+            for y in range(SCREEN):
+                op[x, y] = 0 if y <= y_top else min(255, 255 * (y - y_top) // span)
+    else:
+        y_start = min(rows)
+        for x in range(SCREEN):
+            col = [y for y in range(SCREEN) if open_px[x][y]]
+            y_bot = max(col) if col else y_start
+            span = max(y_bot - y_start, 1)
+            for y in range(SCREEN):
+                op[x, y] = 0 if y >= y_bot else min(255, 255 * (y_bot - y) // span)
+    return out
+
+
+def build_polar(cfg):
+    """Packed (angle<<7)|distance, matching Adafruit's table format."""
+    slit = float(cfg.get("pupil", {}).get("slitRadius", 0) or 0)
+    iris_r_src = float(cfg.get("iris", {}).get("radius", 90))
+    slit_r = IRIS_R * (slit / max(iris_r_src, 1.0)) if slit else 0.0
+
+    tbl = [[0] * IRIS for _ in range(IRIS)]
+    for y in range(IRIS):
+        dy = y - IRIS_R + 0.5
+        for x in range(IRIS):
+            dx = x - IRIS_R + 0.5
+            dist = math.hypot(dx, dy)
+            if dist >= IRIS_R:
+                tbl[y][x] = 127          # outside: angle 0, distance 127
+                continue
+            ang = (math.atan2(dy, dx) + math.pi) / (2 * math.pi)
+            if slit_r <= 0:
+                nd = dist / IRIS_R
+            else:
+                nd = slit_distance(dx, dy, slit_r)
+            nd = max(0.0, min(0.999, nd)) * 128.0
+            a = int(ang * 512.0) & 0x1FF
+            dv = 127 - int(nd)
+            tbl[y][x] = (a << 7) | (dv & 0x7F)
+    return tbl
+
+
+def slit_distance(dx, dy, slit_r):
+    """Normalised 0..1 distance for a vertical slit pupil.
+
+    Same construction TeensyEyes uses: interpolate a circle through a point
+    on the slit's vertical axis and one on the horizontal iris edge, then ask
+    which of those circles the pixel falls inside.
+    """
+    xp, dy2 = abs(dx), dy * dy
+    for i in range(0, 128):
+        ratio = i / 127.0
+        y1 = slit_r + (IRIS_R - slit_r) * ratio
+        x2 = IRIS_R * ratio
+        if x2 <= 0.0001:
+            continue
+        xc = (x2 * x2 - y1 * y1) / (2 * x2)
+        r2 = (x2 - xc) ** 2
+        ddx = xp - xc
+        if ddx * ddx + dy2 <= r2:
+            return 1.0 - (i / 127.0)
+    return 1.0
+
+
+def emit(path, name, sclera, iris, upper, lower, polar):
+    def rows(f, decl, vals, per):
+        f.write(decl)
+        for i, v in enumerate(vals):
+            if i % per == 0:
+                f.write("\n  ")
+            f.write("0X%04X%s" % (v, "," if i < len(vals) - 1 else " };\n"))
+
+    sp, ip = sclera.load(), iris.load()
+    up, lp = upper.load(), lower.load()
+
+    with open(path, "w", newline="\n") as f:
+        f.write("// Generated from TeensyEyes artwork (MIT) by tools/gen_eyes.py\n")
+        f.write("// Source: https://github.com/chrismiller/TeensyEyes\n\n")
+        f.write("#define SCLERA_WIDTH  %d\n#define SCLERA_HEIGHT %d\n\n" % (SCLERA, SCLERA))
+        rows(f, "const uint16_t sclera%s[SCLERA_HEIGHT][SCLERA_WIDTH] = {" % name,
+             [rgb565(*sp[x, y]) for y in range(SCLERA) for x in range(SCLERA)], 8)
+        f.write("\n#define IRIS_MAP_WIDTH  %d\n#define IRIS_MAP_HEIGHT %d\n\n"
+                % (IRIS_MAP_W, IRIS_MAP_H))
+        rows(f, "const uint16_t iris%s[IRIS_MAP_HEIGHT][IRIS_MAP_WIDTH] = {" % name,
+             [rgb565(*ip[x, y]) for y in range(IRIS_MAP_H) for x in range(IRIS_MAP_W)], 8)
+        f.write("\n#define SCREEN_WIDTH  %d\n#define SCREEN_HEIGHT %d\n\n" % (SCREEN, SCREEN))
+        f.write("const uint8_t upper%s[SCREEN_HEIGHT][SCREEN_WIDTH] = {" % name)
+        vals = [up[x, y] for y in range(SCREEN) for x in range(SCREEN)]
+        for i, v in enumerate(vals):
+            if i % 12 == 0:
+                f.write("\n  ")
+            f.write("0X%02X%s" % (v, "," if i < len(vals) - 1 else " };\n"))
+        f.write("\nconst uint8_t lower%s[SCREEN_HEIGHT][SCREEN_WIDTH] = {" % name)
+        vals = [lp[x, y] for y in range(SCREEN) for x in range(SCREEN)]
+        for i, v in enumerate(vals):
+            if i % 12 == 0:
+                f.write("\n  ")
+            f.write("0X%02X%s" % (v, "," if i < len(vals) - 1 else " };\n"))
+        f.write("\n#define IRIS_WIDTH  %d\n#define IRIS_HEIGHT %d\n\n" % (IRIS, IRIS))
+        rows(f, "const uint16_t polar%s[80][80] = {" % name,
+             [polar[y][x] for y in range(IRIS) for x in range(IRIS)], 8)
+
+
+def render_preview(sclera, iris, upper, lower, polar, iscale, gaze=(0.5, 0.5),
+                   grey=False):
+    """Reproduce drawEye() so the result can be judged without hardware."""
+    sp, ip = sclera.load(), iris.load()
+    up, lp = upper.load(), lower.load()
+    out = Image.new("RGB", (SCREEN, SCREEN))
+    op = out.load()
+
+    sx0 = int(gaze[0] * (SCLERA - SCREEN))
+    sy0 = int(gaze[1] * (SCLERA - SCREEN))
+    ix0 = sx0 - (SCLERA - IRIS) // 2
+    iy0 = sy0 - (SCLERA - IRIS) // 2
+    uT, lT = 0, 0  # eyes fully open
+
+    for sy in range(SCREEN):
+        iy = iy0 + sy
+        for sx in range(SCREEN):
+            ix = ix0 + sx
+            if lp[sx, sy] <= lT or up[sx, sy] <= uT:
+                c = (0, 0, 0)
+            elif 0 <= iy < IRIS and 0 <= ix < IRIS:
+                p = polar[iy][ix]
+                d = (iscale * (p & 0x7F)) // 128
+                if d < IRIS_MAP_H:
+                    a = (IRIS_MAP_W * (p >> 7)) // 512
+                    c = ip[min(a, IRIS_MAP_W - 1), d]
+                else:
+                    c = sp[sx0 + sx, sy0 + sy]
+            else:
+                c = sp[sx0 + sx, sy0 + sy]
+            if grey:
+                g = (77 * c[0] + 150 * c[1] + 29 * c[2]) >> 8
+                g = (g >> 4) * 17  # 16 levels, like the SSD1327 path
+                c = (g, g, g)
+            op[sx, sy] = c
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Driver
+# ---------------------------------------------------------------------------
+
+RENAME = {"newt": "newt2"}  # ours already has Adafruit's newt
+SAMPLES = (("constricted", 150), ("normal", 250), ("dilated", 400))
+
+
+def camel(n):
+    return n[0].upper() + n[1:]
+
+
+def main(argv):
+    src = argv[1] if len(argv) > 1 else "teensyeyes/resources/eyes/240x240"
+    if not os.path.isdir(src):
+        print("usage: gen_eyes.py [path-to-TeensyEyes/resources/eyes/240x240]")
+        print("\nGet the artwork with:")
+        print("  git clone --depth 1 https://github.com/chrismiller/TeensyEyes.git")
+        return 1
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    hdr = os.path.join(root, "include", "eyes")
+    img = os.path.join(root, "docs", "images", "eyes")
+    os.makedirs(hdr, exist_ok=True)
+    os.makedirs(img, exist_ok=True)
+
+    n = 0
+    for name in sorted(os.listdir(src)):
+        d = os.path.join(src, name)
+        if not os.path.exists(os.path.join(d, "config.eye")):
+            continue
+        out = RENAME.get(name, name)
+        cfg = load_cfg(d)
+        scl = build_sclera(d, cfg)
+        iri = build_iris(d, cfg)
+        up = build_lid(d, "upper")
+        lo = build_lid(d, "lower")
+        pol = build_polar(cfg)
+        emit(os.path.join(hdr, out + ".h"), camel(out), scl, iri, up, lo, pol)
+        for tag, isc in SAMPLES:
+            render_preview(scl, iri, up, lo, pol, isc).save(
+                os.path.join(img, "%s_%s.png" % (out, tag)))
+            render_preview(scl, iri, up, lo, pol, isc, grey=True).save(
+                os.path.join(img, "%s_%s_grey.png" % (out, tag)))
+        print("  %-12s -> include/eyes/%s.h" % (name, out))
+        n += 1
+
+    print("\n%d designs generated." % n)
+    print("Add switches to include/eyes_config.h and rows to src/main.cpp.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
