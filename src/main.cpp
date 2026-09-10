@@ -71,14 +71,14 @@
 // 12 o'clock is 128 in the polar table's 0-511 angle, increasing clockwise.
 #define CLOCK_NOON 128
 
-// Length is 0 at the centre to 127 at the iris edge; width is in angle
-// units, so a hand is a wedge -- narrow at the centre, widest at the tip.
-#define CLOCK_HOUR_LEN 62
-#define CLOCK_HOUR_W 14
-#define CLOCK_MIN_LEN 94
-#define CLOCK_MIN_W 10
-#define CLOCK_SEC_LEN 110
-#define CLOCK_SEC_W 4
+// Lengths and half-widths in pixels, measured from the iris centre.  The
+// iris radius is IRIS_WIDTH / 2, so 40.
+#define CLOCK_HOUR_LEN 20
+#define CLOCK_HOUR_HW 2
+#define CLOCK_MIN_LEN 30
+#define CLOCK_MIN_HW 1
+#define CLOCK_SEC_LEN 35
+#define CLOCK_SEC_HW 0
 
 // Starting colours, changeable at runtime with `clock color`.  Black reads
 // as a silhouette on a bright iris, but is invisible over the pupil, which
@@ -320,6 +320,21 @@ static void clockSet(uint32_t secOfDay) {
   clockBaseMs = millis();
 }
 
+// Unit direction of each hand, 8.8 fixed point.  Recomputed once per frame
+// rather than per pixel -- six trig calls a frame is nothing.
+static int16_t clockDirX[3], clockDirY[3];
+
+// The polar table's angle convention: a = (atan2(dy, dx) + PI) / 2PI * 512,
+// which puts 12 o'clock at 128 and runs clockwise.
+static void clockDirs(void) {
+  const uint16_t ang[3] = {clockHourAng, clockMinAng, clockSecAng};
+  for (uint8_t i = 0; i < 3; i++) {
+    float th = (float)ang[i] * (2.0f * 3.14159265f / 512.0f) - 3.14159265f;
+    clockDirX[i] = (int16_t)(cosf(th) * 256.0f);
+    clockDirY[i] = (int16_t)(sinf(th) * 256.0f);
+  }
+}
+
 static void clockUpdate(void) {
   uint32_t elapsed = ((millis() - clockBaseMs) / 1000UL) * clockRate;
   uint32_t t = (clockBaseSec + elapsed) % 86400UL;
@@ -329,42 +344,12 @@ static void clockUpdate(void) {
       (uint16_t)((CLOCK_NOON + (min * 60UL + sec) * 512UL / 3600UL) % 512UL);
   clockHourAng = (uint16_t)(
       (CLOCK_NOON + (hr * 3600UL + min * 60UL + sec) * 512UL / 43200UL) % 512UL);
+  clockDirs();
 }
 
 static uint32_t clockNow(void) {
   uint32_t elapsed = ((millis() - clockBaseMs) / 1000UL) * clockRate;
   return (clockBaseSec + elapsed) % 86400UL;
-}
-
-// Shortest separation on the 0-511 circle.
-static inline bool clockAngNear(uint16_t a, uint16_t b, uint16_t w) {
-  uint16_t d = (a > b) ? (uint16_t)(a - b) : (uint16_t)(b - a);
-  if (d > 256)
-    d = (uint16_t)(512 - d);
-  return d <= w;
-}
-
-// polarVal is a raw entry from the polar table.  Returns true and sets *out
-// when the pixel falls on a hand.  Second hand is tested first so it draws
-// over the others.
-static inline bool clockHandPixel(uint16_t polarVal, uint16_t *out) {
-  uint8_t dist = (uint8_t)(127 - (polarVal & 0x7F)); // 0 centre .. 127 edge
-  uint16_t ang = (uint16_t)(polarVal >> 7);
-
-  if (clockSeconds && dist <= CLOCK_SEC_LEN &&
-      clockAngNear(ang, clockSecAng, CLOCK_SEC_W)) {
-    *out = clockPix[2];
-    return true;
-  }
-  if (dist <= CLOCK_MIN_LEN && clockAngNear(ang, clockMinAng, CLOCK_MIN_W)) {
-    *out = clockPix[1];
-    return true;
-  }
-  if (dist <= CLOCK_HOUR_LEN && clockAngNear(ang, clockHourAng, CLOCK_HOUR_W)) {
-    *out = clockPix[0];
-    return true;
-  }
-  return false;
 }
 
 #endif // CLOCK
@@ -719,6 +704,11 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
 
   scleraXsave = scleraX; // Save initial X value to reset on each line
   irisY = scleraY - (SCLERA_HEIGHT - IRIS_HEIGHT) / 2;
+#if CLOCK
+  // Where the iris sits in screen coordinates, for the clock hands below.
+  const int16_t irisOriginX = (int16_t)scleraXsave - (SCLERA_WIDTH - IRIS_WIDTH) / 2;
+  const int16_t irisOriginY = irisY;
+#endif
   for (screenY = 0; screenY < SCREEN_HEIGHT; screenY++, scleraY++, irisY++) {
     scleraX = scleraXsave;
     irisX = scleraXsave - (SCLERA_WIDTH - IRIS_WIDTH) / 2;
@@ -734,28 +724,59 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
                  (irisX >= IRIS_WIDTH)) { // In sclera
         p = sclera[scleraY][scleraX];
       } else {                                   // Maybe iris...
-        p = polar[irisY][irisX]; // Polar angle/dist
-        uint16_t hand;
-#if CLOCK
-        // Hands are drawn across the whole iris disc, pupil included,
-        // otherwise they would be cut off by the pupil hole.
-        if (clockOn && (p & 0x7F) < 127 && clockHandPixel(p, &hand)) {
-          p = hand;
-        } else
-#endif
-        {
-          d = (iScale * (p & 0x7F)) / 128;         // Distance (Y)
-          if (d < IRIS_MAP_HEIGHT) {               // Within iris area
-            a = (IRIS_MAP_WIDTH * (p >> 7)) / 512; // Angle (X)
-            p = iris[d][a];                        // Pixel = iris
-          } else {                                 // Not in iris
-            p = sclera[scleraY][scleraX];          // Pixel = sclera
-          }
+        p = polar[irisY][irisX];                 // Polar angle/dist
+        d = (iScale * (p & 0x7F)) / 128;         // Distance (Y)
+        if (d < IRIS_MAP_HEIGHT) {               // Within iris area
+          a = (IRIS_MAP_WIDTH * (p >> 7)) / 512; // Angle (X)
+          p = iris[d][a];                        // Pixel = iris
+        } else {                                 // Not in iris
+          p = sclera[scleraY][scleraX];          // Pixel = sclera
         }
       }
       pBurst[screenY * SCREEN_WIDTH + screenX] = p;
     }
   }
+
+#if CLOCK
+  // Hands are drawn after the eye, straight into the finished frame, so they
+  // are real line segments of constant width rather than the pie wedges that
+  // came out of testing a fixed angular spread per pixel.  It is also much
+  // cheaper: a few hundred pixels instead of a test against all 16384.
+  //
+  // Being outside the pixel loop means the two clips it provided have to be
+  // repeated here -- the iris circle, and the eyelids.
+  if (clockOn) {
+    const uint8_t hlen[3] = {CLOCK_HOUR_LEN, CLOCK_MIN_LEN, CLOCK_SEC_LEN};
+    const uint8_t hhw[3] = {CLOCK_HOUR_HW, CLOCK_MIN_HW, CLOCK_SEC_HW};
+    const int16_t cx = (int16_t)(IRIS_WIDTH / 2) - irisOriginX;
+    const int16_t cy = (int16_t)(IRIS_HEIGHT / 2) - irisOriginY;
+
+    // Hour first so the minute and second hands lie over it.
+    for (uint8_t h = 0; h < 3; h++) {
+      if (h == 2 && !clockSeconds)
+        continue;
+      const int16_t ux = clockDirX[h], uy = clockDirY[h];
+      const int16_t px = (int16_t)-uy, py = ux; // perpendicular
+      for (int16_t i = 0; i <= (int16_t)hlen[h]; i++) {
+        for (int16_t j = -(int16_t)hhw[h]; j <= (int16_t)hhw[h]; j++) {
+          int16_t sx = cx + (int16_t)((ux * i + px * j) >> 8);
+          int16_t sy = cy + (int16_t)((uy * i + py * j) >> 8);
+          if (sx < 0 || sx >= SCREEN_WIDTH || sy < 0 || sy >= SCREEN_HEIGHT)
+            continue;
+          int16_t ix = irisOriginX + sx, iy = irisOriginY + sy;
+          if (ix < 0 || ix >= IRIS_WIDTH || iy < 0 || iy >= IRIS_HEIGHT)
+            continue;
+          if ((polar[iy][ix] & 0x7F) >= 127)
+            continue; // outside the iris circle
+          uint8_t lx = mirrorLids ? (uint8_t)(SCREEN_WIDTH - 1 - sx) : (uint8_t)sx;
+          if (lower[sy][lx] <= lT || upper[sy][lx] <= uT)
+            continue; // under an eyelid
+          pBurst[sy * SCREEN_WIDTH + sx] = clockPix[h];
+        }
+      }
+    }
+  }
+#endif
 
 #if USE_SSD1327
   // Pack the RGB565 frame down to 4-bit grey, two pixels per byte.  This
