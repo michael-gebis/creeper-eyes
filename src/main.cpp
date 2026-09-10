@@ -40,6 +40,18 @@
 // 128 px at 6 px per character in the default font.
 #define NET_COLS 21
 
+// Time is taken from NTP with a POSIX TZ string, rather than the manual
+// hour/minute offset plus a DST checkbox the wandering-hour-clock used.
+// A TZ string carries the DST *rules*, so the changeover happens on its
+// own instead of needing a visit twice a year.
+#define NTP_SERVER_1 "pool.ntp.org"
+#define NTP_SERVER_2 "time.nist.gov"
+
+// UTC until told otherwise.  Set with `tz`, e.g. for US Central:
+//   tz CST6CDT,M3.2.0/2,M11.1.0/2
+#define TZ_DEFAULT "UTC0"
+#define TZ_MAX 48
+
 // Optional: a clone without it still builds, and an unconfigured board
 // falls through to the setup portal.
 #if defined(__has_include)
@@ -338,6 +350,13 @@ static bool pupilOn = true;
 static bool eyesSwapped = false;
 static bool swapPending = false;
 
+#if NETWORK
+// Declared ahead of the clock, which reads them to decide whether to use
+// real time or free-run.
+static bool timeSynced = false;
+static char tzString[TZ_MAX] = TZ_DEFAULT;
+#endif
+
 #if CLOCK
 
 static bool clockOn = false;
@@ -390,9 +409,10 @@ static void clockDirs(void) {
 
 // Recomputes the three hand angles and their direction vectors.  Called
 // once per frame while the clock is on, never per pixel.
+static uint32_t clockNow(void); // defined just below
+
 static void clockUpdate(void) {
-  uint32_t elapsed = ((millis() - clockBaseMs) / 1000UL) * clockRate;
-  uint32_t t = (clockBaseSec + elapsed) % 86400UL;
+  uint32_t t = clockNow();
   uint32_t sec = t % 60, min = (t / 60) % 60, hr = (t / 3600) % 12;
   clockSecAng = (uint16_t)((CLOCK_NOON + sec * 512UL / 60UL) % 512UL);
   clockMinAng =
@@ -405,6 +425,17 @@ static void clockUpdate(void) {
 // Seconds since midnight, derived rather than stored, so it stays correct
 // however long the board has been up.
 static uint32_t clockNow(void) {
+#if NETWORK
+  // Real time wins once NTP has answered.  `clock rate` and `clock set`
+  // only affect the free-running fallback, which is what runs when there
+  // is no network -- so they stop having an effect once synced.
+  if (timeSynced) {
+    struct tm t;
+    if (getLocalTime(&t, 0))
+      return (uint32_t)t.tm_hour * 3600UL + (uint32_t)t.tm_min * 60UL +
+             (uint32_t)t.tm_sec;
+  }
+#endif
   uint32_t elapsed = ((millis() - clockBaseMs) / 1000UL) * clockRate;
   return (clockBaseSec + elapsed) % 86400UL;
 }
@@ -416,6 +447,7 @@ static uint32_t clockNow(void) {
 // Defined with the splash helpers, further down.
 static void showMessage(const char *l1, const char *l2, const char *l3,
                         const char *l4);
+static void netStartTime(void);  // defined with the time code below
 
 // Tri-state so `status` can distinguish "never tried" from "tried and failed".
 enum { NET_DOWN, NET_UP, NET_PORTAL };
@@ -499,6 +531,7 @@ static void netOnConnected(void) {
     DEBUG_PRINTF("[net] mdns failed to start" "\n");
   DEBUG_PRINTF("[net] connected: %s  ipv4 %s" "\n",
                WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
+  netStartTime();
 }
 
 // Address cards, one panel each, because IPv6 will not fit beside the rest:
@@ -506,6 +539,31 @@ static void netOnConnected(void) {
 // Splitting across the two displays is the tidiest use of having two.
 static uint32_t netShowUntil = 0;
 static void netShow(void); // defined with the display code below
+
+
+// Applies the timezone and kicks off SNTP.  Safe to call again after a TZ
+// change: the daemon is simply reconfigured.
+static void netStartTime(void) {
+  configTzTime(tzString, NTP_SERVER_1, NTP_SERVER_2);
+}
+
+// Non-blocking check, polled until the first sync lands.  SNTP replies take
+// a second or two, and blocking on it would stall the eyes for no reason.
+static void netPollTime(void) {
+  if (timeSynced || WiFi.status() != WL_CONNECTED)
+    return;
+  struct tm t;
+  if (!getLocalTime(&t, 0)) // 0 = do not wait
+    return;
+  // The epoch starts at 1970; anything before ~2021 means SNTP has not
+  // actually answered yet and we are seeing the power-on default.
+  if (t.tm_year < (2021 - 1900))
+    return;
+  timeSynced = true;
+  DEBUG_PRINTF("[net] time synced: %04d-%02d-%02d %02d:%02d:%02d %s" "\n",
+               t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min,
+               t.tm_sec, tzString);
+}
 
 static void netReport(Print &out) {
   out.printf("host=%s.local state=%s" "\n", WIFI_HOSTNAME,
@@ -519,6 +577,15 @@ static void netReport(Print &out) {
     out.printf("  ipv4 %s  gw %s" "\n", WiFi.localIP().toString().c_str(),
                WiFi.gatewayIP().toString().c_str());
     out.printf("  ipv6 %s" "\n", WiFi.localIPv6().toString().c_str());
+  }
+  if (timeSynced) {
+    struct tm t;
+    getLocalTime(&t, 0);
+    out.printf("  time %04d-%02d-%02d %02d:%02d:%02d  tz %s" "\n",
+               t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour,
+               t.tm_min, t.tm_sec, tzString);
+  } else {
+    out.printf("  time not synced (tz %s)" "\n", tzString);
   }
 }
 
@@ -539,6 +606,7 @@ static bool settingsDirty = false;
 #define PREFS_KEY_EYE "eye"
 #define PREFS_KEY_SWAP "swap"
 #define PREFS_KEY_PUPIL "pupil"
+#define PREFS_KEY_TZ "tz"
 #define PREFS_KEY_CLK_ON "clkOn"
 #define PREFS_KEY_CLK_SEC "clkSec"
 #define PREFS_KEY_CLK_RATE "clkRate"
@@ -556,6 +624,9 @@ static void saveSettings(void) {
   prefs.putString(PREFS_KEY_EYE, eyeDesigns[eyeDesign].name);
   prefs.putBool(PREFS_KEY_SWAP, eyesSwapped);
   prefs.putBool(PREFS_KEY_PUPIL, pupilOn);
+#if NETWORK
+  prefs.putString(PREFS_KEY_TZ, tzString);
+#endif
 #if CLOCK
   prefs.putBool(PREFS_KEY_CLK_ON, clockOn);
   prefs.putBool(PREFS_KEY_CLK_SEC, clockSeconds);
@@ -1181,6 +1252,11 @@ static void loadSettings(void) {
   String saved = prefs.getString(PREFS_KEY_EYE, "");
   bool sw = prefs.getBool(PREFS_KEY_SWAP, false);
   pupilOn = prefs.getBool(PREFS_KEY_PUPIL, pupilOn);
+#if NETWORK
+  String tz = prefs.getString(PREFS_KEY_TZ, tzString);
+  strncpy(tzString, tz.c_str(), sizeof(tzString) - 1);
+  tzString[sizeof(tzString) - 1] = '\0';
+#endif
 #if CLOCK
   clockOn = prefs.getBool(PREFS_KEY_CLK_ON, clockOn);
   clockSeconds = prefs.getBool(PREFS_KEY_CLK_SEC, clockSeconds);
@@ -1352,6 +1428,7 @@ static void cmdHelp(void) {
                  "  clock secs [on|off]       show the second hand\n"
                  "  clock color [hour|min|sec] RRGGBB\n"
                  "  net [quiet]               address info, on screen too\n"
+                 "  tz [POSIX string]         timezone, e.g. CST6CDT,M3.2.0/2\n"
                  "  pupil [on|off]            pupil, or a full iris disc\n"
                  "  swap [on|off]             swap which panel is which "
                  "eye\n"
@@ -1561,6 +1638,27 @@ static void handleCommand(char *line) {
     }
 #endif
 #if NETWORK
+  } else if (!strcmp(cmd, "tz")) {
+    // Everything after the command word, so the POSIX string keeps its commas
+    // and slashes intact.
+    char *rest = strtok(NULL, "");
+    while (rest && *rest == ' ')
+      rest++;
+    if (!rest || !*rest) {
+      Serial.printf("tz %s%s" "\n", tzString,
+                    timeSynced ? "" : " (not synced)");
+      Serial.println(F("  e.g. tz CST6CDT,M3.2.0/2,M11.1.0/2   or   tz UTC0"));
+      return;
+    }
+    if (strlen(rest) >= TZ_MAX) {
+      Serial.printf("err: timezone must be under %d characters" "\n", TZ_MAX);
+      return;
+    }
+    strncpy(tzString, rest, sizeof(tzString) - 1);
+    tzString[sizeof(tzString) - 1] = '\0';
+    netStartTime(); // re-apply and re-sync
+    settingsDirty = true;
+    Serial.printf("ok tz=%s" "\n", tzString);
   } else if (!strcmp(cmd, "net")) {
     char *arg = strtok(NULL, " \t");
     netReport(Serial);
@@ -1711,6 +1809,9 @@ void frame(            // Process motion for a single frame of left or right eye
   pollCommands();
   pollBootButton();
 
+#if NETWORK
+  netPollTime(); // cheap no-op once the first sync has landed
+#endif
 #if CLOCK
   if (clockOn)
     clockUpdate();
