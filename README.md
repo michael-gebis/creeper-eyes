@@ -146,6 +146,8 @@ and each is `#ifndef`-guarded, so any of them can also be overridden from
 | `CLOCK_*_LEN` / `CLOCK_*_HW` | — | Hand lengths and half-widths, in pixels from the iris centre. |
 | `PUPIL_OFF_SCALE` | `64` | Iris scale used when the pupil is off. At or below 64 the pupil vanishes. |
 | `NETWORK` | `1` | WiFi, NTP, web server and OTA. `0` compiles all of it out, saving ~535 KB. |
+| `IPV6_SERVER` | `0` | Placeholder. Cannot be turned on yet — see [IPv6](#ipv6). |
+| `FIRMWARE_VERSION` | `1.0` | Bumped by hand, for features worth announcing. |
 | `WEB_CMD_ENDPOINT` | `1` | The `/cmd` escape hatch. `0` leaves only the REST API. Needs `COMMANDS`, since it is a passthrough to the console. |
 | `WIFI_HOSTNAME` | `frank` | DHCP and mDNS name. |
 | `WIFI_CONNECT_MS` | `15000` | How long to wait on a known network before opening the portal. |
@@ -203,6 +205,7 @@ Open `pio device monitor` and type `help`. Commands are line-based at 115200.
 | `wifi join <ssid> [pass]` | Store a network and reboot into it |
 | `wifi forget` | Clear the stored network |
 | `wifi portal` | Reboot into the setup portal |
+| `version` | Firmware version, commit and build date |
 | `tz [zone]` | Timezone by name or POSIX string |
 | `splash` | Re-show the panel name cards |
 | `status` | Current eye, gaze, dilation, heap, uptime, frame rate |
@@ -510,9 +513,9 @@ timezone, Wi-Fi, and the address details. It polls the device once a second,
 so two browsers looking at it stay in step with each other and with anything
 you type over serial.
 
-Each card says what happens to its settings when the power goes off — saved,
-session only, or momentary — because that is the first question anyone asks
-of a control they have just moved.
+Each card says what happens to its settings when the power goes off —
+persistent, session only, or momentary — because that is the first question
+anyone asks of a control they have just moved.
 
 The page is static: one 17 KB string in [`src/page.h`](src/page.h), served
 straight out of flash. Everything on it is drawn from the API below, so there
@@ -520,7 +523,16 @@ is no markup anywhere that has to be kept in step with device state.
 
 Requests are served from the render loop, so each one costs a dropped frame
 or two. That is why the page polls at a leisurely rate and the responses are
-kept small.
+kept small. The page schedules its next poll when the last one lands rather
+than on a timer: the board serves one client at a time, so a timer would
+leave requests outstanding behind each other until the browser ran out of
+connections and the page stopped responding.
+
+WiFi modem sleep is turned off for the same reason. The default parks the
+radio between beacons, which measured at a **1.7 s median** for one small
+`GET`, with a tenth of them past eight seconds; with it off the same request
+takes **65 ms** and none time out. It costs roughly 30 mA, which is nothing
+for a prop on a USB lead.
 
 ### REST API
 
@@ -532,6 +544,7 @@ CORS open so a page served from anywhere can drive the device.
 | `GET` | `/api/v1/state` | Everything at once — what the page polls |
 | `GET` | `/api/v1/eyes` | The eye designs this firmware was built with |
 | `GET` | `/api/v1/net` | MAC, addresses, signal, sync state |
+| `GET` | `/api/v1/info` | Version, commit, build date, project URL |
 | `GET` `PUT` | `/api/v1/eye` | `{"name":"dragon"}`, `{"index":2}` or `{"next":true}` |
 | `GET` `PUT` | `/api/v1/gaze` | `{"x":200,"y":800}` or `{"mode":"auto"}` |
 | `GET` `PUT` | `/api/v1/dilate` | `{"percent":40}` or `{"mode":"auto"}` |
@@ -637,6 +650,25 @@ Two things bite on Windows:
   `upload_flags = --host_ip=192.168.1.20`.
 
 macOS and Linux need neither workaround.
+
+## Versions
+
+```
+> version
+frank 1.0 (41038d1), built Sep 10 2026 16:12:04
+https://github.com/michael-gebis/creeper-eyes
+```
+
+The same three facts are on the control page, under Device, and at
+`GET /api/v1/info`.
+
+`FIRMWARE_VERSION` in [`src/config.h`](src/config.h) is bumped by hand, and
+only for something worth telling somebody about — the commit already
+distinguishes every build. The commit comes from
+[`tools/git_rev.py`](tools/git_rev.py), which PlatformIO runs before each
+build; outside a git checkout it reads `unknown`, and a build made with
+uncommitted changes is marked `+dirty`, because an unmarked hash is a promise
+that the binary *is* that commit.
 
 ## Troubleshooting
 

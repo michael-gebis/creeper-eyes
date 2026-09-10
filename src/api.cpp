@@ -131,10 +131,10 @@ static void fillNet(JsonObject o) {
     o["rssi"] = WiFi.RSSI();
     o["ipv4"] = WiFi.localIP().toString();
     o["ipv6"] = WiFi.localIPv6().toString();
-    // The address is real and answers pings, but nothing listens on it: the
-    // Arduino core's server binds AF_INET only.  Said plainly here so a
-    // client is not left wondering why the URL does not work.
-    o["ipv6Served"] = false;
+    // The address is real and answers pings, but nothing listens on it while
+    // IPV6_SERVER is 0 -- see config.h.  Said plainly here so a client is not
+    // left wondering why the URL does not work.
+    o["ipv6Served"] = (bool)IPV6_SERVER;
     o["gateway"] = WiFi.gatewayIP().toString();
   }
   o["timeSynced"] = timeSynced;
@@ -427,6 +427,21 @@ static void putTz(void) {
   getTz();
 }
 
+// What this firmware is: fixed for the life of a build, so the page reads it
+// once at startup rather than dragging it through every poll.
+static void getInfo(void) {
+  JsonDocument d;
+  d["name"] = WIFI_HOSTNAME;
+  d["version"] = FIRMWARE_VERSION;
+  d["commit"] = FIRMWARE_COMMIT;
+  d["dirty"] = (bool)GIT_DIRTY;
+  d["project"] = PROJECT_URL;
+  d["built"] = __DATE__ " " __TIME__;
+  d["arduino"] = ESP.getSdkVersion();
+  d["api"] = "v1";
+  sendJson(200, d);
+}
+
 // WiFi.  The password goes in and never comes out -- there is no
 // authentication on this API, so anything readable here is readable by
 // anyone on the network, and a stored password does not need to be.
@@ -560,6 +575,9 @@ void apiRegister(WebServer &s) {
   s.on(API "/clock", HTTP_PUT, putClock);
   s.on(API "/clock", HTTP_OPTIONS, handleOptions);
   s.on(API "/clock", HTTP_ANY, notAllowed);
+
+  s.on(API "/info", HTTP_GET, getInfo);
+  s.on(API "/info", HTTP_ANY, notAllowed);
 
   s.on(API "/wifi", HTTP_GET, getWifi);
   s.on(API "/wifi", HTTP_PUT, putWifi);

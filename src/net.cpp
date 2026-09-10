@@ -157,6 +157,15 @@ void setupNetwork(void) {
   WiFi.setHostname(WIFI_HOSTNAME);
   WiFi.mode(WIFI_STA);
 
+  // Modem sleep off.  The default parks the radio between DTIM beacons,
+  // which costs hundreds of milliseconds on every round trip -- measured at
+  // a 1.7 s median for one small GET, with a tenth of them past eight
+  // seconds.  The web server is polled from the render loop and serves one
+  // client at a time, so that latency does not queue politely: it stacks up
+  // requests until whatever is talking to the board gives up.  Roughly 30 mA
+  // more, which is nothing for a prop that lives on a USB lead.
+  WiFi.setSleep(false);
+
   bool forcePortal = takePortalRequest();
   if (forcePortal)
     DEBUG_PRINTF("[net] portal was requested; skipping stored networks" "\n");
@@ -212,7 +221,9 @@ void netOnConnected(void) {
   if (WiFi.status() != WL_CONNECTED)
     return;
   // Link-local IPv6 is not brought up by default, and takes a moment to be
-  // assigned, so the address can still read as :: right after boot.
+  // assigned, so the address can still read as :: right after boot.  Worth
+  // having for pings and for the address cards even though nothing serves
+  // over it -- see IPV6_SERVER in config.h for why not.
   WiFi.enableIpV6();
   if (MDNS.begin(WIFI_HOSTNAME))
     DEBUG_PRINTF("[net] mdns up: %s.local" "\n", WIFI_HOSTNAME);

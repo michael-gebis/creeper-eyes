@@ -1303,6 +1303,7 @@ static void cmdHelp(Print &out) {
                  "  net off                   dismiss the address cards\n"
                  "  wifi                      the network, and how to change "
                  "it\n"
+                 "  version                   firmware version and commit\n"
                  "  tz [POSIX string]         timezone, e.g. CST6CDT,M3.2.0/2\n"
                  "  pupil [on|off]            pupil, or a full iris disc\n"
                  "  swap [on|off]             swap which panel is which "
@@ -1355,6 +1356,10 @@ void handleCommand(char *line, Print &out) {
 
   if (!strcmp(cmd, "help") || !strcmp(cmd, "?")) {
     cmdHelp(out);
+  } else if (!strcmp(cmd, "version")) {
+    out.printf("frank %s (%s), built %s" "\n", FIRMWARE_VERSION,
+               FIRMWARE_COMMIT, __DATE__ " " __TIME__);
+    out.println(F(PROJECT_URL));
   } else if (!strcmp(cmd, "status")) {
     cmdStatus(out);
   } else if (!strcmp(cmd, "eye")) {

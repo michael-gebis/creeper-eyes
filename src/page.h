@@ -6,7 +6,7 @@
 // value on it comes from /api/v1/state at runtime.
 //
 // The cards are grouped by what happens to a setting when the power goes off
-// -- saved, session-only, or momentary -- because that is the first question
+// -- persistent, session-only, or momentary -- because that is the first
 // anyone asks of a control they have just moved, and a label on each card
 // answers it without a legend to cross-reference.
 //
@@ -38,7 +38,9 @@ h1 small{font-weight:400;color:var(--dim);font-size:13px}
 .card h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;
          color:var(--dim);margin:0;font-weight:600;display:flex;gap:8px;
          align-items:baseline;justify-content:space-between}
-/* What survives a power cycle, said on the card rather than in a legend. */
+/* What survives a power cycle, said on the card rather than in a legend.
+   The class stays .saved -- it pairs with the Settings card's save button,
+   which is the thing that writes them. */
 .tag{font-size:10px;letter-spacing:.04em;text-transform:none;padding:1px 6px;
      border-radius:9px;border:1px solid var(--line);color:var(--dim);
      font-weight:400;white-space:nowrap}
@@ -71,6 +73,8 @@ td.v{word-break:break-all}
 #banner{display:none;margin-top:12px;padding:10px 12px;border-radius:8px;
         background:#2b2418;border:1px solid #5a4526;color:var(--warn);font-size:13px}
 .dim{color:var(--dim)}
+a{color:var(--accent)}
+hr{border:0;border-top:1px solid var(--line);margin:2px 0}
 </style>
 
 <h1>frank <small id=sub>connecting…</small></h1>
@@ -79,7 +83,7 @@ td.v{word-break:break-all}
 
 <div class=grid>
   <div class=card>
-    <h2>Eye <span class="tag saved">saved</span></h2>
+    <h2>Eye <span class="tag saved">persistent</span></h2>
     <div class=row><select id=eye class=grow></select><button id=eyeNext>next</button></div>
     <div class=row>
       <button id=pupil>pupil</button>
@@ -115,7 +119,7 @@ td.v{word-break:break-all}
   </div>
 
   <div class=card>
-    <h2>Clock <span class="tag saved">saved</span></h2>
+    <h2>Clock <span class="tag saved">persistent</span></h2>
     <div class=row>
       <button id=clkOn>on</button><button id=clkSec>seconds</button>
       <span id=clkTxt class=dim></span>
@@ -141,7 +145,7 @@ td.v{word-break:break-all}
       <input type=time id=tset step=1 class=grow><button id=timeSet>set</button>
     </div>
     <p class=note id=timeNote></p>
-    <h2 style="margin-top:4px">Timezone <span class="tag saved">saved</span></h2>
+    <h2 style="margin-top:4px">Timezone <span class="tag saved">persistent</span></h2>
     <div class=row><select id=tz class=grow></select></div>
     <div class=row>
       <input type=text id=tzRaw class=grow placeholder="or a POSIX string">
@@ -174,6 +178,9 @@ td.v{word-break:break-all}
     <h2>Device</h2>
     <table id=info></table>
     <p class=note id=v6note></p>
+    <hr>
+    <table id=about></table>
+    <p class=note id=project></p>
   </div>
 
   <div class=card>
@@ -182,7 +189,7 @@ td.v{word-break:break-all}
       <button id=save>save</button><button id=forget class=danger>forget</button>
       <span id=dirty class=dim></span>
     </div>
-    <p class=note>Save writes the cards marked <span class="tag saved">saved</span>
+    <p class=note>Save writes the cards marked <span class="tag saved">persistent</span>
       to flash. Forget clears them, so the next boot starts from the build-time
       defaults. Wi-Fi is stored separately, by the radio, and neither button
       touches it.</p>
@@ -225,37 +232,51 @@ const held = el => document.activeElement === el;
 const hex = n => '#' + n.toLowerCase();
 const unhex = v => v.replace('#', '').toUpperCase();
 
-function fillOnce(s) {
-  if (!$('#eye').options.length)
-    api('/eyes').then(d => {
-      $('#eye').innerHTML = d.designs
-        .map(x => `<option value="${x.index}">${x.name}</option>`).join('');
-      $('#eye').value = s.eye.index;
-    });
+// The two lists that never change while the firmware is running.  Fetched
+// once at startup and awaited one at a time: the device serves a single
+// client from inside its render loop, so two requests in flight are two
+// requests queued, and the second one is the one that times out.
+// Fixed for the life of the build, so it is read once rather than polled.
+async function fillInfo() {
+  const i = await api('/info');
+  $('#about').innerHTML = [
+    ['version', i.version + (i.dirty ? ' (modified)' : '')],
+    ['commit', i.commit],
+    ['built', i.built],
+    ['api', i.api]
+  ].map(([k, v]) => `<tr><td>${k}</td><td class=v>${v}</td></tr>`).join('');
+  // The commit is the one this firmware was built from, which is not
+  // necessarily the tip of the branch it came from.
+  $('#project').innerHTML =
+    `<a href="${i.project}" target="_blank" rel="noreferrer">${i.project
+      .replace('https://', '')}</a>`;
+}
 
-  if (!$('#tz').options.length)
-    api('/tz').then(d => {
-      // Grouped by region: sixty options in one flat list is a wall.
-      let html = '', region = null;
-      for (const z of d.zones) {
-        if (z.region !== region) {
-          if (region !== null) html += '</optgroup>';
-          region = z.region;
-          html += `<optgroup label="${region}">`;
-        }
-        html += `<option value="${z.name}">${z.name.replace(/_/g, ' ')}</option>`;
-      }
-      $('#tz').innerHTML = html + '</optgroup>';
-      // Nothing is preselected: the device stores a POSIX string, and several
-      // cities map to the same one, so there is no honest answer to "which of
-      // these is it".
-      $('#tz').selectedIndex = -1;
-    });
+async function fillLists() {
+  const eyes = await api('/eyes');
+  $('#eye').innerHTML = eyes.designs
+    .map(x => `<option value="${x.index}">${x.name}</option>`).join('');
+
+  const tz = await api('/tz');
+  // Grouped by region: sixty options in one flat list is a wall.
+  let html = '', region = null;
+  for (const z of tz.zones) {
+    if (z.region !== region) {
+      if (region !== null) html += '</optgroup>';
+      region = z.region;
+      html += `<optgroup label="${region}">`;
+    }
+    html += `<option value="${z.name}">${z.name.replace(/_/g, ' ')}</option>`;
+  }
+  $('#tz').innerHTML = html + '</optgroup>';
+  // Nothing is preselected: the device stores a POSIX string, and several
+  // cities map to the same one, so there is no honest answer to "which of
+  // these is it".
+  $('#tz').selectedIndex = -1;
 }
 
 function render(s) {
   st = s;
-  fillOnce(s);
   $('#sub').textContent = s.net.state === 'up'
     ? `${s.net.ipv4} · ${s.system.fps} fps` : s.net.state;
 
@@ -407,10 +428,33 @@ $('#forget').onclick = () => {
 };
 
 // Polling rather than push: the synchronous web server cannot hold a
-// connection open without stalling the render loop.  Every request costs a
-// frame or two, so once a second is plenty.
-refresh().catch(e => $('#err').textContent = e.message);
-setInterval(() => { if (!busy && !halted) refresh().catch(() => {}); }, 1000);
+// connection open without stalling the render loop.
+//
+// The next poll is scheduled when the last one lands, rather than on a timer.
+// setInterval fires whether or not the previous request has come back, and
+// the device serves one client at a time from inside its render loop -- so a
+// slow reply used to leave a second request outstanding, then a third, until
+// the browser's connection pool was full and the page stopped responding
+// altogether.  A chained timeout cannot stack by construction, however slow
+// the device gets.
+async function poll() {
+  if (!halted && !busy) {
+    try { await refresh(); $('#err').textContent = ''; }
+    catch (e) { $('#err').textContent = 'lost contact — retrying'; }
+  }
+  if (!halted) setTimeout(poll, 1000);
+}
+
+(async () => {
+  try {
+    await refresh();
+    await fillLists();
+    await fillInfo();
+  } catch (e) {
+    $('#err').textContent = e.message;
+  }
+  poll();
+})();
 </script>
 )HTML";
 

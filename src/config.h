@@ -160,6 +160,47 @@
 // the only access.
 #define BOOT_BUTTON_PIN 0
 
+// IDENTITY ------------------------------------------------------------------
+// The version is bumped by hand, and only for a feature worth telling
+// somebody about -- the commit below already distinguishes every build.
+#define FIRMWARE_VERSION "1.0"
+#define PROJECT_URL "https://github.com/michael-gebis/creeper-eyes"
+
+// Supplied by tools/git_rev.py at build time.  Defaulted here so the project
+// still compiles outside a git checkout, or with the extra script removed.
+#ifndef GIT_REV
+#define GIT_REV "unknown"
+#endif
+#ifndef GIT_DIRTY
+#define GIT_DIRTY 0
+#endif
+
+// The commit, with a marker when the tree had uncommitted changes -- an
+// unmarked hash is a promise that this binary is that commit, and a build
+// from a dirty tree cannot make it.
+#if GIT_DIRTY
+#define FIRMWARE_COMMIT GIT_REV "+dirty"
+#else
+#define FIRMWARE_COMMIT GIT_REV
+#endif
+
+// IPv6 for the web server.  Off, and not yet selectable.
+//
+// WiFiServer in the ESP32 Arduino core opens an AF_INET socket and nothing
+// else, so nothing listens on the board's IPv6 address: it answers pings and
+// refuses HTTP.  Waiting for support in the core, which is missing as of
+// 2.0.17 (framework-arduinoespressif32 4.20017).  Core 3.x replaces
+// WiFiServer with a dual-stack NetworkServer, at which point this becomes a
+// real switch rather than a placeholder.
+//
+// A global address would be wanted too.  enableIpV6() brings up a link-local
+// one, which is reachable only from the same segment and only with a zone
+// index in the URL (http://[fe80::...%2528]/), so it is of little use as a
+// service address even once something is listening.
+#ifndef IPV6_SERVER
+#define IPV6_SERVER 0
+#endif
+
 // DERIVED ------------------------------------------------------------------
 // Must come last: these are computed from the switches above, so every
 // #ifndef default has to have been applied by the time they are evaluated.
