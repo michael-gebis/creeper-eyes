@@ -24,7 +24,8 @@
 // for up to ten seconds.  The cost is that writing a response blocks
 // rendering, which is why the pages are kept small.
 
-static WebServer server(80);
+// Not static: api.cpp hangs its routes off this one.
+WebServer server(80);
 
 // Collects a command's output so it can be sent as one response.
 class StringPrint : public Print {
@@ -150,7 +151,10 @@ void otaBegin(void) {
 
 void webBegin(void) {
   server.on("/", webHandleRoot);
+#if WEB_CMD_ENDPOINT
   server.on("/cmd", webHandleCmd);
+#endif
+  apiRegister(server);
   server.onNotFound([]() { server.send(404, "text/plain", "not found" "\n"); });
   server.begin();
   MDNS.addService("http", "tcp", 80);

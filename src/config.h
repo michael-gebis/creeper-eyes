@@ -23,6 +23,13 @@
 #define WIFI_HOSTNAME "frank"
 #define WIFI_AP_NAME "frank-setup"
 
+// The legacy /cmd?c=... endpoint, which runs a console command over HTTP
+// and answers in prose.  Handy from a shell, but the JSON API under
+// /api/v1 is what programs should use.  Set to 0 to drop it.
+#ifndef WEB_CMD_ENDPOINT
+#define WEB_CMD_ENDPOINT 1
+#endif
+
 // How long to wait on a known network before giving up and opening the
 // portal, and how long the portal itself stays up before the eyes carry on
 // regardless.  A prop with no network should still be a working prop.

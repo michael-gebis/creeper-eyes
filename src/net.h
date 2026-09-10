@@ -59,5 +59,10 @@ void webBegin(void);
 void otaBegin(void);
 void webPoll(void);
 
+// The REST API, in api.cpp.  Hangs its routes off the server the web
+// module owns, rather than owning one of its own.
+class WebServer;
+void apiRegister(WebServer &s);
+
 #endif // NETWORK
 #endif // NET_H
