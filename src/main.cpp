@@ -56,6 +56,13 @@
 
 #define COMMANDS 1
 
+// PUPIL -------------------------------------------------------------------
+// The iris is drawn where iScale * distance / 128 < 64, and distance peaks
+// at 127 at the centre, so any scale at or below 64 keeps every pixel in
+// the iris and the pupil disappears, leaving a full iris disc.  Independent
+// of the clock -- see the `pupil` command.
+#define PUPIL_OFF_SCALE 64
+
 // CLOCK FACE --------------------------------------------------------------
 // Turns the iris into an analogue clock.  There is no real time source yet,
 // so it free-runs from millis() and the time is set from the console; `clock
@@ -87,12 +94,6 @@
 #define CLOCK_MIN_COLOR 0x000000
 #define CLOCK_SEC_COLOR 0x000000
 
-// The iris is drawn where iScale * distance / 128 < 64, and distance peaks
-// at 127 in the centre, so any scale at or below 64 keeps every pixel in
-// the iris and the pupil disappears.  That matters: the pupil is black and
-// fills most of the disc, so hands drawn across it are swallowed whole.
-// Opening it out turns the iris into a proper dial.
-#define CLOCK_FACE_SCALE 64
 
 // BOOT button.  Grounded when pressed, external pull-up on the board.
 // GPIO0 is a strapping pin, but only during reset; reading it afterwards is
@@ -282,6 +283,10 @@ static const EyeDesign eyeDesigns[] = {
 
 static uint8_t eyeDesign = 0;
 
+// Whether the eye has a pupil at all.  Off gives a full iris disc, which
+// suits a clock face but is not tied to it.
+static bool pupilOn = true;
+
 // Panel assignment.  Swapping the chip-select pins moves everything that
 // belongs to an eye -- its mirrored eyelids and its splash label -- to the
 // other physical panel, which is what makes this a real fix for a miswire
@@ -293,7 +298,6 @@ static bool swapPending = false;
 
 static bool clockOn = false;
 static bool clockSeconds = true;
-static bool clockPupil = false; // keep the pupil instead of a full dial
 static uint16_t clockRate = 1;              // 1 = real time
 static uint32_t clockBaseSec = 10 * 3600UL + 10 * 60UL; // 10:10, watch-ad time
 static uint32_t clockBaseMs = 0;
@@ -755,20 +759,46 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
     for (uint8_t h = 0; h < 3; h++) {
       if (h == 2 && !clockSeconds)
         continue;
-      const int16_t ux = clockDirX[h], uy = clockDirY[h];
-      const int16_t px = (int16_t)-uy, py = ux; // perpendicular
-      for (int16_t i = 0; i <= (int16_t)hlen[h]; i++) {
-        for (int16_t j = -(int16_t)hhw[h]; j <= (int16_t)hhw[h]; j++) {
-          int16_t sx = cx + (int16_t)((ux * i + px * j) >> 8);
-          int16_t sy = cy + (int16_t)((uy * i + py * j) >> 8);
-          if (sx < 0 || sx >= SCREEN_WIDTH || sy < 0 || sy >= SCREEN_HEIGHT)
+
+      const int32_t ux = clockDirX[h], uy = clockDirY[h]; // 8.8 unit vector
+      const int32_t len8 = (int32_t)hlen[h] << 8;
+      // Half a pixel of slack, so a nominal half-width of 0 still draws a
+      // one-pixel line rather than nothing.
+      const int32_t halfW8 = ((int32_t)hhw[h] << 8) + 128;
+
+      // Tight box around the hand, padded by the half-width, then clipped.
+      const int16_t tx = cx + (int16_t)((ux * (int32_t)hlen[h]) >> 8);
+      const int16_t ty = cy + (int16_t)((uy * (int32_t)hlen[h]) >> 8);
+      const int16_t pad = (int16_t)hhw[h] + 1;
+      int16_t x0 = (cx < tx ? cx : tx) - pad, x1 = (cx > tx ? cx : tx) + pad;
+      int16_t y0 = (cy < ty ? cy : ty) - pad, y1 = (cy > ty ? cy : ty) + pad;
+      if (x0 < 0) x0 = 0;
+      if (y0 < 0) y0 = 0;
+      if (x1 > SCREEN_WIDTH - 1) x1 = SCREEN_WIDTH - 1;
+      if (y1 > SCREEN_HEIGHT - 1) y1 = SCREEN_HEIGHT - 1;
+
+      // Every pixel in the box is decided exactly once, which is what keeps
+      // the edges clean: walking parallel offset lines instead rounds each
+      // one separately and leaves gaps and doubled pixels between them.
+      for (int16_t sy = y0; sy <= y1; sy++) {
+        const int32_t dy = (int32_t)sy - cy;
+        for (int16_t sx = x0; sx <= x1; sx++) {
+          const int32_t dx = (int32_t)sx - cx;
+
+          const int32_t along = dx * ux + dy * uy; // 8.8 px along the hand
+          if (along < 0 || along > len8)
             continue;
-          int16_t ix = irisOriginX + sx, iy = irisOriginY + sy;
+          const int32_t perp = dy * ux - dx * uy; // 8.8 px across it
+          if (perp < -halfW8 || perp > halfW8)
+            continue;
+
+          const int16_t ix = irisOriginX + sx, iy = irisOriginY + sy;
           if (ix < 0 || ix >= IRIS_WIDTH || iy < 0 || iy >= IRIS_HEIGHT)
             continue;
           if ((polar[iy][ix] & 0x7F) >= 127)
             continue; // outside the iris circle
-          uint8_t lx = mirrorLids ? (uint8_t)(SCREEN_WIDTH - 1 - sx) : (uint8_t)sx;
+          const uint8_t lx =
+              mirrorLids ? (uint8_t)(SCREEN_WIDTH - 1 - sx) : (uint8_t)sx;
           if (lower[sy][lx] <= lT || upper[sy][lx] <= uT)
             continue; // under an eyelid
           pBurst[sy * SCREEN_WIDTH + sx] = clockPix[h];
@@ -993,6 +1023,7 @@ static void cmdHelp(void) {
                  "  startle                   constrict, then snap wide "
                  "with a blink\n"
                  "  clock [on|off|set|rate]   analogue clock in the iris\n"
+                 "  pupil [on|off]            pupil, or a full iris disc\n"
                  "  swap [on|off]             swap which panel is which "
                  "eye\n"
                  "  save                      remember eye and swap "
@@ -1016,6 +1047,7 @@ static void cmdStatus(void) {
   if (startleState != STARTLE_OFF)
     Serial.print(startleState == STARTLE_WINDUP ? " startle=windup"
                                                 : " startle=hold");
+  Serial.printf(" pupil=%s", pupilOn ? "on" : "off");
   Serial.printf(" swap=%s%s", eyesSwapped ? "on" : "off",
                 settingsDirty ? " (unsaved)" : "");
   Serial.printf(" panel=%s heap=%u up=%us",
@@ -1103,7 +1135,6 @@ static void handleCommand(char *line) {
                     clockOn ? "on" : "off", (unsigned)(t / 3600),
                     (unsigned)((t / 60) % 60), (unsigned)(t % 60),
                     (unsigned)clockRate, clockSeconds ? "on" : "off");
-      Serial.printf("  pupil=%s\n", clockPupil ? "on" : "off (full dial)");
       Serial.printf("  colours hour=%06lX min=%06lX sec=%06lX\n",
                     (unsigned long)clockRGB[0], (unsigned long)clockRGB[1],
                     (unsigned long)clockRGB[2]);
@@ -1179,11 +1210,6 @@ static void handleCommand(char *line) {
         Serial.printf("ok clock color %s=%06lX\n",
                       which == 0 ? "hour" : which == 1 ? "min" : "sec", v);
       }
-    } else if (!strcmp(arg, "pupil")) {
-      char *v = strtok(NULL, " \t");
-      clockPupil = (v && !strcmp(v, "on"));
-      Serial.printf("ok pupil=%s (%s)\n", clockPupil ? "on" : "off",
-                    clockPupil ? "hands cut off by the pupil" : "full dial");
     } else if (!strcmp(arg, "secs")) {
       char *v = strtok(NULL, " \t");
       clockSeconds = !(v && !strcmp(v, "off"));
@@ -1191,9 +1217,26 @@ static void handleCommand(char *line) {
     } else {
       Serial.println(
           F("usage: clock [on|off|set HH:MM[:SS]|rate N|secs on|off|"
-            "color [hour|min|sec] RRGGBB|pupil on|off]"));
+            "color [hour|min|sec] RRGGBB]"));
     }
 #endif
+  } else if (!strcmp(cmd, "pupil")) {
+    char *arg = strtok(NULL, " \t");
+    if (arg)
+      for (char *c = arg; *c; c++)
+        *c = (char)tolower((unsigned char)*c);
+    if (!arg)
+      pupilOn = !pupilOn;
+    else if (!strcmp(arg, "on"))
+      pupilOn = true;
+    else if (!strcmp(arg, "off"))
+      pupilOn = false;
+    else {
+      Serial.println(F("usage: pupil [on|off]"));
+      return;
+    }
+    Serial.printf("ok pupil=%s%s\n", pupilOn ? "on" : "off",
+                  pupilOn ? "" : " (full iris disc; dilate has no effect)");
   } else if (!strcmp(cmd, "swap")) {
     char *arg = strtok(NULL, " \t");
     bool want = !eyesSwapped;
@@ -1347,11 +1390,11 @@ void frame(            // Process motion for a single frame of left or right eye
   }
 #endif
 
-#if CLOCK
-  // Open the pupil right out so the whole iris reads as a dial.  Applied
-  // after the dilation override, which it deliberately outranks.
-  if (clockOn && !clockPupil)
-    iScale = CLOCK_FACE_SCALE;
+#if COMMANDS
+  // Outranks the dilation override: with no pupil there is nothing to
+  // dilate.
+  if (!pupilOn)
+    iScale = PUPIL_OFF_SCALE;
 #endif
 
 #if DEBUG
