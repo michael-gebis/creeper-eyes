@@ -78,6 +78,7 @@
 #include <WiFiManager.h> // tzapu/WiFiManager -- captive setup portal
 #include <ESPmDNS.h>
 #include <WebServer.h>
+#include <ArduinoOTA.h>
 #endif
 #include <SPI.h>
 
@@ -456,6 +457,7 @@ static void handleCommand(char *line, Print &out); // the console's dispatcher
 static void cmdStatus(Print &out);
 static void netReport(Print &out);
 static void webBegin(void);      // defined with the web server below
+static void otaBegin(void);      // defined alongside it
 
 // Tri-state so `status` can distinguish "never tried" from "tried and failed".
 enum { NET_DOWN, NET_UP, NET_PORTAL };
@@ -541,6 +543,7 @@ static void netOnConnected(void) {
                WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
   netStartTime();
   webBegin();
+  otaBegin();
 }
 
 // Address cards, one panel each, because IPv6 will not fit beside the rest:
@@ -714,6 +717,51 @@ static void webHandleRoot(void) {
          "<p style='opacity:.6'>Every serial command works here. "
          "<a href='/cmd?c=help'>help</a></p>");
   server.send(200, "text/html", h);
+}
+
+// OVER-THE-AIR UPDATES ------------------------------------------------------
+// The reason this is worth having: once the boards are inside a head, the USB
+// port is behind however much glue and foam it took to mount them.  Reflashing
+// over WiFi is the difference between a tweak and a disassembly.
+//
+// Progress is reported on the panels because an OTA takes long enough that a
+// frozen-looking prop is alarming, and the eyes stop rendering during it --
+// ArduinoOTA.handle() runs the transfer to completion once it starts.
+
+static void otaBegin(void) {
+  ArduinoOTA.setHostname(WIFI_HOSTNAME);
+
+  ArduinoOTA.onStart([]() {
+    DEBUG_PRINTF("[ota] update starting" "\n");
+    showMessage("UPDATE", "0%", NULL, NULL);
+  });
+
+  ArduinoOTA.onProgress([](unsigned int done, unsigned int total) {
+    static uint8_t last = 255;
+    uint8_t pct = total ? (uint8_t)((done * 100UL) / total) : 0;
+    // Redraw only when the number changes: pushing a panel per packet would
+    // slow the transfer down considerably.
+    if (pct == last)
+      return;
+    last = pct;
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%u%%", (unsigned)pct);
+    showMessage("UPDATE", buf, NULL, NULL);
+  });
+
+  ArduinoOTA.onEnd([]() {
+    DEBUG_PRINTF("[ota] done, rebooting" "\n");
+    showMessage("UPDATE", "DONE", "rebooting", NULL);
+  });
+
+  ArduinoOTA.onError([](ota_error_t e) {
+    DEBUG_PRINTF("[ota] failed, error %u" "\n", (unsigned)e);
+    showMessage("UPDATE", "FAILED", NULL, NULL);
+  });
+
+  ArduinoOTA.begin();
+  DEBUG_PRINTF("[net] ota ready: pio run -t upload --upload-port %s.local" "\n",
+               WIFI_HOSTNAME);
 }
 
 static void webBegin(void) {
@@ -1955,8 +2003,10 @@ void frame(            // Process motion for a single frame of left or right eye
 
 #if NETWORK
   netPollTime(); // cheap no-op once the first sync has landed
-  if (netState == NET_UP)
+  if (netState == NET_UP) {
     server.handleClient();
+    ArduinoOTA.handle();
+  }
 #endif
 #if CLOCK
   if (clockOn)
