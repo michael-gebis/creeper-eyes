@@ -14,6 +14,7 @@
 
 #if NETWORK
 
+#include "auth.h"
 #include "display.h"
 #include "net.h"
 #include "rtc.h"
@@ -28,10 +29,26 @@ static WebServer *S = nullptr;
 
 // --------------------------------------------------------------- plumbing --
 
+// Wraps a handler in the credential check.  Registering guarded<getState>
+// instead of getState means a route added later cannot quietly miss the
+// guard: there is one place a route is named, and the guard is part of
+// naming it.  Compiles away to nothing when no credential is required.
+template <void (*H)()> static void guarded(void) {
+  if (authCheck(*S))
+    H();
+}
+
 // Browsers refuse cross-origin requests without these, which would stop a
 // page served from anywhere else driving the device.
+//
+// Wide open while nothing is required, which is the point -- anything on the
+// network is welcome to drive an unauthenticated prop.  Once a credential is
+// needed the wildcard is wrong twice over: browsers reject it alongside
+// credentials, and inviting arbitrary origins to send them is the opposite of
+// what turning authentication on asked for.
 static void corsHeaders(void) {
-  S->sendHeader("Access-Control-Allow-Origin", "*");
+  if (!authRequired())
+    S->sendHeader("Access-Control-Allow-Origin", "*");
   S->sendHeader("Access-Control-Allow-Methods", "GET, PUT, POST, OPTIONS");
   S->sendHeader("Access-Control-Allow-Headers", "Content-Type");
 }
@@ -487,6 +504,7 @@ static void getInfo(void) {
   d["arduino"] = ESP.getSdkVersion();
   d["api"] = "v1";
   d["rtc"] = (bool)RTC;
+  d["auth"] = authRequired();
   sendJson(200, d);
 }
 
@@ -673,78 +691,78 @@ static void postSettings(void) {
 void apiRegister(WebServer &s) {
   S = &s;
 
-  s.on(API "/state", HTTP_GET, getState);
+  s.on(API "/state", HTTP_GET, guarded<getState>);
   s.on(API "/state", HTTP_ANY, notAllowed);
-  s.on(API "/eyes", HTTP_GET, getEyes);
+  s.on(API "/eyes", HTTP_GET, guarded<getEyes>);
   s.on(API "/eyes", HTTP_ANY, notAllowed);
-  s.on(API "/net", HTTP_GET, getNet);
+  s.on(API "/net", HTTP_GET, guarded<getNet>);
   s.on(API "/net", HTTP_ANY, notAllowed);
 
-  s.on(API "/eye", HTTP_GET, getEye);
-  s.on(API "/eye", HTTP_PUT, putEye);
+  s.on(API "/eye", HTTP_GET, guarded<getEye>);
+  s.on(API "/eye", HTTP_PUT, guarded<putEye>);
   s.on(API "/eye", HTTP_OPTIONS, handleOptions);
   s.on(API "/eye", HTTP_ANY, notAllowed);
 
-  s.on(API "/gaze", HTTP_GET, getGaze);
-  s.on(API "/gaze", HTTP_PUT, putGaze);
+  s.on(API "/gaze", HTTP_GET, guarded<getGaze>);
+  s.on(API "/gaze", HTTP_PUT, guarded<putGaze>);
   s.on(API "/gaze", HTTP_OPTIONS, handleOptions);
   s.on(API "/gaze", HTTP_ANY, notAllowed);
 
-  s.on(API "/dilate", HTTP_GET, getDilate);
-  s.on(API "/dilate", HTTP_PUT, putDilate);
+  s.on(API "/dilate", HTTP_GET, guarded<getDilate>);
+  s.on(API "/dilate", HTTP_PUT, guarded<putDilate>);
   s.on(API "/dilate", HTTP_OPTIONS, handleOptions);
   s.on(API "/dilate", HTTP_ANY, notAllowed);
 
-  s.on(API "/pupil", HTTP_GET, getPupil);
-  s.on(API "/pupil", HTTP_PUT, putPupil);
+  s.on(API "/pupil", HTTP_GET, guarded<getPupil>);
+  s.on(API "/pupil", HTTP_PUT, guarded<putPupil>);
   s.on(API "/pupil", HTTP_OPTIONS, handleOptions);
   s.on(API "/pupil", HTTP_ANY, notAllowed);
 
-  s.on(API "/swap", HTTP_GET, getSwap);
-  s.on(API "/swap", HTTP_PUT, putSwap);
+  s.on(API "/swap", HTTP_GET, guarded<getSwap>);
+  s.on(API "/swap", HTTP_PUT, guarded<putSwap>);
   s.on(API "/swap", HTTP_OPTIONS, handleOptions);
   s.on(API "/swap", HTTP_ANY, notAllowed);
 
-  s.on(API "/clock", HTTP_GET, getClock);
-  s.on(API "/clock", HTTP_PUT, putClock);
+  s.on(API "/clock", HTTP_GET, guarded<getClock>);
+  s.on(API "/clock", HTTP_PUT, guarded<putClock>);
   s.on(API "/clock", HTTP_OPTIONS, handleOptions);
   s.on(API "/clock", HTTP_ANY, notAllowed);
 
-  s.on(API "/ntp", HTTP_GET, getNtp);
-  s.on(API "/ntp", HTTP_PUT, putNtp);
+  s.on(API "/ntp", HTTP_GET, guarded<getNtp>);
+  s.on(API "/ntp", HTTP_PUT, guarded<putNtp>);
   s.on(API "/ntp", HTTP_OPTIONS, handleOptions);
   s.on(API "/ntp", HTTP_ANY, notAllowed);
 
 #if RTC
-  s.on(API "/rtc", HTTP_GET, getRtc);
-  s.on(API "/rtc", HTTP_PUT, putRtc);
+  s.on(API "/rtc", HTTP_GET, guarded<getRtc>);
+  s.on(API "/rtc", HTTP_PUT, guarded<putRtc>);
   s.on(API "/rtc", HTTP_OPTIONS, handleOptions);
   s.on(API "/rtc", HTTP_ANY, notAllowed);
 #endif
 
-  s.on(API "/info", HTTP_GET, getInfo);
+  s.on(API "/info", HTTP_GET, guarded<getInfo>);
   s.on(API "/info", HTTP_ANY, notAllowed);
 
-  s.on(API "/wifi", HTTP_GET, getWifi);
-  s.on(API "/wifi", HTTP_PUT, putWifi);
+  s.on(API "/wifi", HTTP_GET, guarded<getWifi>);
+  s.on(API "/wifi", HTTP_PUT, guarded<putWifi>);
   s.on(API "/wifi", HTTP_OPTIONS, handleOptions);
   s.on(API "/wifi", HTTP_ANY, notAllowed);
 
-  s.on(API "/netinfo", HTTP_GET, getNetInfo);
-  s.on(API "/netinfo", HTTP_PUT, putNetInfo);
+  s.on(API "/netinfo", HTTP_GET, guarded<getNetInfo>);
+  s.on(API "/netinfo", HTTP_PUT, guarded<putNetInfo>);
   s.on(API "/netinfo", HTTP_OPTIONS, handleOptions);
   s.on(API "/netinfo", HTTP_ANY, notAllowed);
 
-  s.on(API "/tz", HTTP_GET, getTz);
-  s.on(API "/tz", HTTP_PUT, putTz);
+  s.on(API "/tz", HTTP_GET, guarded<getTz>);
+  s.on(API "/tz", HTTP_PUT, guarded<putTz>);
   s.on(API "/tz", HTTP_OPTIONS, handleOptions);
   s.on(API "/tz", HTTP_ANY, notAllowed);
 
-  s.on(API "/action", HTTP_POST, postAction);
+  s.on(API "/action", HTTP_POST, guarded<postAction>);
   s.on(API "/action", HTTP_OPTIONS, handleOptions);
   s.on(API "/action", HTTP_ANY, notAllowed);
 
-  s.on(API "/settings", HTTP_POST, postSettings);
+  s.on(API "/settings", HTTP_POST, guarded<postSettings>);
   s.on(API "/settings", HTTP_OPTIONS, handleOptions);
   s.on(API "/settings", HTTP_ANY, notAllowed);
 }

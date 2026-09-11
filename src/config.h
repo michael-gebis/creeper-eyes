@@ -257,6 +257,58 @@
 #define FIRMWARE_COMMIT GIT_REV
 #endif
 
+// AUTHENTICATION ------------------------------------------------------------
+// All optional, all off, and independent of each other -- see src/auth.h.
+// With them off none of it is compiled in and the board behaves exactly as it
+// always has, which for a prop on a home network is a fair choice.
+//
+// Credentials live in include/secrets.h, gitignored like the WiFi ones.
+//
+//   build_flags = -DAUTH_HTTP=1 -DAUTH_HOST_CHECK=1
+
+// Digest authentication on the control page, the API and /cmd.  Digest rather
+// than Basic because this device cannot practically serve HTTPS, and digest
+// never puts the password on the wire.
+#ifndef AUTH_HTTP
+#define AUTH_HTTP 0
+#endif
+
+// A bearer token as an alternative credential, for scripts that would rather
+// not do digest.  Sent in the clear, so it is the weaker of the two.
+#ifndef AUTH_TOKEN
+#define AUTH_TOKEN 0
+#endif
+
+// Refuse requests whose Host header does not name this device.  Defends
+// against DNS rebinding, which is the attack that authentication alone does
+// not stop: your own browser can be made to call 192.168.x.x with credentials
+// it has already cached.
+#ifndef AUTH_HOST_CHECK
+#define AUTH_HOST_CHECK 0
+#endif
+
+// A password on over-the-air updates.  No switch: defining OTA_PASSWORD in
+// secrets.h is enough.  A password set but not used because a flag was
+// forgotten has no upside worth the extra knob.
+#ifdef OTA_PASSWORD
+#define OTA_AUTH 1
+#else
+#define OTA_AUTH 0
+#endif
+
+// Fail the build rather than shipping a blank password: a device that is
+// nominally protected and actually open is worse than one that never claimed
+// to be protected.
+#if AUTH_HTTP && (!defined(AUTH_USER) || !defined(AUTH_PASS))
+#error "AUTH_HTTP=1 needs AUTH_USER and AUTH_PASS -- see include/secrets.h.example"
+#endif
+#if AUTH_TOKEN && !defined(AUTH_TOKEN_VALUE)
+#error "AUTH_TOKEN=1 needs AUTH_TOKEN_VALUE -- see include/secrets.h.example"
+#endif
+#if (AUTH_HTTP || AUTH_TOKEN || AUTH_HOST_CHECK) && !NETWORK
+#error "authentication needs NETWORK=1; there is nothing to authenticate without it"
+#endif
+
 // BATTERY-BACKED CLOCK ------------------------------------------------------
 // An optional DS3231 on I2C -- see docs/WIRING_RTC.md.  Off by default: this
 // is an add-on, and a build that does not have one should not carry the code

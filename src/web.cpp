@@ -11,6 +11,7 @@
 
 #include "console.h"
 #include "display.h"
+#include "auth.h"
 #include "net.h"
 #include "page.h"
 #include <ArduinoOTA.h>
@@ -50,6 +51,8 @@ public:
 };
 
 void webHandleCmd(void) {
+  if (!authCheck(server))
+    return;
   if (!server.hasArg("c")) {
     server.send(400, "text/plain", "usage: /cmd?c=status" "\n");
     return;
@@ -70,6 +73,8 @@ void webHandleCmd(void) {
 // every time, and building it per request would cost RAM the renderer
 // wants and put device state back into C++ string concatenation.
 void webHandleRoot(void) {
+  if (!authCheck(server))
+    return;
   server.send_P(200, "text/html", CONTROL_PAGE);
 }
 
@@ -84,6 +89,12 @@ void webHandleRoot(void) {
 
 void otaBegin(void) {
   ArduinoOTA.setHostname(WIFI_HOSTNAME);
+#if OTA_AUTH
+  // Without this, anything on the network can flash whatever firmware it
+  // likes onto the board -- a larger hole than the API being open, and a
+  // cheaper one to close.
+  ArduinoOTA.setPassword(OTA_PASSWORD);
+#endif
 
   ArduinoOTA.onStart([]() {
     DEBUG_PRINTF("[ota] update starting" "\n");
@@ -122,6 +133,7 @@ void otaBegin(void) {
 // order matters: the specific routes and api.cpp's are registered before the
 // catch-all, because WebServer matches in registration order.
 void webBegin(void) {
+  authBegin(server);
   server.on("/", webHandleRoot);
 #if WEB_CMD_ENDPOINT && COMMANDS
   server.on("/cmd", webHandleCmd);

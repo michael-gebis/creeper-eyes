@@ -156,10 +156,12 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
   </div>
 
   <div class=card>
-    <h2>Time <span class=tag>not saved</span></h2>
+    <h2>Time <span class="tag saved">persistent</span></h2>
     <div id=manual hidden>
       <div class=row>
+        <label for=tset>set to</label>
         <input type=time id=tset step=1 class=grow><button id=timeSet>set</button>
+        <span class=tag>not saved</span>
       </div>
       <p class=note id=timeNote></p>
     </div>

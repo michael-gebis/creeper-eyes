@@ -164,6 +164,9 @@ a source file — which is how the `gray` environment sets `USE_SSD1327`.
 | `RTC_SDA_PIN` / `RTC_SCL_PIN` | `21` / `22` | I²C pins for it. Both otherwise unused. |
 | `RTC_ADDR` | `0x68` | The DS3231's fixed address. |
 | `FAVICON` | `FAVICON_FRANK` | Tab icon. `FAVICON_EYES` is a generic alternative for a build that is not going into a Frankenstein. |
+| `AUTH_HTTP` | `0` | Digest authentication on the page, the API and `/cmd`. |
+| `AUTH_TOKEN` | `0` | A bearer token as an alternative credential, for scripts. |
+| `AUTH_HOST_CHECK` | `0` | Refuse requests whose `Host` is not this device — the DNS-rebinding defence. |
 | `IPV6` | `0` | All of IPv6, compiled out. Cannot usefully be turned on yet — see [IPv6](#ipv6). |
 | `FIRMWARE_VERSION` | `1.0` | Bumped by hand, for features worth announcing. |
 | `PROJECT_URL` | this repository | Shown by `version` and on the control page. |
@@ -583,6 +586,8 @@ time is right immediately at the next boot rather than a few seconds later.
 
 ### Web interface
 
+![The control page](docs/images/webui.png)
+
 **http://frank.local/** — a control page for everything the console can do:
 eye design, gaze, dilation, pupil, panel swap, clock and hand colours,
 timezone, Wi-Fi, and the address details. It polls the device once a second,
@@ -624,7 +629,7 @@ CORS open so a page served from anywhere can drive the device.
 | `GET` | `/api/v1/state` | Everything at once — what the page polls |
 | `GET` | `/api/v1/eyes` | The eye designs this firmware was built with |
 | `GET` | `/api/v1/net` | MAC, addresses, signal, sync state |
-| `GET` | `/api/v1/info` | Version, commit, build date, project URL |
+| `GET` | `/api/v1/info` | Version, commit, build date, project URL, whether a credential is needed |
 | `GET` `PUT` | `/api/v1/ntp` | Time-client status; `{"enabled":false}` stops it, `{"op":"sync"}` asks now |
 | `GET` `PUT` | `/api/v1/rtc` | The battery-backed clock; `{"op":"sync"}` stores the time. Only with `RTC=1` |
 | `GET` `PUT` | `/api/v1/eye` | `{"name":"dragon"}`, `{"index":2}` or `{"next":true}` |
@@ -752,6 +757,75 @@ are fully type-annotated — signatures and locals — and both run on Python 3.
 which is the oldest interpreter PlatformIO is likely to hand them. Annotations
 are lazy (`from __future__ import annotations`), so the modern generic syntax
 works there too.
+
+## Locking it down
+
+None of this is on. A prop on a home network, where the only things that can
+reach it are things you already let onto your WiFi, is a perfectly reasonable
+place to prefer simplicity — so that is the default and nothing below costs
+anything until you ask for it.
+
+Credentials live in `include/secrets.h` beside the WiFi ones, and are never
+committed. See [`include/secrets.h.example`](include/secrets.h.example).
+
+### The one worth doing anyway
+
+**Over-the-air updates have no password unless you set one.** Without it,
+anything on your network can flash whatever firmware it likes onto the board
+— a larger hole than the web interface being open, and a cheaper one to
+close. There is no switch: define it and it applies.
+
+```c
+#define OTA_PASSWORD "choose-something"    // in include/secrets.h
+```
+
+Uploading then needs it, from the environment rather than a committed file:
+
+```sh
+OTA_PASSWORD=choose-something pio run -e gray_ota -t upload
+```
+
+### The web interface
+
+`-DAUTH_HTTP=1` puts **digest** authentication on the control page, the REST
+API and `/cmd`. Digest rather than basic because the password is never sent
+— only a hash of it with a server nonce — which matters because this device
+cannot practically serve HTTPS (see below). Browsers handle the challenge
+themselves and ask once.
+
+`-DAUTH_TOKEN=1` adds a bearer token as an alternative, for scripts that
+would rather not do digest:
+
+```sh
+curl --digest -u frank:... http://frank.local/api/v1/state
+curl -H "Authorization: Bearer ..." http://frank.local/api/v1/state
+```
+
+The token is sent in the clear on every request, so it is the weaker of the
+two — make it long and random. Either may be used on its own or both together.
+
+`-DAUTH_HOST_CHECK=1` refuses requests whose `Host` header does not name this
+device. That is the defence against **DNS rebinding**, which authentication
+alone does not stop: a page you visit can make your own browser call
+`192.168.x.x`, and a browser holding cached credentials will attach them.
+
+Turning any of them on with no password defined **fails the build** rather
+than producing a device that looks protected and is not.
+
+### Why there is no HTTPS
+
+Not for want of a certificate — a real one can be had for a private address
+through DNS-01. Three other reasons:
+
+- The Arduino core has **no TLS server**. `WiFiClientSecure` is client-side.
+  Using a third-party one would mean rewriting every route.
+- A handshake is **one to two seconds of ESP32 CPU**, and this web server is
+  polled from inside the render loop. Every page load would stall the eyes.
+- Self-signed means a browser warning forever, on every device.
+
+Digest answers most of the same question at none of that cost. If you want
+real TLS, terminate it on something else — a Pi or a NAS in front of the
+board — and leave Frank speaking plain HTTP on a segment you trust.
 
 ## Booting with no network
 
