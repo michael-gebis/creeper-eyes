@@ -1,8 +1,12 @@
-// WiFi, the setup portal, mDNS and network time.
+// WiFi, the setup portal, mDNS and NTP.
 //
 // Everything here compiles to nothing when NETWORK is 0, which is what the
 // *_local environments in platformio.ini build.  Nothing outside this module
 // and web.cpp knows the network exists.
+//
+// The timezone and the system clock are not here: they belong to
+// timekeeping.h, which is compiled either way, because an RTC needs both and
+// does not need a network.  This module is one source feeding that one.
 
 #ifndef NET_H
 #define NET_H
@@ -11,31 +15,14 @@
 
 #if NETWORK
 
+#include "timekeeping.h"
+
 #include <Print.h>
 #include <stdint.h>
 
 // Tri-state so callers can tell "never connected" from "gave up".
 enum { NET_DOWN, NET_UP, NET_PORTAL };
 extern uint8_t netState;
-
-// Whether NTP has ever answered.  The clock free-runs until it has.
-extern bool timeSynced;
-extern char tzString[TZ_MAX];
-
-// Named timezones, so nobody has to type a POSIX string from memory.  Named
-// after cities the way the IANA database is, and grouped by region only so a
-// picker can offer sixty of them without being a wall of text.
-struct TzChoice {
-  const char *name;
-  const char *region;
-  const char *posix;
-};
-extern const TzChoice tzChoices[];
-extern const uint8_t numTzChoices;
-
-// Returns the POSIX string for a name, or NULL if unknown.  Accepts the
-// older regional names (`pacific`, `eastern`, ...) as well as the city ones.
-const char *tzLookup(const char *name);
 
 // Connect, or open the portal.  Blocks; may take the portal timeout.
 void setupNetwork(void);
@@ -44,10 +31,12 @@ void setupNetwork(void);
 // exists.
 void netOnConnected(void);
 
-// Apply tzString and (re)start SNTP.  Safe to call again after a change.
+// (Re)start SNTP with the current timezone.  Safe to call again after a
+// change; the servers are re-resolved and the next reply is accepted.
 void netStartTime(void);
 
-// Poll for the first successful sync.  Cheap no-op afterwards.
+// Hand a completed sync to timekeeping, and write it through to the RTC.
+// Called once per frame; a flag check until a reply actually lands.
 void netPollTime(void);
 
 // Human-readable addresses and time.

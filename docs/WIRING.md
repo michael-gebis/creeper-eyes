@@ -198,6 +198,8 @@ Every pin this project uses is broken out on the 30-pin DevKit V1:
 | 15 | `D15` | CS, Frank's right | Strapping pin; CS idles high, so this is fine |
 | 18 | `D18` | DIN | |
 | 19 | `D19` | *(reserved MISO)* | Unused — free |
+| 21 | `D21` | *(free)* | I²C data, if the optional RTC is fitted |
+| 22 | `D22` | *(free)* | I²C clock, if the optional RTC is fitted |
 | 27 | `D27` | RST | |
 | 33 | `D33` | DC | |
 | 2 | *(no header pin)* | Heartbeat LED | On-board blue LED |
@@ -205,3 +207,11 @@ Every pin this project uses is broken out on the 30-pin DevKit V1:
 
 `GPIO12` is deliberately unused: held high at reset it selects a 1.8 V flash
 voltage and the board will not start. Keep it clear.
+
+## Optional add-ons
+
+None of these are needed for the eyes to work, and each is compiled out by
+default:
+
+- **[A battery-backed clock](WIRING_RTC.md)** — a DS3231 on four wires, so the
+  head knows what time it is after a power cut or with no network at all.

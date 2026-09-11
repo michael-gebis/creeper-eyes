@@ -5,12 +5,14 @@
 #if NETWORK
 
 #include "display.h"
+#include "rtc.h"
+#include "timekeeping.h"
+#include <esp_sntp.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
 #include <esp_wifi.h>
 #include <WiFi.h>
 #include <WiFiManager.h>
-
 
 uint8_t netState = NET_DOWN;
 
@@ -234,149 +236,58 @@ void netOnConnected(void) {
 uint32_t netShowUntil = 0;
 void netShow(void); // defined with the display code below
 
-
 // Applies the timezone and kicks off SNTP.  Safe to call again after a TZ
 // change: the daemon is simply reconfigured.
 // Typing a POSIX string correctly is no fun, so the common zones get names.
 // A raw POSIX string is still accepted for anywhere not listed.
 
-// Enough of the world to cover wherever the head ends up.  These are POSIX
-// TZ strings, not the IANA database -- the database is megabytes and needs a
-// filesystem, while a POSIX string is thirty bytes and is what the C library
-// wants anyway.  The trade is that a country changing its DST rules needs a
-// firmware update, which for a Halloween prop is the right side of the deal.
-// Anything not listed can still be set: `tz` takes a raw POSIX string.
-//
-// Offsets are inverted relative to how people say them: UTC+2 is written -2.
-// Zones without DST are a single field.
-const TzChoice tzChoices[] = {
-    // North America
-    {"los_angeles", "North America", "PST8PDT,M3.2.0/2,M11.1.0/2"},
-    {"denver", "North America", "MST7MDT,M3.2.0/2,M11.1.0/2"},
-    {"phoenix", "North America", "MST7"},
-    {"chicago", "North America", "CST6CDT,M3.2.0/2,M11.1.0/2"},
-    {"new_york", "North America", "EST5EDT,M3.2.0/2,M11.1.0/2"},
-    {"halifax", "North America", "AST4ADT,M3.2.0/2,M11.1.0/2"},
-    {"st_johns", "North America", "NST3:30NDT,M3.2.0/2,M11.1.0/2"},
-    {"anchorage", "North America", "AKST9AKDT,M3.2.0/2,M11.1.0/2"},
-    {"honolulu", "North America", "HST10"},
-    {"mexico_city", "North America", "CST6"}, // DST abolished in 2022
-    {"panama", "North America", "EST5"},
-
-    // South America
-    {"bogota", "South America", "<-05>5"},
-    {"lima", "South America", "<-05>5"},
-    {"caracas", "South America", "<-04>4"},
-    {"santiago", "South America", "<-04>4<-03>,M9.1.6/24,M4.1.6/24"},
-    {"sao_paulo", "South America", "<-03>3"}, // DST abolished in 2019
-    {"buenos_aires", "South America", "<-03>3"},
-
-    // Europe
-    {"reykjavik", "Europe", "GMT0"},
-    {"london", "Europe", "GMT0BST,M3.5.0/1,M10.5.0/2"},
-    {"dublin", "Europe", "GMT0IST,M3.5.0/1,M10.5.0/2"},
-    {"lisbon", "Europe", "WET0WEST,M3.5.0/1,M10.5.0/2"},
-    {"madrid", "Europe", "CET-1CEST,M3.5.0,M10.5.0/3"},
-    {"paris", "Europe", "CET-1CEST,M3.5.0,M10.5.0/3"},
-    {"berlin", "Europe", "CET-1CEST,M3.5.0,M10.5.0/3"},
-    {"rome", "Europe", "CET-1CEST,M3.5.0,M10.5.0/3"},
-    {"warsaw", "Europe", "CET-1CEST,M3.5.0,M10.5.0/3"},
-    {"athens", "Europe", "EET-2EEST,M3.5.0/3,M10.5.0/4"},
-    {"helsinki", "Europe", "EET-2EEST,M3.5.0/3,M10.5.0/4"},
-    {"kyiv", "Europe", "EET-2EEST,M3.5.0/3,M10.5.0/4"},
-    {"moscow", "Europe", "MSK-3"},
-
-    // Africa and the Middle East
-    {"casablanca", "Africa / Middle East", "<+01>-1"},
-    {"lagos", "Africa / Middle East", "WAT-1"},
-    {"cairo", "Africa / Middle East", "EET-2EEST,M4.5.5/0,M10.5.4/24"},
-    {"johannesburg", "Africa / Middle East", "SAST-2"},
-    {"jerusalem", "Africa / Middle East", "IST-2IDT,M3.4.4/26,M10.5.0"},
-    {"nairobi", "Africa / Middle East", "EAT-3"},
-    {"istanbul", "Africa / Middle East", "<+03>-3"},
-    {"riyadh", "Africa / Middle East", "<+03>-3"},
-    {"tehran", "Africa / Middle East", "<+0330>-3:30"},
-    {"dubai", "Africa / Middle East", "<+04>-4"},
-
-    // Asia
-    {"karachi", "Asia", "PKT-5"},
-    {"kolkata", "Asia", "IST-5:30"},
-    {"kathmandu", "Asia", "<+0545>-5:45"},
-    {"dhaka", "Asia", "<+06>-6"},
-    {"bangkok", "Asia", "<+07>-7"},
-    {"jakarta", "Asia", "WIB-7"},
-    {"singapore", "Asia", "<+08>-8"},
-    {"hong_kong", "Asia", "HKT-8"},
-    {"shanghai", "Asia", "CST-8"},
-    {"taipei", "Asia", "CST-8"},
-    {"manila", "Asia", "PST-8"},
-    {"seoul", "Asia", "KST-9"},
-    {"tokyo", "Asia", "JST-9"},
-
-    // Oceania
-    {"perth", "Oceania", "AWST-8"},
-    {"adelaide", "Oceania", "ACST-9:30ACDT,M10.1.0,M4.1.0/3"},
-    {"brisbane", "Oceania", "AEST-10"},
-    {"sydney", "Oceania", "AEST-10AEDT,M10.1.0,M4.1.0/3"},
-    {"melbourne", "Oceania", "AEST-10AEDT,M10.1.0,M4.1.0/3"},
-    {"auckland", "Oceania", "NZST-12NZDT,M9.5.0,M4.1.0/3"},
-    {"fiji", "Oceania", "<+12>-12"},
-
-    // Universal
-    {"utc", "Universal", "UTC0"},
-};
-
-// The names this project shipped with before the list went worldwide.  Kept
-// working because they are documented and people have them in scripts, but
-// left out of tzChoices so the picker offers one name per place.
-static const struct {
-  const char *alias;
-  const char *of;
-} tzAliases[] = {
-    {"pacific", "los_angeles"}, {"mountain", "denver"},
-    {"arizona", "phoenix"},     {"central", "chicago"},
-    {"eastern", "new_york"},    {"alaska", "anchorage"},
-    {"hawaii", "honolulu"},     {"uk", "london"},
-    {"europe", "paris"},
-};
-const uint8_t numTzChoices = sizeof(tzChoices) / sizeof(tzChoices[0]);
-
 // Returns the POSIX string for a shortcut, or NULL if the name is unknown.
-const char *tzLookup(const char *name) {
-  for (uint8_t i = 0; i < numTzChoices; i++)
-    if (!strcasecmp(name, tzChoices[i].name))
-      return tzChoices[i].posix;
-  for (uint8_t i = 0; i < sizeof(tzAliases) / sizeof(tzAliases[0]); i++)
-    if (!strcasecmp(name, tzAliases[i].alias))
-      return tzLookup(tzAliases[i].of);
-  return NULL;
-}
 
 // Whether a sync has ever landed.  The clock free-runs until it has, so the
 // eyes work with no network at all.
-bool timeSynced = false;
-char tzString[TZ_MAX] = TZ_DEFAULT;
+
+// Set from the SNTP task the moment a reply is applied, and cleared by
+// netPollTime.  The work that follows a sync -- logging it, writing it
+// through to the RTC -- is done from the render loop rather than here,
+// because this runs in another task and an I2C transaction does not belong
+// in it.
+static volatile bool ntpArrived = false;
+
+static void onSntpSync(struct timeval *tv) {
+  timeAccept(tv->tv_sec, TIME_NTP);
+  ntpArrived = true;
+}
 
 void netStartTime(void) {
+  // A callback rather than watching for the year to look sane: with an RTC
+  // fitted the clock is already right at boot, so "is it past 2021 yet" can
+  // no longer tell a real sync from a restored one.  This fires exactly when
+  // SNTP applies a reply, and never otherwise.
+  sntp_set_time_sync_notification_cb(onSntpSync);
   configTzTime(tzString, NTP_SERVER_1, NTP_SERVER_2);
+  timeApplyTz(); // configTzTime sets TZ too; this keeps the one owner honest
 }
 
 // Non-blocking check, polled until the first sync lands.  SNTP replies take
 // a second or two, and blocking on it would stall the eyes for no reason.
 void netPollTime(void) {
-  if (timeSynced || WiFi.status() != WL_CONNECTED)
+  if (!ntpArrived)
     return;
+  ntpArrived = false;
+
   struct tm t;
-  if (!getLocalTime(&t, 0)) // 0 = do not wait
-    return;
-  // The epoch starts at 1970; anything before ~2021 means SNTP has not
-  // actually answered yet and we are seeing the power-on default.
-  if (t.tm_year < (2021 - 1900))
-    return;
-  timeSynced = true;
-  DEBUG_PRINTF("[net] time synced: %04d-%02d-%02d %02d:%02d:%02d %s" "\n",
-               t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min,
-               t.tm_sec, tzString);
+  if (timeLocal(t))
+    DEBUG_PRINTF("[net] time synced: %04d-%02d-%02d %02d:%02d:%02d %s" "\n",
+                 t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour,
+                 t.tm_min, t.tm_sec, tzString);
+
+#if RTC
+  // The whole point of the battery: a board that has seen the network once
+  // keeps the right time through a power cut, and through the network going
+  // away for good.
+  if (rtcPresent() && rtcWriteNow())
+    DEBUG_PRINTF("[rtc] written from ntp" "\n");
+#endif
 }
 
 void netReport(Print &out) {
@@ -394,15 +305,7 @@ void netReport(Print &out) {
     out.printf("  ipv6 %s" "\n", WiFi.localIPv6().toString().c_str());
 #endif
   }
-  if (timeSynced) {
-    struct tm t;
-    getLocalTime(&t, 0);
-    out.printf("  time %04d-%02d-%02d %02d:%02d:%02d  tz %s" "\n",
-               t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour,
-               t.tm_min, t.tm_sec, tzString);
-  } else {
-    out.printf("  time not synced (tz %s)" "\n", tzString);
-  }
+  timeReport(out);
 }
 
 // Paints one address card.  Frank's right takes the numbers -- MAC, IPv4,

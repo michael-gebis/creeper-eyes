@@ -147,6 +147,7 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
       <input type=time id=tset step=1 class=grow><button id=timeSet>set</button>
     </div>
     <p class=note id=timeNote></p>
+    <div class=row><span class=dim id=timeSrc></span></div>
     <h2 style="margin-top:4px">Timezone <span class="tag saved">persistent</span></h2>
     <div class=row><select id=tz class=grow></select></div>
     <div class=row>
@@ -313,6 +314,13 @@ function render(s) {
   if (!held($('#rate'))) $('#rate').value = s.clock.rate;
   $('#panelNote').textContent =
     s.system.panel === 'ssd1327' ? 'greyscale — shown as brightness' : '';
+
+  // Where the time came from matters more than the time: a clock reading
+  // 3:47 is not worth much until you know whether that is off a time server,
+  // out of a battery-backed chip, or a counter that started at boot.
+  const src = {ntp: 'from a time server', rtc: 'from the battery-backed clock',
+               manual: 'set by hand', free: 'free-running since boot'};
+  $('#timeSrc').textContent = src[s.clock.source] || s.clock.source;
 
   $('#timeNote').innerHTML = s.net.timeSynced
     ? 'NTP has the time, so setting it by hand has no effect — change the ' +

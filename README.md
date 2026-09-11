@@ -90,6 +90,9 @@ Module silkscreens vary between sellers — `DIN` may be labelled `SDA`, `SI` or
 
 **Full details, assembly order and troubleshooting: [docs/WIRING.md](docs/WIRING.md).**
 
+Optional, and compiled out by default: a **battery-backed clock**, four more
+wires onto two otherwise idle pins — [docs/WIRING_RTC.md](docs/WIRING_RTC.md).
+
 ## Build and flash
 
 This is a [PlatformIO](https://platformio.org/) project. No Arduino IDE needed.
@@ -148,6 +151,9 @@ a source file — which is how the `gray` environment sets `USE_SSD1327`.
 | `CLOCK_*_LEN` / `CLOCK_*_HW` | — | Hand lengths and half-widths, in pixels from the iris centre. |
 | `PUPIL_OFF_SCALE` | `64` | Iris scale used when the pupil is off. At or below 64 the pupil vanishes. |
 | `NETWORK` | `1` | WiFi, NTP, web server and OTA. `0` compiles all of it out, saving ~535 KB. |
+| `RTC` | `0` | A DS3231 battery-backed clock. `1` fits one; costs ~28 KB. See [docs/WIRING_RTC.md](docs/WIRING_RTC.md). |
+| `RTC_SDA_PIN` / `RTC_SCL_PIN` | `21` / `22` | I²C pins for it. Both otherwise unused. |
+| `RTC_ADDR` | `0x68` | The DS3231's fixed address. |
 | `FAVICON` | `FAVICON_FRANK` | Tab icon. `FAVICON_EYES` is a generic alternative for a build that is not going into a Frankenstein. |
 | `IPV6` | `0` | All of IPv6, compiled out. Cannot usefully be turned on yet — see [IPv6](#ipv6). |
 | `FIRMWARE_VERSION` | `1.0` | Bumped by hand, for features worth announcing. |
@@ -209,6 +215,8 @@ Open `pio device monitor` and type `help`. Commands are line-based at 115200.
 | `wifi forget` | Clear the stored network |
 | `wifi portal` | Reboot into the setup portal |
 | `version` | Firmware version, commit and build date |
+| `rtc` | Battery-backed clock: present, valid, its time and temperature |
+| `rtc sync` | Store the current time in it |
 | `tz [zone]` | Timezone by name or POSIX string |
 | `splash` | Re-show the panel name cards |
 | `status` | Current eye, gaze, dilation, heap, uptime, frame rate |
@@ -505,8 +513,43 @@ one. For a Halloween prop that is the right side of the deal.
 
 Defaults to US Pacific, and is persisted.
 
-Once time is synced, `clock set` and `clock rate` stop having any effect:
-they drive the free-running fallback, which is no longer what feeds the hands.
+Once time is synced, `clock rate` stops having any effect: it drives the
+free-running fallback, which is no longer what feeds the hands. `clock set`
+still works — it outranks a time restored from the RTC, on the grounds that
+somebody correcting the clock by hand means it — but NTP outranks it in turn.
+
+There are up to four sources, ranked, and a better one is never overridden by
+a worse one:
+
+| | Source | Set by |
+| :-- | :--- | :--- |
+| lowest | free-running | boots at 10:10 and drifts |
+| | the RTC | read once at boot, if one is fitted |
+| | set by hand | `clock set` |
+| highest | NTP | a time server answering; also writes the RTC |
+
+`clock`, `tz`, the control page and `GET /api/v1/state` all report which one
+is in charge, as `clock.source`.
+
+### Keeping time without a network
+
+Fit a [DS3231](docs/WIRING_RTC.md) and build with `-DRTC=1`. Set the timezone
+and the time once, and the head keeps it — through power cuts, and with no
+network ever configured:
+
+```
+> tz chicago
+> clock set 16:34
+> save
+```
+
+The chip holds **UTC**, and the timezone is applied on the way out, so a head
+unplugged in February and switched on in July still shows the right hour.
+That is also why `tz` works in no-network builds: it is a saved setting like
+any other now, not part of the networking.
+
+With a network as well, the first NTP sync writes the chip by itself, so the
+time is right immediately at the next boot rather than a few seconds later.
 
 ### Web interface
 
@@ -552,6 +595,7 @@ CORS open so a page served from anywhere can drive the device.
 | `GET` | `/api/v1/eyes` | The eye designs this firmware was built with |
 | `GET` | `/api/v1/net` | MAC, addresses, signal, sync state |
 | `GET` | `/api/v1/info` | Version, commit, build date, project URL |
+| `GET` `PUT` | `/api/v1/rtc` | The battery-backed clock; `{"op":"sync"}` stores the time. Only with `RTC=1` |
 | `GET` `PUT` | `/api/v1/eye` | `{"name":"dragon"}`, `{"index":2}` or `{"next":true}` |
 | `GET` `PUT` | `/api/v1/gaze` | `{"x":200,"y":800}` or `{"mode":"auto"}` |
 | `GET` `PUT` | `/api/v1/dilate` | `{"percent":40}` or `{"mode":"auto"}` |

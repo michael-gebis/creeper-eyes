@@ -16,6 +16,8 @@
 
 #include "display.h"
 #include "net.h"
+#include "rtc.h"
+#include "timekeeping.h"
 #include "state.h"
 #include <ArduinoJson.h>
 #include <WebServer.h>
@@ -113,6 +115,7 @@ static void fillClock(JsonObject o, const DeviceState &s) {
            (unsigned)(s.clockSecOfDay / 3600), (unsigned)((s.clockSecOfDay / 60) % 60),
            (unsigned)(s.clockSecOfDay % 60));
   o["time"] = buf;
+  o["source"] = timeSourceName(); // ntp | rtc | manual | free
   JsonObject c = o["colors"].to<JsonObject>();
   static const char *const names[3] = {"hour", "minute", "second"};
   for (uint8_t i = 0; i < 3; i++) {
@@ -416,17 +419,11 @@ static void putTz(void) {
     sendError(400, "expected tz: a name or a POSIX string");
     return;
   }
-  const char *want = b["tz"];
-  const char *named = tzLookup(want); // a shortcut name wins
-  if (named)
-    want = named;
-  if (strlen(want) >= TZ_MAX) {
+  if (!timeSetTz(b["tz"])) {
     sendError(400, "timezone string too long");
     return;
   }
-  strncpy(tzString, want, TZ_MAX - 1);
-  tzString[TZ_MAX - 1] = '\0';
-  netStartTime(); // re-apply and re-sync
+  netStartTime(); // re-apply and re-sync, so a DST change lands at once
   getTz();
 }
 
@@ -442,8 +439,58 @@ static void getInfo(void) {
   d["built"] = __DATE__ " " __TIME__;
   d["arduino"] = ESP.getSdkVersion();
   d["api"] = "v1";
+  d["rtc"] = (bool)RTC;
   sendJson(200, d);
 }
+
+#if RTC
+
+// The battery-backed clock.  "valid" is the one worth reading: the registers
+// always hold something, and only the oscillator-stop flag says whether it is
+// a time anyone should believe.
+static void getRtc(void) {
+  JsonDocument d;
+  d["present"] = rtcPresent();
+  d["valid"] = rtcValid();
+  time_t utc;
+  if (rtcRead(utc)) {
+    struct tm g;
+    gmtime_r(&utc, &g);
+    char buf[24];
+    strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &g);
+    d["utc"] = buf;
+    d["epoch"] = (uint32_t)utc;
+  }
+  float c;
+  if (rtcTemperature(c))
+    d["temperatureC"] = c;
+  sendJson(200, d);
+}
+
+// Writing means "store what the clock currently says", not "set it to this":
+// the time comes from whichever source is in charge, so there is no way for
+// a client to put a wrong time in behind NTP's back.
+static void putRtc(void) {
+  JsonDocument b;
+  if (!readBody(b))
+    return;
+  const char *op = b["op"] | "";
+  if (strcmp(op, "sync")) {
+    sendError(400, "op must be sync");
+    return;
+  }
+  if (!rtcPresent()) {
+    sendError(404, "no RTC found on the bus");
+    return;
+  }
+  if (!rtcWriteNow()) {
+    sendError(409, "the clock has no real time to store yet");
+    return;
+  }
+  getRtc();
+}
+
+#endif // RTC
 
 // WiFi.  The password goes in and never comes out -- there is no
 // authentication on this API, so anything readable here is readable by
@@ -578,6 +625,13 @@ void apiRegister(WebServer &s) {
   s.on(API "/clock", HTTP_PUT, putClock);
   s.on(API "/clock", HTTP_OPTIONS, handleOptions);
   s.on(API "/clock", HTTP_ANY, notAllowed);
+
+#if RTC
+  s.on(API "/rtc", HTTP_GET, getRtc);
+  s.on(API "/rtc", HTTP_PUT, putRtc);
+  s.on(API "/rtc", HTTP_OPTIONS, handleOptions);
+  s.on(API "/rtc", HTTP_ANY, notAllowed);
+#endif
 
   s.on(API "/info", HTTP_GET, getInfo);
   s.on(API "/info", HTTP_ANY, notAllowed);

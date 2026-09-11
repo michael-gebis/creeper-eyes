@@ -22,6 +22,8 @@
 #include "state.h"
 #include "display.h"
 #include "net.h"
+#include "rtc.h"
+#include "timekeeping.h"
 
 #include <Adafruit_GFX.h>   // Core graphics lib for Adafruit displays
 #include <HardwareSerial.h> // Needed for 2nd serial port on ESP32
@@ -296,17 +298,14 @@ static void clockUpdate(void) {
 // Seconds since midnight, derived rather than stored, so it stays correct
 // however long the board has been up.
 static uint32_t clockNow(void) {
-#if NETWORK
-  // Real time wins once NTP has answered.  `clock rate` and `clock set`
-  // only affect the free-running fallback, which is what runs when there
-  // is no network -- so they stop having an effect once synced.
-  if (timeSynced) {
-    struct tm t;
-    if (getLocalTime(&t, 0))
-      return (uint32_t)t.tm_hour * 3600UL + (uint32_t)t.tm_min * 60UL +
-             (uint32_t)t.tm_sec;
-  }
-#endif
+  // Real time wins as soon as any source has supplied one -- NTP, or the RTC
+  // at boot.  `clock rate` and `clock set` drive the free-running fallback
+  // below, which is what runs until then, so they stop having an effect once
+  // the clock is real.
+  uint32_t secOfDay;
+  if (timeLocalSecOfDay(secOfDay))
+    return secOfDay;
+
   uint32_t elapsed = ((millis() - clockBaseMs) / 1000UL) * clockRate;
   return (clockBaseSec + elapsed) % 86400UL;
 }
@@ -347,9 +346,7 @@ static void saveSettings(void) {
   prefs.putString(PREFS_KEY_EYE, eyeDesigns[eyeDesign].name);
   prefs.putBool(PREFS_KEY_SWAP, eyesSwapped);
   prefs.putBool(PREFS_KEY_PUPIL, pupilOn);
-#if NETWORK
   prefs.putString(PREFS_KEY_TZ, tzString);
-#endif
 #if CLOCK
   prefs.putBool(PREFS_KEY_CLK_ON, clockOn);
   prefs.putBool(PREFS_KEY_CLK_SEC, clockSeconds);
@@ -696,8 +693,13 @@ void setup(void) {
   // eye[0].display.writeCommand(SSD1351_CMD_SETREMAP);
   // eye[0].display.write16(0x76);
 
+  timeApplyTz(); // the built-in default, until settings say otherwise
+
 #if COMMANDS
   loadSettings(); // before the splash, so its labels are correct
+#endif
+#if RTC
+  rtcBegin(); // before the network: a sync later simply outranks it
 #endif
 #if NETWORK
   setupNetwork(); // may block on the portal; the eyes wait
@@ -930,11 +932,10 @@ static void loadSettings(void) {
   String saved = prefs.getString(PREFS_KEY_EYE, "");
   bool sw = prefs.getBool(PREFS_KEY_SWAP, false);
   pupilOn = prefs.getBool(PREFS_KEY_PUPIL, pupilOn);
-#if NETWORK
   String tz = prefs.getString(PREFS_KEY_TZ, tzString);
   strncpy(tzString, tz.c_str(), sizeof(tzString) - 1);
   tzString[sizeof(tzString) - 1] = '\0';
-#endif
+  timeApplyTz(); // the restored zone, before anything reads a clock
 #if CLOCK
   clockOn = prefs.getBool(PREFS_KEY_CLK_ON, clockOn);
   clockSeconds = prefs.getBool(PREFS_KEY_CLK_SEC, clockSeconds);
@@ -1243,8 +1244,33 @@ bool stateClockSetTime(uint8_t h, uint8_t m, uint8_t sec) {
 #if CLOCK
   if (h > 23 || m > 59 || sec > 59)
     return false;
-  // Deliberately not marked dirty: the time is not persisted.
+  // Deliberately not marked dirty: the time is not persisted in NVS.  With an
+  // RTC fitted it goes somewhere better instead.
   clockSet((uint32_t)h * 3600UL + (uint32_t)m * 60UL + sec);
+
+#if RTC
+  // Keep today's date if a source has already supplied one; otherwise start
+  // from a fixed date, because the chip has to store something and a wrong
+  // date is harmless -- nothing here displays one.
+  struct tm t;
+  if (!timeLocal(t)) {
+    memset(&t, 0, sizeof(t));
+    t.tm_year = 2026 - 1900;
+    t.tm_mday = 1;
+  }
+  t.tm_hour = h;
+  t.tm_min = m;
+  t.tm_sec = sec;
+  t.tm_isdst = -1; // let the zone's own rules decide
+  // mktime reads the fields as local time and hands back a UTC epoch, which
+  // is what both the system clock and the chip want.
+  time_t utc = mktime(&t);
+  if (utc > 0) {
+    timeAccept(utc, TIME_MANUAL);
+    if (rtcPresent())
+      rtcWrite(utc);
+  }
+#endif
   return true;
 #else
   (void)h; (void)m; (void)sec;
@@ -1304,6 +1330,9 @@ static void cmdHelp(Print &out) {
                  "  wifi                      the network, and how to change "
                  "it\n"
                  "  version                   firmware version and commit\n"
+#if RTC
+                 "  rtc [sync]                battery-backed clock\n"
+#endif
                  "  tz [POSIX string]         timezone, e.g. CST6CDT,M3.2.0/2\n"
                  "  pupil [on|off]            pupil, or a full iris disc\n"
                  "  swap [on|off]             swap which panel is which "
@@ -1437,11 +1466,13 @@ void handleCommand(char *line, Print &out) {
         out.println(F("usage: clock set HH:MM[:SS]"));
         return;
       }
-      if (h > 23 || m > 59 || sec > 59) {
+      // Through the operations layer rather than clockSet() directly: that
+      // is what carries the write-through to the RTC, and reaching around
+      // it is exactly how the console and the API drift apart.
+      if (!stateClockSetTime((uint8_t)h, (uint8_t)m, (uint8_t)sec)) {
         out.println(F("err: out of range"));
         return;
       }
-      clockSet(h * 3600UL + m * 60UL + sec);
       out.printf("ok clock set %02u:%02u:%02u\n", h, m, sec);
     } else if (!strcmp(arg, "rate")) {
       char *v = strtok(NULL, " \t");
@@ -1508,7 +1539,6 @@ void handleCommand(char *line, Print &out) {
             "color [hour|min|sec] RRGGBB]"));
     }
 #endif
-#if NETWORK
   } else if (!strcmp(cmd, "tz")) {
     // Everything after the command word, so the POSIX string keeps its commas
     // and slashes intact.
@@ -1516,8 +1546,7 @@ void handleCommand(char *line, Print &out) {
     while (rest && *rest == ' ')
       rest++;
     if (!rest || !*rest) {
-      out.printf("tz %s%s" "\n", tzString,
-                    timeSynced ? "" : " (not synced)");
+      out.printf("tz %s (time from %s)" "\n", tzString, timeSourceName());
       const char *region = NULL;
       for (uint8_t i = 0; i < numTzChoices; i++) {
         if (!region || strcmp(region, tzChoices[i].region)) {
@@ -1530,19 +1559,36 @@ void handleCommand(char *line, Print &out) {
       out.println(F("  or any POSIX string, e.g. PST8PDT,M3.2.0/2,M11.1.0/2"));
       return;
     }
-    // A shortcut name wins; anything else is taken as a POSIX string.
-    const char *named = tzLookup(rest);
-    if (named)
-      rest = (char *)named;
-    if (strlen(rest) >= TZ_MAX) {
+    if (!timeSetTz(rest)) {
       out.printf("err: timezone must be under %d characters" "\n", TZ_MAX);
       return;
     }
-    strncpy(tzString, rest, sizeof(tzString) - 1);
-    tzString[sizeof(tzString) - 1] = '\0';
-    netStartTime(); // re-apply and re-sync
     settingsDirty = true;
+#if NETWORK
+    netStartTime(); // re-apply and re-sync, so a DST change lands at once
+#endif
     out.printf("ok tz=%s" "\n", tzString);
+
+#if RTC
+  } else if (!strcmp(cmd, "rtc")) {
+    char *arg = strtok(NULL, " \t");
+    if (!arg) {
+      rtcReport(out);
+    } else if (!strcmp(arg, "sync")) {
+      // Useful after `clock set` on a board with no network: it puts what is
+      // on the face into the chip, where it survives the power going off.
+      if (!rtcPresent())
+        out.println(F("err: no RTC found"));
+      else if (!rtcWriteNow())
+        out.println(F("err: the clock has no real time to store yet"));
+      else
+        out.println(F("ok rtc written from the current time"));
+    } else {
+      out.println(F("usage: rtc [sync]"));
+    }
+#endif
+
+#if NETWORK
   } else if (!strcmp(cmd, "wifi")) {
     char *arg = strtok(NULL, " \t");
     if (!arg) {

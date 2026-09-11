@@ -191,6 +191,33 @@
 #define FIRMWARE_COMMIT GIT_REV
 #endif
 
+// BATTERY-BACKED CLOCK ------------------------------------------------------
+// An optional DS3231 on I2C -- see docs/WIRING_RTC.md.  Off by default: this
+// is an add-on, and a build that does not have one should not carry the code
+// or the I2C bus for it.
+//
+//   build_flags = -DRTC=1
+//
+// With it on, a missing module is still not an error: the probe at boot finds
+// nothing, says so, and the clock free-runs as before.
+#ifndef RTC
+#define RTC 0
+#endif
+
+// The ESP32's default I2C pins, and both unused by the displays.
+#ifndef RTC_SDA_PIN
+#define RTC_SDA_PIN 21
+#endif
+#ifndef RTC_SCL_PIN
+#define RTC_SCL_PIN 22
+#endif
+
+// The DS3231's fixed address.  The AT24C32 EEPROM that shares these boards
+// sits at 0x57 and is not used.
+#ifndef RTC_ADDR
+#define RTC_ADDR 0x68
+#endif
+
 // Which tab icon the control page carries.  FAVICON_FRANK is the monster's
 // head; FAVICON_EYES is the two panels on their own, for a build going into
 // something that is not a Frankenstein.  Both live in src/favicon.h and only
