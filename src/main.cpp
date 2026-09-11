@@ -590,39 +590,35 @@ void showMessage(const char *l1, const char *l2, const char *l3,
 
 // The default GFX font is a 6x8 cell, so a string's width is just its
 // length scaled up.
-static void showSplash(void) {
+// One frame of the countdown, on both panels.
+//
+// Confirmed on the bench: the panel on SELECT_L_PIN (D15) is the one on
+// FRANK'S RIGHT -- the viewer's left.  So the upstream L/R pin names are
+// viewer-relative, and eye[0] is Frank's right eye.  Both perspectives are
+// shown because every previous attempt to write this down was ambiguous.
+static void splashDraw(int8_t remain) {
   // One 1-bit canvas serves both panel types: 2 KB, versus 32 KB for a
   // colour one, and the text is monochrome either way.
   GFXcanvas1 canvas(SCREEN_WIDTH, SCREEN_HEIGHT);
-
-  // Confirmed on the bench: the panel on SELECT_L_PIN (D15) is the one on
-  // FRANK'S RIGHT -- the viewer's left.  So the upstream L/R pin names are
-  // viewer-relative, and eye[0] is Frank's right eye.  Both perspectives are
-  // shown because every previous attempt to write this down was ambiguous.
   static const char *const franksSide[2] = {"RIGHT", "LEFT"};
   static const char *const yourSide[2] = {"LEFT", "RIGHT"};
-  DEBUG_PRINTF("[creeper-eyes] splash: naming panels for %d s\n",
-               SPLASH_SECONDS);
+  char digit[2] = {(char)('0' + remain), '\0'};
 
-  for (int8_t remain = SPLASH_SECONDS; remain > 0; remain--) {
-    char digit[2] = {(char)('0' + remain), '\0'};
-
-    for (uint8_t e = 0; e < NUM_EYES; e++) {
-      canvas.fillScreen(0);
-      canvas.setTextColor(1);
-      splashCenter(canvas, "FRANK'S", 2, 6);
-      splashCenter(canvas, franksSide[e & 1], 2, 26);
-      canvas.drawFastHLine(20, 50, SCREEN_WIDTH - 40, 1);
-      splashCenter(canvas, "YOUR", 2, 58);
-      splashCenter(canvas, yourSide[e & 1], 2, 78);
-      splashCenter(canvas, digit, 3, 100);
-
-      pushCanvas(e, canvas);
-    }
-    delay(1000);
+  for (uint8_t e = 0; e < NUM_EYES; e++) {
+    canvas.fillScreen(0);
+    canvas.setTextColor(1);
+    splashCenter(canvas, "FRANK'S", 2, 6);
+    splashCenter(canvas, franksSide[e & 1], 2, 26);
+    canvas.drawFastHLine(20, 50, SCREEN_WIDTH - 40, 1);
+    splashCenter(canvas, "YOUR", 2, 58);
+    splashCenter(canvas, yourSide[e & 1], 2, 78);
+    splashCenter(canvas, digit, 3, 100);
+    pushCanvas(e, canvas);
   }
+}
 
-  // Hand a clean screen to the eyes.
+// Hand a clean screen back to the eyes.
+static void splashClear(void) {
   for (uint8_t e = 0; e < NUM_EYES; e++) {
 #if USE_SSD1327
     eye[e].display.fill(graySPI, 0x0);
@@ -630,6 +626,53 @@ static void showSplash(void) {
     eye[e].display.fillScreen(0x0000);
 #endif
   }
+}
+
+// Blocking, and only for setup(): there is no render loop yet to come back
+// to, and nothing else is waiting on us.
+static void showSplash(void) {
+  DEBUG_PRINTF("[creeper-eyes] splash: naming panels for %d s\n",
+               SPLASH_SECONDS);
+  for (int8_t remain = SPLASH_SECONDS; remain > 0; remain--) {
+    splashDraw(remain);
+    delay(1000);
+  }
+  splashClear();
+}
+
+// The same cards, asked for while the board is running -- by the `splash`
+// command, or POST /api/v1/action.
+//
+// Not blocking, because blocking here stops everything: the render loop, the
+// web server it is polled from, and therefore the very request that asked for
+// it.  Measured before this split, POST /action splash took 5.2 s against
+// 75-90 ms for every other action, and a GET arriving during one waited 4.9 s
+// behind it.  Same deadline-and-poll shape netShow uses for the address cards.
+static uint32_t splashUntil = 0;
+static int8_t splashShown = -1;
+
+static void splashBegin(void) {
+  splashUntil = millis() + (uint32_t)SPLASH_SECONDS * 1000UL;
+  splashShown = -1;
+}
+
+// True while the splash owns the panels.  Draws only when the digit changes,
+// so this costs one comparison on all the frames in between.
+static bool splashPoll(void) {
+  if (!splashUntil)
+    return false;
+  int32_t left = (int32_t)(splashUntil - millis());
+  if (left <= 0) {
+    splashUntil = 0;
+    splashClear();
+    return false;
+  }
+  int8_t remain = (int8_t)((left + 999) / 1000);
+  if (remain != splashShown) {
+    splashShown = remain;
+    splashDraw(remain);
+  }
+  return true;
 }
 
 #endif // STARTUP_SPLASH
@@ -1239,7 +1282,7 @@ void stateStartle(void) {
 
 void stateSplash(void) {
 #if STARTUP_SPLASH
-  showSplash();
+  splashBegin(); // returns at once; the render loop counts it down
 #endif
 }
 
@@ -2093,6 +2136,11 @@ void frame(            // Process motion for a single frame of left or right eye
       return;
     netShowUntil = 0;
   }
+#endif
+
+#if STARTUP_SPLASH
+  if (splashPoll()) // the name cards, likewise
+    return;
 #endif
   drawEye(eyeIndex, iScale, eyeX, eyeY, n, lThreshold);
 }
