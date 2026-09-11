@@ -312,8 +312,10 @@ function render(s) {
   $('#swap').classList.toggle('on', s.swap.on);
 
   const g = s.gaze;
-  $('#dot').style.left = (g.x / 1023 * 100) + '%';
-  $('#dot').style.top = (flipY(g.y) / 1023 * 100) + '%';
+  // Left where it is during a drag: the pointer is the truth then, and a reply
+  // describing where the eye was a moment ago would tug the dot backwards from
+  // under the finger.
+  if (!dragging) showDot(g.x, g.y);
   $('#gazeTxt').textContent = g.mode === 'auto' ? 'wandering' : `${g.x}, ${g.y}`;
   $('#gazeAuto').classList.toggle('on', g.mode === 'auto');
 
@@ -445,15 +447,65 @@ $('#swap').onclick = () => act(() => api('/swap', 'PUT', {on: !st.swap.on}));
 const flipY = y => 1023 - y;
 
 const pad = $('#pad');
+
+// Dragging produces pointer events far faster than the board can answer them,
+// and each one used to become a PUT followed by a full GET -- two round trips,
+// back to back, for the length of the drag.  The board serves one client at a
+// time from inside its render loop, so that is precisely the load that makes
+// the eyes stall.
+//
+// Instead: keep only the newest target, allow one request in flight, and when
+// it lands send the newest again if the pointer has moved since.  The rate
+// limits itself to whatever the board can actually sustain, with no timer to
+// tune, and the traffic halves because the reply to a PUT already describes
+// the result -- the once-a-second poll reconciles anything else.
+//
+// It also fixes a quieter bug: a move arriving while a request was out used to
+// be dropped, so the *last* position of a drag, the one that matters, often
+// never got sent at all and the eye stopped somewhere in the middle.
+let gazeTarget = null;
+let dragging = false;
+
+function showDot(x, y) {
+  $('#dot').style.left = (x / 1023 * 100) + '%';
+  $('#dot').style.top = (flipY(y) / 1023 * 100) + '%';
+}
+
+async function gazeFlush() {
+  if (busy || halted) return;
+  busy = true;
+  try {
+    while (gazeTarget) {
+      const t = gazeTarget;
+      gazeTarget = null;
+      await api('/gaze', 'PUT', t);
+    }
+    $('#err').textContent = '';
+  } catch (e) {
+    $('#err').textContent = e.message;
+  } finally {
+    busy = false;
+  }
+}
+
 function aim(ev) {
   const r = pad.getBoundingClientRect();
   const c = v => Math.max(0, Math.min(1023, Math.round(v)));
   const x = c((ev.clientX - r.left) / r.width * 1023);
-  const y = c((ev.clientY - r.top) / r.height * 1023);
-  act(() => api('/gaze', 'PUT', {x: x, y: flipY(y)}));
+  const y = flipY(c((ev.clientY - r.top) / r.height * 1023));
+  gazeTarget = {x: x, y: y};
+  showDot(x, y); // follows the pointer, not the network
+  gazeFlush();
 }
-pad.onpointerdown = e => { pad.setPointerCapture(e.pointerId); aim(e); };
+
+pad.onpointerdown = e => {
+  dragging = true;
+  pad.setPointerCapture(e.pointerId);
+  aim(e);
+};
 pad.onpointermove = e => { if (e.buttons) aim(e); };
+pad.onpointerup = () => { dragging = false; };
+pad.onpointercancel = () => { dragging = false; };
 $('#gazeAuto').onclick = () => act(() => api('/gaze', 'PUT', {mode: 'auto'}));
 $('#dil').onchange = e => act(() => api('/dilate', 'PUT', {percent: +e.target.value}));
 $('#dilAuto').onclick = () => act(() => api('/dilate', 'PUT', {mode: 'auto'}));

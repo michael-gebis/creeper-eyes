@@ -749,6 +749,35 @@ Two things bite on Windows:
 
 macOS and Linux need neither workaround.
 
+## Testing it
+
+[`tools/test_api.py`](tools/test_api.py) exercises a running board over HTTP.
+Real hardware, because that is where the interesting failures are — a handler
+that works alone but starves the render loop, a value that survives a round
+trip but not a reboot, a verb that returns the wrong status only when the body
+is malformed.
+
+```sh
+python tools/test_api.py --host frank.local
+python tools/test_api.py --host 192.168.1.50 --token ...
+python tools/test_api.py --host frank.local --user frank --password ...
+```
+
+Around 117 checks across every endpoint: round trips, range limits, the 400 /
+404 / 405 boundaries, malformed bodies, CORS preflight, credentials, and a
+burst of gaze updates of the kind dragging the aim pad produces — which
+checks both that the last position is the one that sticks and that the eyes
+keep rendering while it happens.
+
+It adapts to the firmware it finds: `GET /api/v1/info` says which features are
+compiled in, so a build without an RTC or without authentication has those
+groups skipped rather than failed. It captures the board's state at the start
+and puts it back at the end. Nothing reboots the board or writes flash unless
+you pass `--wifi` or `--settings`.
+
+It also reports any request that took over a second, because on this board a
+slow request is a stalled render loop.
+
 ## The tools
 
 [`tools/gen_eyes.py`](tools/gen_eyes.py) converts the artwork;

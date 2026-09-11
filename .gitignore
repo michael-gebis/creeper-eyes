@@ -6,3 +6,7 @@
 
 # Real credentials -- see include/secrets.h.example
 include/secrets.h
+
+# Python bytecode from the tools
+__pycache__/
+*.pyc
