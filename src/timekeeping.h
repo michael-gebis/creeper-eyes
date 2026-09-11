@@ -80,6 +80,12 @@ void timeAccept(time_t utc, TimeSource from);
 // hand afterwards would silently do nothing.
 void timeRelinquish(TimeSource from);
 
+// Whether the time came from something outside this board -- a time server
+// or the RTC -- as opposed to being typed in or free-running.  `clock rate`
+// only means anything when it is not, because the whole point of an external
+// source is that it is not ours to speed up.
+bool timeIsExternal(void);
+
 // Where the time currently on show came from.
 TimeSource timeSource(void);
 const char *timeSourceName(void);

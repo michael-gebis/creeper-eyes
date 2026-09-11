@@ -303,7 +303,7 @@ static uint32_t clockNow(void) {
   // below, which is what runs until then, so they stop having an effect once
   // the clock is real.
   uint32_t secOfDay;
-  if (timeLocalSecOfDay(secOfDay))
+  if (timeIsExternal() && timeLocalSecOfDay(secOfDay))
     return secOfDay;
 
   uint32_t elapsed = ((millis() - clockBaseMs) / 1000UL) * clockRate;
@@ -705,12 +705,13 @@ void setup(void) {
 #if RTC
   rtcBegin(); // before the network: a sync later simply outranks it
 #endif
-#if NETWORK
-  setupNetwork(); // may block on the portal; the eyes wait
-  netOnConnected();
-#endif
 #if STARTUP_SPLASH
-  showSplash();
+  showSplash(); // before the network: that can take a while, and a dark head
+                // looks broken rather than busy
+#endif
+#if NETWORK
+  setupNetwork();
+  netOnConnected();
 #endif
 #if COMMANDS
   Serial.println(F("[creeper-eyes] console ready -- type 'help'"));
@@ -789,7 +790,9 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
   //
   // Being outside the pixel loop means the two clips it provided have to be
   // repeated here -- the iris circle, and the eyelids.
-  if (clockOn) {
+  // Suppressed rather than switched off when the time is unknown: with no
+  // network, no RTC and nothing typed in, a clock face is a confident lie.
+  if (clockOn && timeSynced) {
     const uint8_t hlen[3] = {CLOCK_HOUR_LEN, CLOCK_MIN_LEN, CLOCK_SEC_LEN};
     const uint8_t hhw[3] = {CLOCK_HOUR_HW, CLOCK_MIN_HW, CLOCK_SEC_HW};
     const int16_t cx = (int16_t)(IRIS_WIDTH / 2) - irisOriginX;
@@ -1120,6 +1123,7 @@ void stateGet(DeviceState &o) {
 #if CLOCK
   o.startleActive = (startleState != STARTLE_OFF);
   o.clockOn = clockOn;
+  o.clockSuppressed = clockOn && !timeSynced;
   o.clockSeconds = clockSeconds;
   o.clockRate = clockRate;
   o.clockSecOfDay = clockNow();
@@ -1127,7 +1131,7 @@ void stateGet(DeviceState &o) {
     o.clockColor[i] = clockRGB[i];
 #else
   o.startleActive = false;
-  o.clockOn = o.clockSeconds = false;
+  o.clockOn = o.clockSeconds = o.clockSuppressed = false;
   o.clockRate = 0;
   o.clockSecOfDay = 0;
   o.clockColor[0] = o.clockColor[1] = o.clockColor[2] = 0;
@@ -1257,10 +1261,9 @@ bool stateClockSetTime(uint8_t h, uint8_t m, uint8_t sec) {
   // RTC fitted it goes somewhere better instead.
   clockSet((uint32_t)h * 3600UL + (uint32_t)m * 60UL + sec);
 
-#if RTC
   // Keep today's date if a source has already supplied one; otherwise start
-  // from a fixed date, because the chip has to store something and a wrong
-  // date is harmless -- nothing here displays one.
+  // from a fixed date: something has to carry the time, and a wrong date is
+  // harmless here -- nothing displays one.
   struct tm t;
   if (!timeLocal(t)) {
     memset(&t, 0, sizeof(t));
@@ -1276,10 +1279,11 @@ bool stateClockSetTime(uint8_t h, uint8_t m, uint8_t sec) {
   time_t utc = mktime(&t);
   if (utc > 0) {
     timeAccept(utc, TIME_MANUAL);
+#if RTC
     if (rtcPresent())
       rtcWrite(utc);
-  }
 #endif
+  }
   return true;
 #else
   (void)h; (void)m; (void)sec;
@@ -1458,7 +1462,10 @@ void handleCommand(char *line, Print &out) {
     if (!arg) {
       uint32_t t = clockNow();
       out.printf("clock %s %02u:%02u:%02u rate=%ux seconds=%s\n",
-                    clockOn ? "on" : "off", (unsigned)(t / 3600),
+                    clockOn && !timeSynced ? "on, hidden -- the time is unknown"
+                    : clockOn                 ? "on"
+                                              : "off",
+                    (unsigned)(t / 3600),
                     (unsigned)((t / 60) % 60), (unsigned)(t % 60),
                     (unsigned)clockRate, clockSeconds ? "on" : "off");
       out.printf("  colours hour=%06lX min=%06lX sec=%06lX\n",
@@ -1835,13 +1842,14 @@ void frame(            // Process motion for a single frame of left or right eye
 #endif
 
 #if NETWORK
+  netPollLink(); // a network that turned up after boot
   netPollTime(); // cheap no-op once the first sync has landed
   webPoll();
   netPollPending(); // after webPoll, so a reply is sent before any reboot
 #endif
 
 #if CLOCK
-  if (clockOn)
+  if (clockOn && timeSynced)
     clockUpdate();
 #endif
 

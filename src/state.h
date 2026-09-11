@@ -44,6 +44,7 @@ struct DeviceState {
 
   bool clockOn;
   bool clockSeconds;
+  bool clockSuppressed; // on, but nothing knows the time, so nothing is drawn
   uint16_t clockRate;      // free-running multiplier; ignored once NTP syncs
   uint32_t clockSecOfDay;  // current time as seconds past midnight
   uint32_t clockColor[3];  // 0xRRGGBB, hour / minute / second

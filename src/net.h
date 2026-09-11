@@ -35,6 +35,10 @@ void netOnConnected(void);
 // change; the servers are re-resolved and the next reply is accepted.
 void netStartTime(void);
 
+// Notice a link that arrives after boot, and bring the network up on it.
+// Called once per frame; a millis() comparison until it matters.
+void netPollLink(void);
+
 // Hand a completed sync to timekeeping, and write it through to the RTC.
 // Called once per frame; a flag check until a reply actually lands.
 void netPollTime(void);

@@ -107,6 +107,9 @@ static void fillDilate(JsonObject o, const DeviceState &s) {
 
 static void fillClock(JsonObject o, const DeviceState &s) {
   o["on"] = s.clockOn;
+  // Switched on, but with nothing to draw: no server, no RTC, and nobody has
+  // typed the time in, so a clock face would be a guess.
+  o["suppressed"] = s.clockSuppressed;
   o["seconds"] = s.clockSeconds;
   o["rate"] = s.clockRate;
   o["secondOfDay"] = s.clockSecOfDay;

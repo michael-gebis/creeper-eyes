@@ -50,10 +50,17 @@ wiring, and the wrong one shows white static.
 | **1.5inch RGB OLED Module** | SSD1351 | 65K colour | `esp32dev` |
 | **1.5inch OLED Module** | SSD1327 | 16 greys | `gray` |
 
-Buy **two**. The **RGB** version is what the eye artwork was drawn for — the
-hazel and newt irises carry most of their detail in hue, and grayscale
-flattens them. The grayscale version works and runs faster, but the eyes lose
-a lot of their character.
+Buy **two**. Either works, and the grayscale panels run faster.
+
+Which to get depends on the eyes you want. The artwork was drawn in colour,
+and **some designs do not survive the conversion** — anything carrying its
+detail in hue rather than in brightness comes out flat. The newt is the worst
+of them: its greens and golds land on much the same grey. Others lose nothing
+worth having; the default eye in particular looks every bit as good in
+sixteen greys as it does in colour.
+
+[docs/EYES.md](docs/EYES.md) renders all 25 designs both ways, side by side,
+which is the quickest way to decide.
 
 Both are 3.3 V / 5 V tolerant and need no level shifting.
 
@@ -160,7 +167,8 @@ a source file — which is how the `gray` environment sets `USE_SSD1327`.
 | `WEB_CMD_ENDPOINT` | `1` | The `/cmd` escape hatch. `0` leaves only the REST API. Needs `COMMANDS`, since it is a passthrough to the console. |
 | `WIFI_HOSTNAME` | `frank` | DHCP and mDNS name. |
 | `WIFI_CONNECT_MS` | `15000` | How long to wait on a known network before opening the portal. |
-| `WIFI_PORTAL_S` | `180` | How long the portal stays up before carrying on offline. |
+| `WIFI_PORTAL_S` | `60` | How long the portal stays up before carrying on offline. |
+| `WIFI_RETRY_MS` | `30000` | How often to try again after giving up at boot. |
 | `TZ_DEFAULT` | US Pacific | Timezone before one is saved. |
 | `STARTLE_HOLD_MS` | `1200` | How long the eyes stay wide afterwards. |
 
@@ -524,7 +532,7 @@ a worse one:
 
 | | Source | Set by |
 | :-- | :--- | :--- |
-| lowest | free-running | boots at 10:10 and drifts |
+| lowest | free-running | boots at 10:10 and drifts; the face stays hidden |
 | | the RTC | read once at boot, if one is fitted |
 | | set by hand | `clock set` |
 | highest | NTP | a time server answering; also writes the RTC |
@@ -736,6 +744,45 @@ are fully type-annotated — signatures and locals — and both run on Python 3.
 which is the oldest interpreter PlatformIO is likely to hand them. Annotations
 are lazy (`from __future__ import annotations`), so the modern generic syntax
 works there too.
+
+## Booting with no network
+
+A prop should be a prop whether or not the WiFi is up, so the boot order puts
+the eyes first:
+
+| | |
+| :--- | :--- |
+| **0.9 s** | Panels up, settings restored, RTC read if one is fitted |
+| **0.9 s** | **Splash** — the panels name themselves for `SPLASH_SECONDS` |
+| **6 s** | Stored network tried, then the build-time one (`WIFI_CONNECT_MS` each) |
+| **36 s** | Setup portal, if neither worked — with a countdown on the panels |
+| **96 s** | Gives up, and the eyes run |
+
+Worst case is about a minute and a half, and the panels are showing something
+throughout. The portal exits the moment a connection appears, so a network
+that is simply slow costs seconds rather than the full timeout.
+
+**A network that turns up later is picked up without a reboot.** Every
+`WIFI_RETRY_MS` the board tries again, and when it succeeds mDNS, the web
+server, OTA and NTP all come up as if they had at boot. This is not just
+watching for a link: the setup portal tears the association down when it
+times out, so nothing would be trying otherwise — measured on the bench, a
+board left after a failed portal never reconnects on its own.
+
+### The clock hides itself when nothing knows the time
+
+With no network, no RTC, and nothing typed in, the clock face is switched off
+rather than drawn from the free-running counter that starts at 10:10 — a
+confident-looking clock showing the wrong time is worse than no clock:
+
+```
+> clock
+clock on, hidden -- the time is unknown 10:10:10 rate=1x seconds=on
+```
+
+The setting is not changed, so the face comes back on its own the moment
+anything supplies a time — a `clock set`, an RTC, or the network arriving.
+The control page says the same thing on the clock card.
 
 ## Versions
 

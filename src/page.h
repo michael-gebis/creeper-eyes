@@ -138,6 +138,9 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
       <span id=clkTxt class=dim></span>
     </div>
     <div class=row>
+      <span class=note id=clkWhy></span>
+    </div>
+    <div class=row>
       <label>hands</label>
       <input type=color id=cH title="hour hand"><input type=color id=cM title="minute hand">
       <input type=color id=cS title="second hand">
@@ -322,7 +325,12 @@ function render(s) {
 
   $('#clkOn').classList.toggle('on', s.clock.on);
   $('#clkSec').classList.toggle('on', s.clock.seconds);
-  $('#clkTxt').textContent = s.clock.time;
+  $('#clkTxt').textContent = s.clock.suppressed ? '' : s.clock.time;
+  $('#clkWhy').innerHTML = s.clock.suppressed
+    ? '<b>Hidden.</b> Nothing knows what time it is — no time server, no RTC, ' +
+      'and it has not been set by hand. The face returns by itself as soon as ' +
+      'something supplies a time.'
+    : '';
   if (!held($('#cH'))) $('#cH').value = hex(s.clock.colors.hour);
   if (!held($('#cM'))) $('#cM').value = hex(s.clock.colors.minute);
   if (!held($('#cS'))) $('#cS').value = hex(s.clock.colors.second);

@@ -21,6 +21,10 @@ uint8_t netState = NET_DOWN;
 // plumbing further down is defined.
 static bool ntpWanted = true;
 
+// Which credentials got us furthest at boot, so a later retry uses the same
+// ones.  0 = nothing worth retrying.
+static uint8_t retrySource = 0; // 1 = the radio's stored network, 2 = built-in
+
 // Blocks until connected or the timeout expires.  Returns true on success.
 bool wifiWaitConnected(uint32_t ms) {
   uint32_t start = millis();
@@ -170,7 +174,12 @@ void setupNetwork(void) {
   readStoredSsid(); // before any begin() overwrites the running config
 
   char savedSsid[33];
-  if (!forcePortal && netStoredSsid(savedSsid, sizeof(savedSsid))) {
+  if (netStoredSsid(savedSsid, sizeof(savedSsid)))
+    retrySource = 1;
+  else if (strlen(WIFI_SSID))
+    retrySource = 2;
+
+  if (!forcePortal && retrySource == 1) {
     DEBUG_PRINTF("[net] trying stored network '%s'" "\n", savedSsid);
     WiFi.begin();
     if (wifiWaitConnected(WIFI_CONNECT_MS)) {
@@ -205,18 +214,49 @@ void setupNetwork(void) {
   netState = NET_PORTAL;
   WiFiManager wm;
   wm.setHostname(WIFI_HOSTNAME);
-  wm.setConfigPortalTimeout(WIFI_PORTAL_S);
-  wm.setConfigPortalBlocking(true);
-  bool ok = wm.startConfigPortal(WIFI_AP_NAME);
+  // Non-blocking, so this loop keeps the panels updated.  In blocking mode
+  // WiFiManager owns the CPU until it is done and the head sits on one static
+  // card for the whole timeout, with no sign of how long is left.
+  wm.setConfigPortalBlocking(false);
+  wm.startConfigPortal(WIFI_AP_NAME);
+
+  // setConfigPortalTimeout does not apply in non-blocking mode, so the
+  // deadline is ours to keep.
+  uint32_t deadline = millis() + (uint32_t)WIFI_PORTAL_S * 1000UL;
+  int16_t lastShown = -1;
+  while ((int32_t)(millis() - deadline) < 0) {
+    wm.process();
+    if (WiFi.status() == WL_CONNECTED)
+      break;
+
+    int16_t remain = (int16_t)((deadline - millis() + 999UL) / 1000UL);
+    if (remain != lastShown) { // redraw on the second, not on every pass
+      lastShown = remain;
+      char secs[8];
+      snprintf(secs, sizeof(secs), "%ds", (int)remain);
+      showMessage("WIFI", "SETUP", WIFI_AP_NAME, secs);
+    }
+    delay(10);
+  }
+
+  bool ok = WiFi.status() == WL_CONNECTED;
+  wm.stopConfigPortal();
   netState = ok ? NET_UP : NET_DOWN;
   if (!ok)
-    DEBUG_PRINTF("[net] portal timed out; carrying on offline" "\n");
+    DEBUG_PRINTF("[net] portal timed out after %ds; carrying on offline" "\n",
+                 WIFI_PORTAL_S);
 }
 
-// Everything that only makes sense once there is a link.
+// Everything that only makes sense once there is a link.  Runs at most once:
+// webBegin appends its routes to the server's handler list, re-registers the
+// mDNS service and re-inits OTA, none of which survives being done twice.
+static bool netUpDone = false;
+
 void netOnConnected(void) {
-  if (WiFi.status() != WL_CONNECTED)
+  if (WiFi.status() != WL_CONNECTED || netUpDone)
     return;
+  netUpDone = true;
+  netState = NET_UP;
 #if IPV6
   // Link-local IPv6 is not brought up by default, and takes a moment to be
   // assigned, so the address can still read as :: right after boot.
@@ -319,6 +359,51 @@ void netStartTime(void) {
 
 // Non-blocking check, polled until the first sync lands.  SNTP replies take
 // a second or two, and blocking on it would stall the eyes for no reason.
+// A network that turns up after boot should be used, rather than ignored
+// until somebody power-cycles the head.
+//
+// Watching for a link is not enough by itself.  Measured on the bench: once
+// the setup portal times out it tears the association down, so nothing is
+// trying to connect and WiFi.status() sits at disconnected for as long as you
+// care to wait.  So this asks again on an interval as well as watching.
+//
+// Keyed on netUpDone rather than netState, because those two can disagree:
+// setupNetwork can see a connection and have it drop again before
+// netOnConnected gets to run.
+void netPollLink(void) {
+  if (netUpDone || !retrySource)
+    return;
+
+  static uint32_t lastCheck = 0;
+  uint32_t now = millis();
+  if (now - lastCheck < 1000)
+    return;
+  lastCheck = now;
+
+  if (WiFi.status() == WL_CONNECTED) {
+    DEBUG_PRINTF("[net] link came up late; bringing the network up" "\n");
+    netOnConnected();
+    return;
+  }
+
+  static uint32_t nextRetry = WIFI_RETRY_MS;
+  if ((int32_t)(now - nextRetry) < 0)
+    return;
+  nextRetry = now + WIFI_RETRY_MS;
+
+  // Non-blocking: begin() only starts the attempt, and the check above picks
+  // up the result on a later pass.  The eyes keep rendering throughout.
+  DEBUG_PRINTF("[net] retrying the %s network" "\n",
+               retrySource == 1 ? "stored" : "built-in");
+  if (retrySource == 1) {
+    WiFi.begin();
+  } else {
+    esp_wifi_set_storage(WIFI_STORAGE_RAM); // as at boot: do not adopt these
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    esp_wifi_set_storage(WIFI_STORAGE_FLASH);
+  }
+}
+
 void netPollTime(void) {
   if (!ntpArrived)
     return;

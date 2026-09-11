@@ -175,6 +175,10 @@ void timeRelinquish(TimeSource from) {
 
 TimeSource timeSource(void) { return source; }
 
+bool timeIsExternal(void) {
+  return source == TIME_NTP || source == TIME_RTC;
+}
+
 const char *timeSourceName(void) {
   switch (source) {
   case TIME_NTP:
