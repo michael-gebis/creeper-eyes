@@ -81,8 +81,12 @@ void netNtpSetEnabled(bool on);
 // Human-readable addresses and time.
 void netReport(Print &out);
 
-// Paint the address cards on the panels for a while.  Non-blocking.
+// Ask for the address cards.  Safe from any task: it only sets a flag, and
+// the drawing happens on the render loop, which owns the SPI bus.
 void netShow(void);
+
+// Do that drawing.  Render loop only, once per frame.
+void netShowPoll(void);
 void netHide(void);
 bool netShowing(void);
 
@@ -123,6 +127,9 @@ void netPollPending(void);
 void webBegin(void);
 void otaBegin(void);
 void webPoll(void);
+
+// Unused stack in the HTTP task, in bytes.  Zero when it is not running.
+uint32_t webTaskStackFree(void);
 
 // The REST API, in api.cpp.  Hangs its routes off the server the web
 // module owns, rather than owning one of its own.

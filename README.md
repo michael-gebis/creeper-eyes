@@ -172,6 +172,9 @@ a source file — which is how the `gray` environment sets `USE_SSD1327`.
 | `RTC_SDA_PIN` / `RTC_SCL_PIN` | `21` / `22` | I²C pins for it. Both otherwise unused. |
 | `RTC_ADDR` | `0x68` | The DS3231's fixed address. |
 | `FAVICON` | `FAVICON_FRANK` | Tab icon. `FAVICON_EYES` is a generic alternative for a build that is not going into a Frankenstein. |
+| `HTTP_TASK` | *(branch)* | Run the web server in its own task instead of from the render loop. See [docs/HTTP_LATENCY.md](docs/HTTP_LATENCY.md). |
+| `HTTP_TASK_CORE` / `HTTP_TASK_PRIORITY` | `0` / `10` | Where that task runs. Both chosen by measurement. |
+| `HTTP_TASK_STACK` | `8192` | Its stack. Measured usage is about 2.3 KB; `system.httpStackFree` reports the rest. |
 | `AUTH_HTTP` | `0` | Digest authentication on the page, the API and `/cmd`. |
 | `AUTH_TOKEN` | `0` | A bearer token as an alternative credential, for scripts. |
 | `AUTH_HOST_CHECK` | `0` | Refuse requests whose `Host` is not this device — the DNS-rebinding defence. |

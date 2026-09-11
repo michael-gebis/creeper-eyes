@@ -235,6 +235,8 @@ static void getState(void) {
   sys["panel"] = "ssd1351";
 #endif
   sys["panels"] = displayCount();
+  sys["httpTask"] = (bool)HTTP_TASK;
+  sys["httpStackFree"] = webTaskStackFree();
   sys["fps"] = s.fps;
   sys["freeHeap"] = s.freeHeap;
   sys["uptimeSeconds"] = s.uptimeSec;

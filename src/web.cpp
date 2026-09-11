@@ -140,6 +140,34 @@ void otaBegin(void) {
 // Called from netOnConnected(), once there is a link to serve over.  The
 // order matters: the specific routes and api.cpp's are registered before the
 // catch-all, because WebServer matches in registration order.
+#if HTTP_TASK
+
+static TaskHandle_t httpTask = NULL;
+
+// Nothing in here may touch a panel.  Handlers that want to paint -- the
+// address cards, the splash -- set a flag the render loop picks up.
+static void httpTaskLoop(void *arg) {
+  (void)arg;
+  for (;;) {
+    server.handleClient();
+    // One tick.  handleClient does not block, so without this the task would
+    // spin at the scheduler's expense and starve the idle task on this core,
+    // which is what feeds the watchdog.
+    vTaskDelay(1);
+  }
+}
+
+// How much of the stack was never used, in bytes.  Reported so the size above
+// can be set from evidence.
+uint32_t webTaskStackFree(void) {
+  return httpTask ? uxTaskGetStackHighWaterMark(httpTask) * sizeof(StackType_t)
+                  : 0;
+}
+
+#else
+uint32_t webTaskStackFree(void) { return 0; }
+#endif // HTTP_TASK
+
 void webBegin(void) {
   authBegin(server);
   server.on("/", webHandleRoot);
@@ -152,6 +180,17 @@ void webBegin(void) {
   MDNS.addService("http", "tcp", 80);
   otaBegin();
   DEBUG_PRINTF("[net] web server on http://%s.local/" "\n", WIFI_HOSTNAME);
+
+#if HTTP_TASK
+  // After the routes are registered and the socket is listening, so the task
+  // cannot serve a half-built server.
+  if (!httpTask) {
+    xTaskCreatePinnedToCore(httpTaskLoop, "http", HTTP_TASK_STACK, NULL,
+                            HTTP_TASK_PRIORITY, &httpTask, HTTP_TASK_CORE);
+    DEBUG_PRINTF("[net] http task: core %d, priority %d, %d byte stack" "\n",
+                 HTTP_TASK_CORE, HTTP_TASK_PRIORITY, HTTP_TASK_STACK);
+  }
+#endif
 }
 
 // Service one HTTP request and any OTA traffic.  Called once per rendered
@@ -160,6 +199,14 @@ void webBegin(void) {
 void webPoll(void) {
   if (netState != NET_UP)
     return;
+
+#if HTTP_TASK
+  // The server has its own task.  OTA stays here: it paints progress onto the
+  // panels, and the panels belong to the render loop.
+  ArduinoOTA.handle();
+  return;
+#endif
+
   // One call is enough, and draining in a loop was measured to gain nothing.
   // handleClient() falls straight through from accepting a connection into
   // reading, parsing and answering it, so a request never needs a second

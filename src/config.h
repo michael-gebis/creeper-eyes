@@ -257,6 +257,67 @@
 #define FIRMWARE_COMMIT GIT_REV
 #endif
 
+// Run the web server in its own task, on the core the renderer is not using.
+//
+// Polled from the render loop, a request cannot be answered sooner than the
+// next frame -- about 50 ms at 32 fps, nearly all of it waiting rather than
+// working.  A task on core 0 takes the frame rate out of the path entirely.
+//
+// What makes it safe is in state.h: every operation takes a lock, and
+// anything the renderer reads mid-frame is queued and applied between frames.
+// The SPI bus stays with the renderer; nothing here may paint.
+//
+// On, on this branch, because it is the thing being evaluated.
+//
+// Measured interleaved -- three runs of each, alternating, so both see the
+// same radio -- it did not stall once in 180 samples where the render-loop
+// build stalled nine times in 360, and the median is about ten milliseconds
+// better.  No data races across eleven hundred concurrent requests, no
+// corruption, no reboots.
+//
+// Not yet proven: 180 samples is not a soak, and docs/HTTP_LATENCY.md records
+// an earlier comparison that reached the opposite conclusion because it was
+// measured across time rather than interleaved.  Set to 0 to compare.
+//
+// The machinery it needs -- locked operations, queued applies -- is compiled
+// in either way, and is worth having regardless: it is what makes the
+// operations layer honest about being callable from anywhere.
+#ifndef HTTP_TASK
+#define HTTP_TASK 1
+#endif
+
+// Its stack.  /api/v1/state is the deepest path -- JSON building on top of
+// WebServer's own parsing -- and system.httpStackFree reports what was left,
+// so this is tunable from evidence rather than guessed at twice.
+#ifndef HTTP_TASK_STACK
+#define HTTP_TASK_STACK 8192
+#endif
+
+// Which core, and at what priority.  Both were settled by measurement, and
+// neither was the obvious answer -- 80 identical GET /state each time:
+//
+//                          median   p90    p99     max   over 500ms
+//   on the render loop         64    78    129     134      0 of 80
+//   core 1, priority 2         59   120   2690    5675      4 of 80
+//   core 0, priority 10        52    73    109     715      1 of 80
+//
+// Core 0 at priority 1 was worse still: the 9 KB page took two and a half
+// seconds, because the task serving the socket sits underneath the WiFi
+// driver and lwIP, which run on that core at priorities in the twenties, and
+// at 1 it never got the CPU.  Ten is comfortably above the idle task and
+// comfortably below the stack it depends on.
+//
+// Core 1 looked attractive -- preempt the renderer, answer, hand the core
+// back -- and the median agreed.  The tail did not: a twentieth of requests
+// took over half a second and the worst took five.  A median that improves
+// while the tail collapses is not an improvement.
+#ifndef HTTP_TASK_CORE
+#define HTTP_TASK_CORE 0
+#endif
+#ifndef HTTP_TASK_PRIORITY
+#define HTTP_TASK_PRIORITY 10
+#endif
+
 // AUTHENTICATION ------------------------------------------------------------
 // All optional, all off, and independent of each other -- see src/auth.h.
 // With them off none of it is compiled in and the board behaves exactly as it

@@ -518,7 +518,17 @@ void netDrawPanel(uint8_t e) {
 // Paints both panels and leaves them up for a while.  Non-blocking: frame()
 // simply skips the eye render until the deadline, so the console stays
 // responsive and a second `net` refreshes rather than queueing.
-void netShow(void) {
+// Requested here, drawn in netShowPoll.  Nothing off the render loop may
+// touch a panel: the SPI bus is shared with the eyes, and two writers on it
+// produce garbage rather than a race anybody can debug.
+static volatile bool showRequested = false;
+
+void netShow(void) { showRequested = true; }
+
+void netShowPoll(void) {
+  if (!showRequested)
+    return;
+  showRequested = false;
   for (uint8_t e = 0; e < displayCount(); e++)
     netDrawPanel(e);
   netShowUntil = millis() + NET_SHOW_MS;
@@ -526,8 +536,11 @@ void netShow(void) {
 
 // Take the panels back before the deadline.  frame() resumes rendering on its
 // next pass, so there is nothing to redraw here.
-void netHide(void) { netShowUntil = 0; }
+void netHide(void) {
+  showRequested = false;
+  netShowUntil = 0;
+}
 
-bool netShowing(void) { return netShowUntil != 0; }
+bool netShowing(void) { return showRequested || netShowUntil != 0; }
 
 #endif // NETWORK

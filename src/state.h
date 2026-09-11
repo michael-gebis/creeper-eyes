@@ -103,6 +103,34 @@ bool stateClockSetTime(uint8_t h, uint8_t m, uint8_t s);
 // which: 0 hour, 1 minute, 2 second, -1 all three.  rgb is 0xRRGGBB.
 bool stateClockSetColor(int8_t which, uint32_t rgb);
 
+// ------------------------------------------------------- crossing threads --
+//
+// Every operation above may be called from a task that is not the one
+// rendering.  Two rules make that safe, and both live here rather than in the
+// callers, because a caller that has to remember them will eventually not.
+//
+// 1. Operations take a lock.  They are short -- a few assignments -- so the
+//    renderer never waits long for one.
+//
+// 2. Anything the renderer reads *during* a frame is not written directly.
+//    It is queued, and applied between frames by statePollPending().  The eye
+//    design is the clear case: drawEye() dereferences five artwork pointers
+//    per pixel, and swapping them underneath it tears the frame.  The panel
+//    swap already worked this way; now everything of that kind does.
+//
+// The SPI bus is the hard boundary.  Nothing off the render loop may touch a
+// panel, so operations that paint -- the address cards, the splash -- queue a
+// request and let the renderer draw it.
+
+// Apply anything queued.  Called from the render loop between frames, and
+// only from there.
+void statePollPending(void);
+
+// Held for the duration of an operation.  Exposed for the renderer, which
+// takes it while it copies out the values it is about to draw with.
+void stateLock(void);
+void stateUnlock(void);
+
 // ---------------------------------------------------------------- settings --
 
 // Mark the live settings as differing from the stored ones, for a change

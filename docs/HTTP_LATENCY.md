@@ -148,6 +148,117 @@ If it is done, the order should be:
 3. Only then move the server, so a failure at step 3 is a scheduling bug and
    not a data race.
 
+## The prototype: what happened when it was built
+
+It is on the `http-task` branch, behind `HTTP_TASK`, **defaulting to off**.
+
+### The safety work came first, and it holds
+
+Following the order above: `state.h` operations take a recursive mutex, and
+anything the renderer reads mid-frame is queued and applied between frames by
+`statePollPending()`. The eye design was the case that mattered — five
+pointers `drawEye()` dereferences per pixel — and it is queued now, alongside
+the panel swap that always was. `netShow()` became a request too, because it
+painted, and the SPI bus belongs to the render loop.
+
+That part works. Six clients hammering the board for forty seconds, changing
+the eye, the gaze, the clock colours and the pupil at once, over eleven
+hundred requests across several runs:
+
+- no reboots
+- no read-back mismatches — every value read back matched what had just been
+  set, which is what a torn write would break
+- heap flat to within a kilobyte
+- the render loop kept going throughout
+
+The same stress against the unmodified build behaves the same way, including
+the occasional timeout under six-way concurrency: that is the single-client
+server saturating, not the task.
+
+### Where to put the task was not obvious
+
+80 identical `GET /api/v1/state`, one configuration per row:
+
+| | median | p90 | p99 | max | over 500 ms |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| on the render loop | 64 | 78 | 129 | 134 | 0 of 80 |
+| core 0, priority 1 | — | — | — | — | the 9 KB page took **2.5 s** |
+| core 1, priority 2 | 59 | 120 | 2690 | **5675** | 4 of 80 |
+| core 0, priority 10 | 52 | 73 | 109 | 715 | 1 of 80 |
+
+Core 0 at priority 1 is the trap: core 0 is where the WiFi driver and lwIP
+run, at priorities in the twenties, and a task at 1 underneath them never gets
+the CPU it needs to drain a socket. That measurement is what made the choice
+look like "core 1" rather than "a higher priority".
+
+Core 1 at priority 2 improved the median and destroyed the tail. A median
+that improves while a twentieth of requests take over half a second is not an
+improvement.
+
+Core 0 at priority 10 — above the idle task, below the stack it depends on —
+beat the render loop on median, p90 and p99.
+
+### The first comparison was wrong
+
+The measurements above were taken over an afternoon, one configuration at a
+time, minutes to hours apart. On that basis the task looked like a disaster:
+requests that took 134 ms at worst on the render loop appeared to take three,
+five, eleven seconds with the task on, and three consecutive runs of the test
+suite took 17, 11 and 73 seconds.
+
+Then the *unmodified* build started showing the same stalls — 1910 ms,
+7637 ms, 2540 ms across three consecutive runs of a measurement that had
+produced a maximum of 134 ms earlier the same day. The RSSI had drifted from
+−48 dBm to −56.
+
+The stalls were the radio, not the code. Comparing A measured at one time
+against B measured at another had attributed them to whichever build happened
+to be flashed when the air got worse.
+
+### Measured properly, interleaved
+
+Three runs of sixty identical `GET /api/v1/state`, alternating builds back to
+back so that both see the same conditions:
+
+| | median | p90 | p99 | max | over 500 ms |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| task off | 70 / 71 / 75 | 162 / 164 / 171 | 1807 / 2591 / 2513 | 1910 / 7637 / 2540 | 2, 3, 3 |
+| **task on** | 55 / 54 / 62 | 71 / 75 / 81 | **88 / 94 / 118** | **103 / 143 / 147** | **0, 0, 0** |
+| task off again | 60 / 64 / 58 | 80 / 178 / 93 | 104 / 355 / 101 | 106 / 1624 / 133 | 0, 1, 0 |
+
+Aggregated: **the task build did not stall once in 180 samples; the render-loop
+build stalled 9 times in 360.** The median is better too, by about ten
+milliseconds.
+
+There is a mechanism that fits. When the air is poor and a segment needs
+retransmitting, the render-loop server can only touch the socket once per
+frame — every 32 ms — so recovering from a loss is slow and compounds. A task
+servicing it every millisecond handles the same loss promptly. The task helps
+*most* exactly when conditions are worst, which is the opposite of what the
+first, confounded comparison suggested.
+
+### Verdict
+
+Promising, and not yet proven. 180 samples with zero stalls is encouraging but
+it is not a soak, and the environment moved enough during one afternoon to
+invert a conclusion once already. Before this merges it wants hours of
+measurement, ideally alternating automatically, and preferably with a packet
+capture to confirm the retransmission story rather than inferring it from
+timings.
+
+`HTTP_TASK` defaults to 1 on this branch so that the thing being evaluated is
+the thing that runs. It is one flag to turn off.
+
+### The lesson worth keeping
+
+Both wrong turns on this page have the same shape. The drain loop was
+optimising a mechanism that did not exist; this was measuring two things under
+conditions that were not the same. In both cases the code looked plausible and
+the first number agreed with the hypothesis.
+
+Interleave the comparison. If A and B cannot be measured within seconds of
+each other, the difference between them is not trustworthy.
+
 ## Open questions
 
 - The measured wait is ~35 ms against a 32 ms frame. If `webPoll()` were
