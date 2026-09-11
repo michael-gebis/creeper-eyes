@@ -381,8 +381,8 @@ const ago = n => n === undefined ? 'never'
   : Math.round(n / 3600) + ' h ago';
 
 function renderTimeStatus(t) {
-  const SRC = {ntp: 'a time server', rtc: 'the battery-backed clock',
-               manual: 'set by hand', free: 'free-running since boot'};
+  const SRC = {ntp: 'NTP', rtc: 'RTC', manual: 'set by hand',
+               free: 'free-running'};
 
   const n = t.ntp;
   let ntp;
@@ -406,7 +406,7 @@ function renderTimeStatus(t) {
                 ? `  ${r.temperatureC.toFixed(1)}°C` : '')];
 
   $('#tstat').innerHTML = [
-    ['now', 'good', SRC[t.source] || t.source, ''],
+    ['src', 'good', SRC[t.source] || t.source, ''],
     ['ntp', ntp[0], ntp[1], ntp[2]],
     ['rtc', rtc[0], rtc[1], rtc[2]]
   ].map(([k, cls, state, detail]) =>
