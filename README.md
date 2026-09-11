@@ -119,7 +119,15 @@ libraries — downloads automatically on the first build.
 | `gray` | Eyes, SSD1327 grayscale | Waveshare 1.5inch OLED |
 | `displaytest` | Solid-colour fills, SSD1351 | Bring-up and fault isolation |
 | `probe1327` | Raw SSD1327 init, no library | Identifying an unknown panel |
+| `esp32dev_rtc` / `gray_rtc_open` | Eyes plus a battery-backed clock | With a [DS3231 fitted](docs/WIRING_RTC.md) |
+| `gray_rtc` | The same, with authentication on | A head left on a network. Needs credentials in `secrets.h` |
 | `esp32dev_ota` / `gray_ota` | Same firmware, flashed over WiFi | Updating a sealed head |
+| `rtc_probe` | Raw I²C scan and DS3231 read | Bringing up an RTC module |
+
+`gray_rtc` is the only environment that requires anything of you before it
+will build: `AUTH_USER`, `AUTH_PASS` and `AUTH_TOKEN_VALUE` in
+`include/secrets.h`. It stops with an error naming them rather than producing
+an open device. Use `gray_rtc_open` to skip that.
 
 ### Commands
 
