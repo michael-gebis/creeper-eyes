@@ -465,12 +465,15 @@ static void getTz(void) {
   JsonDocument d;
   d["tz"] = tzString;
   d["synced"] = timeSynced;
+  // Name and region only.  The POSIX string was two thirds of this reply and
+  // nothing reads it: a client picks a name and sends the name back, and the
+  // device resolves it.  At 61 zones that mattered -- this was the biggest
+  // response the API had, and the one with the worst tail latency.
   JsonArray a = d["zones"].to<JsonArray>();
   for (uint8_t i = 0; i < numTzChoices; i++) {
     JsonObject o = a.add<JsonObject>();
     o["name"] = tzChoices[i].name;
     o["region"] = tzChoices[i].region;
-    o["tz"] = tzChoices[i].posix;
   }
   sendJson(200, d);
 }
@@ -487,7 +490,9 @@ static void putTz(void) {
     sendError(400, "timezone string too long");
     return;
   }
-  netStartTime(); // re-apply and re-sync, so a DST change lands at once
+  // Queued, not done here: re-resolving the time servers can block for
+  // seconds, and a request handler is the worst place to spend them.
+  netRequestTimeRestart();
   getTz();
 }
 

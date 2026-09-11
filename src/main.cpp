@@ -1647,7 +1647,7 @@ void handleCommand(char *line, Print &out) {
     }
     settingsDirty = true;
 #if NETWORK
-    netStartTime(); // re-apply and re-sync, so a DST change lands at once
+    netRequestTimeRestart(); // from the render loop; the lookup can block
 #endif
     out.printf("ok tz=%s" "\n", tzString);
 

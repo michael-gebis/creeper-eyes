@@ -598,16 +598,24 @@ Each card says what happens to its settings when the power goes off —
 persistent, session only, or momentary — because that is the first question
 anyone asks of a control they have just moved.
 
-The page is static: one 22 KB string in [`src/page.h`](src/page.h), served
-straight out of flash. Its tab icon is an inline SVG `data:` URI from
+The page is static: [`data/index.html`](data/index.html), gzipped into the
+firmware at build time by [`tools/gen_page.py`](tools/gen_page.py) and served
+straight out of flash. 26 KB becomes 9, which took the page load from 554 ms
+to under 100 — the board sends roughly one TCP segment per rendered frame, so
+the only thing that really helps is sending fewer of them. Its tab icon is an inline SVG `data:` URI from
 [`src/favicon.h`](src/favicon.h) rather than a `/favicon.ico` route — no
 second handler, and no second request against a server that manages one
 client at a time. Two are bundled: Frank's head, and just the eyes for a
 build going into something that is not a Frankenstein. Pick with `FAVICON`. Everything on it is drawn from the API below, so there
 is no markup anywhere that has to be kept in step with device state.
 
-Requests are served from the render loop, so each one costs a dropped frame
-or two. That is why the page polls at a leisurely rate and the responses are
+Requests are served from the render loop, which is also the floor on how fast
+they can be: about 50 ms, almost none of it the handler. There are
+measurements and the reasoning in
+[docs/HTTP_LATENCY.md](docs/HTTP_LATENCY.md), including one optimisation that
+turned out not to work.
+
+Each request costs a dropped frame or two. That is why the page polls at a leisurely rate and the responses are
 kept small. The page schedules its next poll when the last one lands rather
 than on a timer: the board serves one client at a time, so a timer would
 leave requests outstanding behind each other until the browser ran out of
@@ -763,6 +771,15 @@ python tools/test_api.py --host 192.168.1.50 --token ...
 python tools/test_api.py --host frank.local --user frank --password ...
 ```
 
+It reports latency as percentiles and a histogram rather than an average,
+because on this board the tail is the interesting part — a mean of 60 ms hides
+a request that took eight seconds. `--latency N` skips the tests and times N
+requests per endpoint instead, which is how you tell whether a change helped:
+
+```sh
+python tools/test_api.py --host frank.local --latency 20
+```
+
 Around 117 checks across every endpoint: round trips, range limits, the 400 /
 404 / 405 boundaries, malformed bodies, CORS preflight, credentials, and a
 burst of gaze updates of the kind dragging the aim pad produces — which
@@ -780,9 +797,10 @@ slow request is a stalled render loop.
 
 ## The tools
 
-[`tools/gen_eyes.py`](tools/gen_eyes.py) converts the artwork;
-[`tools/git_rev.py`](tools/git_rev.py) stamps the build with its commit. Both
-are fully type-annotated — signatures and locals — and both run on Python 3.9,
+[`tools/gen_eyes.py`](tools/gen_eyes.py) converts the artwork,
+[`tools/gen_page.py`](tools/gen_page.py) compresses the control page into the
+firmware, and [`tools/git_rev.py`](tools/git_rev.py) stamps the build with its
+commit. All are fully type-annotated — signatures and locals — and both run on Python 3.9,
 which is the oldest interpreter PlatformIO is likely to hand them. Annotations
 are lazy (`from __future__ import annotations`), so the modern generic syntax
 works there too.

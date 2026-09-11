@@ -404,7 +404,19 @@ void netPollLink(void) {
   }
 }
 
+// Set by netRequestTimeRestart, acted on below.
+static bool sntpRestartWanted = false;
+
+void netRequestTimeRestart(void) { sntpRestartWanted = true; }
+
 void netPollTime(void) {
+  if (sntpRestartWanted) {
+    sntpRestartWanted = false;
+    // Still costs whatever DNS costs, but spends it here rather than inside
+    // a request, where it stalled the client and the render loop together.
+    netStartTime();
+  }
+
   if (!ntpArrived)
     return;
   ntpArrived = false;

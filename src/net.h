@@ -33,7 +33,15 @@ void netOnConnected(void);
 
 // (Re)start SNTP with the current timezone.  Safe to call again after a
 // change; the servers are re-resolved and the next reply is accepted.
+//
+// Blocking: re-resolving the pool can take seconds when DNS is cold, so this
+// is for boot.  Anything answering a request wants netRequestTimeRestart.
 void netStartTime(void);
+
+// Ask for that restart from the render loop instead of doing it here.
+// Measured inline in a handler, PUT /api/v1/tz ran 60 ms most of the time and
+// 3 to 8 seconds when the lookup missed -- with the eyes stopped for it.
+void netRequestTimeRestart(void);
 
 // Notice a link that arrives after boot, and bring the network up on it.
 // Called once per frame; a millis() comparison until it matters.

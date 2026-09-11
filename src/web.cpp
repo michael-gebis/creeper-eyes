@@ -13,7 +13,7 @@
 #include "display.h"
 #include "auth.h"
 #include "net.h"
-#include "page.h"
+#include "page_gz.h" // generated from data/index.html by tools/gen_page.py
 #include <ArduinoOTA.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
@@ -69,13 +69,21 @@ void webHandleCmd(void) {
 
 #endif // WEB_CMD_ENDPOINT && COMMANDS
 
-// The control page.  Served straight out of flash -- it is the same bytes
-// every time, and building it per request would cost RAM the renderer
-// wants and put device state back into C++ string concatenation.
+// The control page.  Served straight out of flash, gzipped at build time.
+//
+// It is the same bytes every time, so building it per request would cost RAM
+// the renderer wants and put device state back into C++ string concatenation;
+// and at 25 KB uncompressed it was roughly one TCP segment per rendered frame,
+// which is half a second of page load spent waiting rather than working.
+//
+// No Accept-Encoding check: every browser made this century sends gzip, and
+// the alternative is carrying both copies in flash to serve a client that
+// does not exist.  A command-line client wanting to read it uses --compressed.
 void webHandleRoot(void) {
   if (!authCheck(server))
     return;
-  server.send_P(200, "text/html", CONTROL_PAGE);
+  server.sendHeader("Content-Encoding", "gzip");
+  server.send_P(200, "text/html", (PGM_P)PAGE_GZ, PAGE_GZ_LEN);
 }
 
 // OVER-THE-AIR UPDATES ------------------------------------------------------
@@ -152,6 +160,15 @@ void webBegin(void) {
 void webPoll(void) {
   if (netState != NET_UP)
     return;
+  // One call is enough, and draining in a loop was measured to gain nothing.
+  // handleClient() falls straight through from accepting a connection into
+  // reading, parsing and answering it, so a request never needs a second
+  // call to complete -- the "one step of a state machine per call" that the
+  // loop was written for does not exist.
+  //
+  // What remains of the latency is the wait to reach this function again,
+  // which is one render frame.  docs/HTTP_LATENCY.md has the measurements
+  // and what it would take to go below it.
   server.handleClient();
   ArduinoOTA.handle();
 }

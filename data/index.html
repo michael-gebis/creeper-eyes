@@ -1,29 +1,7 @@
-// The control page, as one string in flash.
-//
-// Kept in PROGMEM rather than assembled per request: the old page was built
-// into a String on every load, which cost RAM and meant the markup and the
-// device state were tangled together in C++.  This one is static, and every
-// value on it comes from /api/v1/state at runtime.
-//
-// The cards are grouped by what happens to a setting when the power goes off
-// -- persistent, session-only, or momentary -- because that is the first
-// anyone asks of a control they have just moved, and a label on each card
-// answers it without a legend to cross-reference.
-//
-// Deliberately dependency-free: no framework, no fonts, no CDN.  A prop on a
-// home network should not need the internet to render its own control panel,
-// and the CSP on an offline device would block it anyway.
-
-#ifndef PAGE_H
-#define PAGE_H
-
-#include "favicon.h"
-#include <pgmspace.h>
-
-static const char CONTROL_PAGE[] PROGMEM = R"HTML(<!doctype html>
+<!doctype html>
 <html lang=en><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<link rel=icon href=")HTML" FAVICON_URI R"HTML(">
+<link rel=icon href="{{FAVICON}}">
 <title>frank</title>
 <style>
 :root{--bg:#14161a;--card:#1d2026;--line:#2a2f38;--ink:#e6e8eb;--dim:#8b93a1;
@@ -589,13 +567,26 @@ $('#forget').onclick = () => {
 // the browser's connection pool was full and the page stopped responding
 // altogether.  A chained timeout cannot stack by construction, however slow
 // the device gets.
+// A tab nobody is looking at does not need the board's attention.  Each poll
+// is about a kilobyte and, more to the point, a slice of the render loop --
+// and a page left open in a background tab would spend that every second for
+// as long as the browser stayed open.  Hidden, it stops asking entirely and
+// only checks whether it has been brought back.
+const POLL_MS = 1000, POLL_HIDDEN_MS = 15000;
+
 async function poll() {
-  if (!halted && !busy) {
+  if (!halted && !busy && !document.hidden) {
     try { await refresh(); $('#err').textContent = ''; }
     catch (e) { $('#err').textContent = 'lost contact — retrying'; }
   }
-  if (!halted) setTimeout(poll, 1000);
+  if (!halted) setTimeout(poll, document.hidden ? POLL_HIDDEN_MS : POLL_MS);
 }
+
+// Coming back to the tab should show the board as it is now, not as it was
+// when you looked away.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && !halted && !busy) refresh().catch(() => {});
+});
 
 (async () => {
   try {
@@ -608,6 +599,3 @@ async function poll() {
   poll();
 })();
 </script>
-)HTML";
-
-#endif // PAGE_H

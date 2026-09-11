@@ -28,12 +28,13 @@ Exit status is 0 if everything passed or was skipped, 1 otherwise.
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import sys
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 Json = dict[str, Any]
 
@@ -51,6 +52,7 @@ class Result:
         self.slowest: float = 0.0
         self.slowest_what: str = ""
         self.slow: list[tuple[float, str]] = []
+        self.samples: list[tuple[float, str]] = []
         self.requests: int = 0
         self.total_ms: float = 0.0
 
@@ -133,6 +135,7 @@ class Api:
         self.res.requests += 1
         self.res.total_ms += ms
         what = "%s %s" % (method, path)
+        self.res.samples.append((ms, what))
         if ms > self.res.slowest:
             self.res.slowest = ms
             self.res.slowest_what = what
@@ -409,10 +412,14 @@ def test_time(res: Result, api: Api) -> None:
     else:
         regions = sorted({z["region"] for z in zones})
         res.ok("zones offered", "%d across %d regions" % (len(zones), len(regions)))
+    # Name and region only: the POSIX string was two thirds of this reply and
+    # nothing reads it -- a client picks a name and sends the name back.
     for z in zones[:3]:
-        for key in ("name", "region", "tz"):
+        for key in ("name", "region"):
             if key not in z:
                 res.fail("zone entries have %s" % key, repr(z)[:50])
+        if "tz" in z:
+            res.fail("zone entries are lean", "still carrying the POSIX string")
 
     was = tz.get("tz")
     r = expect(res, api, "PUT /tz by city", "/tz", "PUT", {"tz": "tokyo"})
@@ -619,8 +626,22 @@ def test_page(res: Result, api: Api) -> None:
     if code != 200:
         res.fail("GET /", "got %s" % code)
         return
-    res.ok("GET /", "%d bytes" % len(body))
-    text = body.decode("utf-8", "replace")
+
+    # Served gzipped, unconditionally -- every browser has understood it for
+    # decades, and carrying a second uncompressed copy in flash to satisfy a
+    # client that does not exist would be the wrong trade.
+    if body[:2] == b"\x1f\x8b":
+        try:
+            plain = gzip.decompress(body)
+        except Exception as e:
+            res.fail("the gzip stream decompresses", repr(e)[:50])
+            return
+        res.ok("GET /", "%d bytes gzipped, %d unpacked (%.0f%%)"
+               % (len(body), len(plain), 100.0 * len(body) / len(plain)))
+        text = plain.decode("utf-8", "replace")
+    else:
+        res.fail("the page is compressed", "%d bytes, not gzip" % len(body))
+        text = body.decode("utf-8", "replace")
     for what, needle in (("a title", "<title>frank</title>"),
                          ("a tab icon", "rel=icon"),
                          ("the state poll", "/api/v1"),
@@ -681,6 +702,109 @@ def restore(api: Api, start: Json) -> None:
     api.raw("/netinfo", "PUT", {"on": False})
 
 
+def measure(res: Result, api: Api, n: int) -> int:
+    """Time each endpoint repeatedly and report, without testing anything.
+
+    For answering "did that change help", which a functional run cannot: it
+    visits each endpoint once or twice, and one sample of a noisy number is
+    not a measurement.
+    """
+    probes: list[tuple[str, str, Optional[Json]]] = [
+        ("/eye", "GET", None),
+        ("/eyes", "GET", None),
+        ("/state", "GET", None),
+        ("/net", "GET", None),
+        ("/info", "GET", None),
+        ("/tz", "GET", None),
+        ("/ntp", "GET", None),
+        ("/gaze", "PUT", {"x": 500, "y": 500}),
+        ("/eye", "PUT", {"index": 0}),
+        ("/action", "POST", {"action": "blink"}),
+        ("/eye", "OPTIONS", None),
+    ]
+    print("timing %d requests per endpoint against %s\n" % (n, api.base))
+    for path, method, body in probes:
+        for _ in range(n):
+            api.raw(path, method, body)
+            time.sleep(0.15)
+    # The page is the largest single transfer and worth its own line.
+    for _ in range(max(3, n // 3)):
+        api.raw("/", full=True)
+        time.sleep(0.2)
+    api.raw("/gaze", "PUT", {"mode": "auto"})
+    report_latency(res)
+    return 0
+
+
+def percentile(values: list[float], p: float) -> float:
+    """Nearest-rank, which needs no interpolation and no numpy."""
+    if not values:
+        return 0.0
+    k = max(1, min(len(values), int(round(p / 100.0 * len(values)))))
+    return sorted(values)[k - 1]
+
+
+def histogram(values: list[float], width: int = 42) -> None:
+    """Log-ish buckets, because the interesting spread is at the tail.
+
+    A linear histogram of this data is one tall bar and a lot of empty space;
+    the whole question is how far the slow end reaches.
+    """
+    edges = [0, 20, 30, 40, 50, 65, 80, 100, 150, 250, 500, 1000, 1 << 30]
+    labels = ["   <20", " 20-30", " 30-40", " 40-50", " 50-65", " 65-80",
+              " 80-100", "100-150", "150-250", "250-500", "0.5-1s", "  >1s"]
+    counts = [0] * (len(edges) - 1)
+    for v in values:
+        for i in range(len(counts)):
+            if edges[i] <= v < edges[i + 1]:
+                counts[i] += 1
+                break
+    top = max(counts) or 1
+    for label, n in zip(labels, counts):
+        if not n:
+            continue
+        bar = "#" * max(1, int(round(n * width / top)))
+        print("    %7s ms  %-*s %4d" % (label, width, bar, n))
+
+
+def report_latency(res: Result) -> None:
+    """What the run looked like from the client's side.
+
+    Reported per endpoint as well as overall, because on this board the size
+    of a reply matters more than what the handler did to produce it, and a
+    single aggregate hides which endpoint is the expensive one.
+    """
+    if not res.samples:
+        return
+    allms = [ms for ms, _ in res.samples]
+    print()
+    print("%d requests: median %.0f ms, p90 %.0f, p99 %.0f, max %.0f (%s)"
+          % (len(allms), percentile(allms, 50), percentile(allms, 90),
+             percentile(allms, 99), res.slowest, res.slowest_what))
+
+    print()
+    print("  distribution")
+    histogram(allms)
+
+    by: dict[str, list[float]] = {}
+    for ms, what in res.samples:
+        by.setdefault(what, []).append(ms)
+    rows = sorted(by.items(), key=lambda kv: percentile(kv[1], 50),
+                  reverse=True)
+    print()
+    print("  slowest endpoints          n   median      p90      max")
+    for what, vals in rows[:10]:
+        print("  %-24s %3d %8.0f %8.0f %8.0f"
+              % (what, len(vals), percentile(vals, 50), percentile(vals, 90),
+                 max(vals)))
+
+    if res.slow:
+        print()
+        print("  over a second -- each one is a stalled render loop:")
+        for ms, what in sorted(res.slow, reverse=True)[:8]:
+            print("    %8.0f ms  %s" % (ms, what))
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -693,12 +817,17 @@ def main(argv: list[str]) -> int:
                     help="also test save/forget, which write flash")
     ap.add_argument("--wifi", action="store_true",
                     help="also test the wifi endpoints (read-only parts)")
+    ap.add_argument("--latency", type=int, metavar="N",
+                    help="skip the tests; time N requests per endpoint instead")
     ap.add_argument("--timeout", type=float, default=10.0)
     args = ap.parse_args(argv[1:])
 
     res = Result()
     api = Api(args.host, res, args.user, args.password, args.token,
               args.timeout)
+
+    if args.latency:
+        return measure(res, api, args.latency)
 
     print("testing http://%s/api/v1" % args.host)
     started = time.time()
@@ -747,14 +876,7 @@ def main(argv: list[str]) -> int:
     print()
     print("%d passed, %d failed, %d skipped in %.0fs"
           % (res.passed, len(res.failed), len(res.skipped), elapsed))
-    print("%d requests, %.0f ms average, %.0f ms slowest (%s)"
-          % (res.requests, res.total_ms / max(res.requests, 1), res.slowest,
-             res.slowest_what))
-    if res.slow:
-        print()
-        print("requests over a second -- each one is a stalled render loop:")
-        for ms, what in sorted(res.slow, reverse=True)[:8]:
-            print("  %8.0f ms  %s" % (ms, what))
+    report_latency(res)
     if res.failed:
         print()
         for f in res.failed:
