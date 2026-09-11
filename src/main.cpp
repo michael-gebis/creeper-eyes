@@ -404,7 +404,9 @@ static void setEyeDesign(uint8_t idx) {
 #include "ssd1327.h"
 typedef SSD1327 displayType;
 // Two panels on one bus; drop this if long jumpers make it unreliable.
+#ifndef SSD1327_SPI_HZ
 #define SSD1327_SPI_HZ 8000000
+#endif
 static SPISettings graySPI(SSD1327_SPI_HZ, MSBFIRST, SPI_MODE0);
 #else
 #include <Adafruit_SSD1351.h> // OLED display library -OR-
@@ -433,15 +435,27 @@ typedef SwappableSSD1351 displayType; // Using OLED display(s)
 
 // INPUT CONFIG (for eye motion -- enable or comment out as needed) --------
 
-#define TRACKING    // If enabled, eyelid tracks pupil
+// Eyelid tracks the pupil: look down and the upper lid drops with it.
+#ifndef TRACKING
+#define TRACKING 1
+#endif
+
 #define IRIS_SMOOTH // If enabled, filter input from IRIS_PIN
-#define IRIS_MIN                                                               \
-  150 // Clip lower analogRead() range from IRIS_PIN (WAS: 120) - Reduced range
-      // so that it doesn't look to odd with multiple eye pairs
-#define IRIS_MAX                                                               \
-  400 // Clip upper "                                (WAS: 720) - Reduced range
-      // so that it doesn't look to odd with multiple eye pairs
-#define AUTOBLINK // If enabled, eyes blink autonomously
+
+// Pupil range.  Counter-intuitively IRIS_MIN is the *widest* pupil: the value
+// divides into the iris map.  Narrowed from upstream's 120/720 so a pair of
+// eyes do not look odd beside each other.
+#ifndef IRIS_MIN
+#define IRIS_MIN 150
+#endif
+#ifndef IRIS_MAX
+#define IRIS_MAX 400
+#endif
+
+// Eyes blink on their own.
+#ifndef AUTOBLINK
+#define AUTOBLINK 1
+#endif
 
 // Probably don't need to edit any config below this line, -----------------
 // unless building a single-eye project (pendant, etc.), in which case one
@@ -915,7 +929,7 @@ const uint8_t ease[] = { // Ease in/out curve for eye movements 3*t^2-2*t^3
     252, 253, 253, 253, 254, 254, 254, 254,
     254, 255, 255, 255, 255, 255, 255, 255}; // n
 
-#ifdef AUTOBLINK
+#if AUTOBLINK
 uint32_t timeOfLastBlink = 0L, timeToNextBlink = 0L;
 #endif
 
@@ -1048,8 +1062,12 @@ static uint32_t startleMark = 0;
 static bool startleWasAuto = true;
 static uint8_t startleWasPct = 50;
 
+#ifndef STARTLE_WINDUP_MS
 #define STARTLE_WINDUP_MS 1400 // slow constrict -- the tension
-#define STARTLE_HOLD_MS 1200   // eyes held wide after the jolt
+#endif
+#ifndef STARTLE_HOLD_MS
+#define STARTLE_HOLD_MS 1200 // eyes held wide after the jolt
+#endif
 
 // Captures whatever dilation state was in effect so it can be handed back
 // when the effect finishes.
@@ -1082,7 +1100,7 @@ static void pollStartle(void) {
       setDilation(100);            // full open
       dilateCurrent = dilateCmdValue; // ...instantly, no ease
       dilateEaseDiv = 8;
-#ifdef AUTOBLINK
+#if AUTOBLINK
       timeToNextBlink = 0; // flinch
 #endif
       startleMark = now;
@@ -1208,7 +1226,7 @@ void stateSetSwap(bool sw) {
 }
 
 void stateBlink(void) {
-#ifdef AUTOBLINK
+#if AUTOBLINK
   timeToNextBlink = 0; // due on the next frame
 #endif
 }
@@ -1764,7 +1782,7 @@ void handleCommand(char *line, Print &out) {
       return;
     }
     out.printf("ok dilate=%ld%%\n", pct);
-#ifdef AUTOBLINK
+#if AUTOBLINK
   } else if (!strcmp(cmd, "blink")) {
     stateBlink();
     out.println(F("ok blink"));
@@ -1975,7 +1993,7 @@ void frame(            // Process motion for a single frame of left or right eye
   eyeCurY = eyeY;
 
   // Blinking
-#ifdef AUTOBLINK
+#if AUTOBLINK
   // Similar to the autonomous eye movement above -- blink start times
   // and durations are random (within ranges).
   if ((t - timeOfLastBlink) >= timeToNextBlink) { // Start new blink?
@@ -2035,7 +2053,7 @@ void frame(            // Process motion for a single frame of left or right eye
   // lid map slightly above the pupil to determine the rendering threshold.
   static uint8_t uThreshold = 128;
   uint8_t lThreshold, n;
-#ifdef TRACKING
+#if TRACKING
   int16_t sampleX = SCLERA_WIDTH / 2 - (eyeX / 2), // Reduce X influence
       sampleY = SCLERA_HEIGHT / 2 - (eyeY + IRIS_HEIGHT / 4);
   // Eyelid is slightly asymmetrical, so two readings are taken, averaged

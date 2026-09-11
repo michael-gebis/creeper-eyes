@@ -10,7 +10,7 @@ Four wires, one small board, and a coin cell.
 
 | | Without an RTC | With one |
 | :--- | :--- | :--- |
-| No network, ever | Time resets to 10:10 at every boot; set it by hand each time | Set it **once**; kept for the life of the cell |
+| No network, ever | No clock face at all until you set the time, and again after every power cut | Set it **once**; kept for the life of the cell |
 | Network, then a power cut | Right again a few seconds after NTP answers | Right immediately at boot |
 | Network goes away for good | Free-runs and drifts | Keeps time to about a minute a year |
 
@@ -110,7 +110,7 @@ pio run -e esp32dev_rtc -t upload      # colour panels + RTC
 ```
 
 Those two environments are just `gray` and `esp32dev` with `-DRTC=1`; you can
-add the same flag to any environment of your own. It costs about **28 KB** of
+add the same flag to any environment of your own. It costs about **26 KB** of
 flash, which is the I²C library plus the driver.
 
 Different pins, if you need them:
@@ -145,7 +145,7 @@ Set it, and it is kept from then on:
 > tz chicago
 ok tz=CST6CDT,M3.2.0/2,M11.1.0/2
 > clock set 16:34
-ok clock=16:34:00
+ok clock set 16:34:00
 > rtc
   battery held; the time is good
 ```
@@ -201,7 +201,7 @@ More than one thing can know the time. They are ranked, and a better source
 is never overridden by a worse one:
 
 ```
-  free-running   ← boots at 10:10, drifts
+  free-running   ← nothing knows the time; the clock face stays hidden
        ↓
   the RTC        ← read once at boot
        ↓
@@ -209,6 +209,10 @@ is never overridden by a worse one:
        ↓
   NTP            ← a time server answered; also writes the RTC
 ```
+
+The face is drawn only once something above the first rung has supplied a
+time. A head with no network, no RTC and nothing typed in shows eyes without
+a clock rather than a clock showing 10:10.
 
 `clock` and the control page both report which one is in charge, and so does
 `GET /api/v1/state` as `clock.source`.

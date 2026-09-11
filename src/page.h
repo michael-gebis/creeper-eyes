@@ -404,14 +404,19 @@ function renderTimeStatus(t) {
               `${n.server}, every ${Math.round(n.intervalSeconds / 3600)} h`];
 
   const r = t.rtc;
+  // The DS3231 measures its own temperature to compensate its crystal, so a
+  // reading costs nothing and doubles as proof the bus is working -- worth
+  // showing even when the cell is flat and the time is not to be believed.
+  const temp = r.temperatureC !== undefined
+    ? `${r.temperatureC.toFixed(2)} °C` : '';
+  const join = (a, b) => [a, b].filter(Boolean).join('  ·  ');
+
   let rtc;
   if (!r.enabled) rtc = ['off', 'not built in', 'build with -DRTC=1'];
   else if (!r.present) rtc = ['bad', 'no module found', 'check the wiring'];
   else if (!r.valid) rtc = ['warn', 'battery lost or never set',
-                            'set the time and it will be kept'];
-  else rtc = ['good', 'keeping time',
-              (r.utc || '') + (r.temperatureC !== undefined
-                ? `  ${r.temperatureC.toFixed(1)}°C` : '')];
+                            join('set the time and it will be kept', temp)];
+  else rtc = ['good', 'keeping time', join(r.utc, temp)];
 
   $('#tstat').innerHTML = [
     ['src', 'good', SRC[t.source] || t.source, ''],

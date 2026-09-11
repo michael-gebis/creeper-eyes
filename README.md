@@ -146,7 +146,7 @@ a source file — which is how the `gray` environment sets `USE_SSD1327`.
 | :----- | :------ | :----- |
 | `USE_SSD1327` | `0` | Selects the grayscale panel driver. Set by the `gray` environment via `build_flags`, not edited by hand. |
 | `COMMANDS` | `1` | Serial console and BOOT-button toggle. `0` compiles both out; the REST API still works, so a network build stays fully controllable. |
-| `DEBUG` | `1` | Serial diagnostics and the 1 Hz LED heartbeat. `0` saves ~17 KB. |
+| `DEBUG` | `1` | Serial diagnostics and the 1 Hz LED heartbeat. `0` saves ~2 KB. |
 | `DEBUG_BAUD` | `115200` | Console speed. **Must match `monitor_speed`** in `platformio.ini`. |
 | `DEBUG_LED_PIN` | `2` | On-board LED used for the heartbeat. |
 | `STARTUP_SPLASH` | `1` | Panel name cards at boot. `0` boots straight into the eyes. |
@@ -156,16 +156,24 @@ a source file — which is how the `gray` environment sets `USE_SSD1327`.
 | `STARTLE_WINDUP_MS` | `1400` | Slow constrict before the startle jolt. |
 | `CLOCK` | `1` | Analogue clock face. `0` compiles it out. |
 | `CLOCK_*_LEN` / `CLOCK_*_HW` | — | Hand lengths and half-widths, in pixels from the iris centre. |
+| `CLOCK_*_COLOR` | `0x000000` | Starting hand colours, changeable at runtime with `clock color`. |
+| `CLOCK_NOON` | `128` | Where twelve sits, in the polar table's 0–511 angle. |
 | `PUPIL_OFF_SCALE` | `64` | Iris scale used when the pupil is off. At or below 64 the pupil vanishes. |
-| `NETWORK` | `1` | WiFi, NTP, web server and OTA. `0` compiles all of it out, saving ~535 KB. |
-| `RTC` | `0` | A DS3231 battery-backed clock. `1` fits one; costs ~28 KB. See [docs/WIRING_RTC.md](docs/WIRING_RTC.md). |
+| `NETWORK` | `1` | WiFi, NTP, web server and OTA. `0` compiles all of it out, saving ~669 KB. |
+| `RTC` | `0` | A DS3231 battery-backed clock. `1` fits one; costs ~26 KB. See [docs/WIRING_RTC.md](docs/WIRING_RTC.md). |
 | `RTC_SDA_PIN` / `RTC_SCL_PIN` | `21` / `22` | I²C pins for it. Both otherwise unused. |
 | `RTC_ADDR` | `0x68` | The DS3231's fixed address. |
 | `FAVICON` | `FAVICON_FRANK` | Tab icon. `FAVICON_EYES` is a generic alternative for a build that is not going into a Frankenstein. |
 | `IPV6` | `0` | All of IPv6, compiled out. Cannot usefully be turned on yet — see [IPv6](#ipv6). |
 | `FIRMWARE_VERSION` | `1.0` | Bumped by hand, for features worth announcing. |
+| `PROJECT_URL` | this repository | Shown by `version` and on the control page. |
 | `WEB_CMD_ENDPOINT` | `1` | The `/cmd` escape hatch. `0` leaves only the REST API. Needs `COMMANDS`, since it is a passthrough to the console. |
 | `WIFI_HOSTNAME` | `frank` | DHCP and mDNS name. |
+| `WIFI_AP_NAME` | `frank-setup` | The setup portal's own network name. |
+| `NTP_SERVER_1` / `NTP_SERVER_2` | `pool.ntp.org`, `time.nist.gov` | Time servers. A server on your own LAN works here. |
+| `NET_SHOW_MS` | `12000` | How long `net` leaves the address cards up. |
+| `NET_COLS` | `21` | Characters a 128 px panel fits, for wrapping those cards. |
+| `TZ_MAX` | `48` | Longest POSIX timezone string that can be stored. |
 | `WIFI_CONNECT_MS` | `15000` | How long to wait on a known network before opening the portal. |
 | `WIFI_PORTAL_S` | `60` | How long the portal stays up before carrying on offline. |
 | `WIFI_RETRY_MS` | `30000` | How often to try again after giving up at boot. |
@@ -585,7 +593,7 @@ Each card says what happens to its settings when the power goes off —
 persistent, session only, or momentary — because that is the first question
 anyone asks of a control they have just moved.
 
-The page is static: one 19 KB string in [`src/page.h`](src/page.h), served
+The page is static: one 22 KB string in [`src/page.h`](src/page.h), served
 straight out of flash. Its tab icon is an inline SVG `data:` URI from
 [`src/favicon.h`](src/favicon.h) rather than a `/favicon.ico` route — no
 second handler, and no second request against a server that manages one
