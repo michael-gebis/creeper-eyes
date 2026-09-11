@@ -16,6 +16,11 @@
 
 uint8_t netState = NET_DOWN;
 
+// Whether to consult a time server at all.  Declared here, above the
+// first user, because netOnConnected() reads it long before the SNTP
+// plumbing further down is defined.
+static bool ntpWanted = true;
+
 // Blocks until connected or the timeout expires.  Returns true on success.
 bool wifiWaitConnected(uint32_t ms) {
   uint32_t start = millis();
@@ -223,7 +228,10 @@ void netOnConnected(void) {
     DEBUG_PRINTF("[net] mdns failed to start" "\n");
   DEBUG_PRINTF("[net] connected: %s  ipv4 %s" "\n",
                WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
-  netStartTime();
+  if (ntpWanted)
+    netStartTime();
+  else
+    DEBUG_PRINTF("[net] ntp is off; not starting the time client" "\n");
   webBegin();
 }
 
@@ -252,10 +260,51 @@ void netShow(void); // defined with the display code below
 // because this runs in another task and an I2C transaction does not belong
 // in it.
 static volatile bool ntpArrived = false;
+static volatile uint32_t ntpLastMs = 0; // 0 = no server has ever answered
 
 static void onSntpSync(struct timeval *tv) {
   timeAccept(tv->tv_sec, TIME_NTP);
+  ntpLastMs = millis();
   ntpArrived = true;
+}
+
+bool netNtpEnabled(void) { return ntpWanted; }
+
+void netNtpSetEnabled(bool on) {
+  ntpWanted = on;
+  if (!on) {
+    if (sntp_enabled())
+      sntp_stop();
+    // The clock keeps whatever the server last said, but stops being
+    // defended by it -- otherwise `clock set` would have no effect on a board
+    // whose time server has been switched off.
+    timeRelinquish(TIME_NTP);
+    DEBUG_PRINTF("[net] ntp off; the time already set is kept" "\n");
+    return;
+  }
+  // Only worth starting once there is something to ask over; otherwise
+  // netOnConnected() will start it when the link arrives.
+  if (WiFi.status() == WL_CONNECTED)
+    netStartTime();
+}
+
+void netNtpStatus(NtpStatus &o) {
+  o.enabled = ntpWanted;
+  o.running = sntp_enabled();
+  o.linkUp = WiFi.status() == WL_CONNECTED;
+  o.synced = ntpLastMs != 0;
+  o.lastSyncSec = o.synced ? (millis() - ntpLastMs) / 1000UL : NTP_NEVER;
+  o.intervalSec = sntp_get_sync_interval() / 1000UL;
+  o.server = NTP_SERVER_1;
+}
+
+bool netNtpSyncNow(void) {
+  // Restarting the client makes it query straight away instead of waiting out
+  // the remaining interval.  Only meaningful if it was started in the first
+  // place, which it is not before a link exists.
+  if (!sntp_enabled())
+    return false;
+  return sntp_restart();
 }
 
 void netStartTime(void) {

@@ -115,7 +115,6 @@ static void fillClock(JsonObject o, const DeviceState &s) {
            (unsigned)(s.clockSecOfDay / 3600), (unsigned)((s.clockSecOfDay / 60) % 60),
            (unsigned)(s.clockSecOfDay % 60));
   o["time"] = buf;
-  o["source"] = timeSourceName(); // ntp | rtc | manual | free
   JsonObject c = o["colors"].to<JsonObject>();
   static const char *const names[3] = {"hour", "minute", "second"};
   for (uint8_t i = 0; i < 3; i++) {
@@ -150,6 +149,50 @@ static void fillNet(JsonObject o) {
 
 // ---------------------------------------------------------------- handlers --
 
+// Everything about where the time comes from, in one place, so the control
+// page can show it without a second request against a server that handles one
+// client at a time.
+static void fillTime(JsonObject o) {
+  o["source"] = timeSourceName(); // ntp | rtc | manual | free
+
+  NtpStatus n;
+  netNtpStatus(n);
+  JsonObject jn = o["ntp"].to<JsonObject>();
+  jn["available"] = true; // this code only exists in a NETWORK build
+  jn["enabled"] = n.enabled;
+  jn["running"] = n.running;
+  jn["linkUp"] = n.linkUp;
+  jn["synced"] = n.synced;
+  if (n.lastSyncSec != NTP_NEVER)
+    jn["lastSyncSeconds"] = n.lastSyncSec;
+  jn["intervalSeconds"] = n.intervalSec;
+  jn["server"] = n.server;
+
+  JsonObject jr = o["rtc"].to<JsonObject>();
+  jr["enabled"] = (bool)RTC;
+#if RTC
+  jr["present"] = rtcPresent();
+  jr["valid"] = rtcValid();
+  // Seven registers over I2C, which is nothing beside the cost of answering
+  // the request itself -- and a chip time that disagrees with the system
+  // clock is exactly what someone reading this page wants to find out.
+  time_t utc;
+  if (rtcRead(utc)) {
+    struct tm g;
+    gmtime_r(&utc, &g);
+    char buf[24];
+    strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &g);
+    jr["utc"] = buf;
+  }
+  float c;
+  if (rtcTemperature(c))
+    jr["temperatureC"] = c;
+#else
+  jr["present"] = false;
+  jr["valid"] = false;
+#endif
+}
+
 static void getState(void) {
   DeviceState s;
   stateGet(s);
@@ -162,6 +205,7 @@ static void getState(void) {
   d["startle"]["active"] = s.startleActive;
   fillClock(d["clock"].to<JsonObject>(), s);
   fillNet(d["net"].to<JsonObject>());
+  fillTime(d["time"].to<JsonObject>());
   JsonObject sys = d["system"].to<JsonObject>();
   // The panel type matters to a client: on a greyscale panel every colour
   // it sets will come back as a brightness.
@@ -443,6 +487,43 @@ static void getInfo(void) {
   sendJson(200, d);
 }
 
+static void getNtp(void) {
+  JsonDocument d;
+  fillTime(d.to<JsonObject>());
+  sendJson(200, d);
+}
+
+// Asking again now, rather than waiting out the three hours.  The reply says
+// only that the request went out: an answer arrives asynchronously, and the
+// page sees it on its next poll as a changed lastSyncSeconds.
+static void putNtp(void) {
+  JsonDocument b;
+  if (!readBody(b))
+    return;
+
+  if (b["enabled"].is<bool>()) {
+    netNtpSetEnabled(b["enabled"]);
+    stateMarkDirty(); // it is a saved setting like the timezone
+    getNtp();
+    return;
+  }
+
+  const char *op = b["op"] | "";
+  if (strcmp(op, "sync")) {
+    sendError(400, "expected enabled, or op=sync");
+    return;
+  }
+  if (!netNtpEnabled()) {
+    sendError(409, "the time client is switched off");
+    return;
+  }
+  if (!netNtpSyncNow()) {
+    sendError(409, "the time client is not running; there is no link yet");
+    return;
+  }
+  sendOk();
+}
+
 #if RTC
 
 // The battery-backed clock.  "valid" is the one worth reading: the registers
@@ -625,6 +706,11 @@ void apiRegister(WebServer &s) {
   s.on(API "/clock", HTTP_PUT, putClock);
   s.on(API "/clock", HTTP_OPTIONS, handleOptions);
   s.on(API "/clock", HTTP_ANY, notAllowed);
+
+  s.on(API "/ntp", HTTP_GET, getNtp);
+  s.on(API "/ntp", HTTP_PUT, putNtp);
+  s.on(API "/ntp", HTTP_OPTIONS, handleOptions);
+  s.on(API "/ntp", HTTP_ANY, notAllowed);
 
 #if RTC
   s.on(API "/rtc", HTTP_GET, getRtc);

@@ -329,6 +329,7 @@ static bool settingsDirty = false;
 #define PREFS_KEY_SWAP "swap"
 #define PREFS_KEY_PUPIL "pupil"
 #define PREFS_KEY_TZ "tz"
+#define PREFS_KEY_NTP "ntp"
 #define PREFS_KEY_CLK_ON "clkOn"
 #define PREFS_KEY_CLK_SEC "clkSec"
 #define PREFS_KEY_CLK_RATE "clkRate"
@@ -347,6 +348,9 @@ static void saveSettings(void) {
   prefs.putBool(PREFS_KEY_SWAP, eyesSwapped);
   prefs.putBool(PREFS_KEY_PUPIL, pupilOn);
   prefs.putString(PREFS_KEY_TZ, tzString);
+#if NETWORK
+  prefs.putBool(PREFS_KEY_NTP, netNtpEnabled());
+#endif
 #if CLOCK
   prefs.putBool(PREFS_KEY_CLK_ON, clockOn);
   prefs.putBool(PREFS_KEY_CLK_SEC, clockSeconds);
@@ -936,6 +940,11 @@ static void loadSettings(void) {
   strncpy(tzString, tz.c_str(), sizeof(tzString) - 1);
   tzString[sizeof(tzString) - 1] = '\0';
   timeApplyTz(); // the restored zone, before anything reads a clock
+#if NETWORK
+  // Restored before setupNetwork runs, so a board saved with it off never
+  // asks a server in the first place.
+  netNtpSetEnabled(prefs.getBool(PREFS_KEY_NTP, true));
+#endif
 #if CLOCK
   clockOn = prefs.getBool(PREFS_KEY_CLK_ON, clockOn);
   clockSeconds = prefs.getBool(PREFS_KEY_CLK_SEC, clockSeconds);
@@ -1295,6 +1304,8 @@ bool stateClockSetColor(int8_t which, uint32_t rgb) {
 #endif
 }
 
+void stateMarkDirty(void) { settingsDirty = true; }
+
 void stateSave(void) { saveSettings(); }
 void stateForget(void) { forgetSettings(); }
 
@@ -1330,6 +1341,9 @@ static void cmdHelp(Print &out) {
                  "  wifi                      the network, and how to change "
                  "it\n"
                  "  version                   firmware version and commit\n"
+#if NETWORK
+                 "  ntp [on|off|sync]         use a time server, or stop\n"
+#endif
 #if RTC
                  "  rtc [sync]                battery-backed clock\n"
 #endif
@@ -1568,6 +1582,42 @@ void handleCommand(char *line, Print &out) {
     netStartTime(); // re-apply and re-sync, so a DST change lands at once
 #endif
     out.printf("ok tz=%s" "\n", tzString);
+
+#if NETWORK
+  } else if (!strcmp(cmd, "ntp")) {
+    char *arg = strtok(NULL, " \t");
+    if (arg)
+      for (char *c = arg; *c; c++)
+        *c = (char)tolower((unsigned char)*c);
+    if (arg && !strcmp(arg, "sync")) {
+      if (!netNtpEnabled())
+        out.println(F("err: ntp is off"));
+      else if (!netNtpSyncNow())
+        out.println(F("err: no link yet, so there is nothing to ask"));
+      else
+        out.println(F("ok asking now"));
+      return;
+    }
+    if (arg && (!strcmp(arg, "on") || !strcmp(arg, "off"))) {
+      netNtpSetEnabled(!strcmp(arg, "on"));
+      settingsDirty = true;
+    } else if (arg) {
+      out.println(F("usage: ntp [on|off|sync]"));
+      return;
+    }
+    NtpStatus n;
+    netNtpStatus(n);
+    out.printf("ntp %s", n.enabled ? "on" : "off");
+    if (n.enabled) {
+      if (n.synced)
+        out.printf(", last answer %us ago, asking every %us",
+                   (unsigned)n.lastSyncSec, (unsigned)n.intervalSec);
+      else
+        out.printf(", %s", n.linkUp ? "waiting for a reply" : "no link");
+      out.printf(" (%s)", n.server);
+    }
+    out.println();
+#endif
 
 #if RTC
   } else if (!strcmp(cmd, "rtc")) {

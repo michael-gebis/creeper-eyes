@@ -215,6 +215,7 @@ Open `pio device monitor` and type `help`. Commands are line-based at 115200.
 | `wifi forget` | Clear the stored network |
 | `wifi portal` | Reboot into the setup portal |
 | `version` | Firmware version, commit and build date |
+| `ntp [on\|off\|sync]` | Use a time server, stop using one, or ask again now |
 | `rtc` | Battery-backed clock: present, valid, its time and temperature |
 | `rtc sync` | Store the current time in it |
 | `tz [zone]` | Timezone by name or POSIX string |
@@ -529,7 +530,20 @@ a worse one:
 | highest | NTP | a time server answering; also writes the RTC |
 
 `clock`, `tz`, the control page and `GET /api/v1/state` all report which one
-is in charge, as `clock.source`.
+is in charge, as `time.source`.
+
+The control page shows the state of both time sources — whether NTP is built
+in, has a link, and when it last heard back; whether an RTC is built in,
+present, and holding a time worth believing — and carries a **sync now**
+button, which restarts the client so it asks immediately instead of waiting
+out the three hours.
+
+NTP can also be switched off, from the page or with `ntp off`. It is a saved
+setting. The clock keeps whatever the server last gave it, but stops being
+defended by it, so setting the time by hand afterwards works — which it does
+not while a server is in charge. The page hides the manual time field
+whenever NTP is on, rather than offering a control that would accept a value
+and then have no effect.
 
 ### Keeping time without a network
 
@@ -595,6 +609,7 @@ CORS open so a page served from anywhere can drive the device.
 | `GET` | `/api/v1/eyes` | The eye designs this firmware was built with |
 | `GET` | `/api/v1/net` | MAC, addresses, signal, sync state |
 | `GET` | `/api/v1/info` | Version, commit, build date, project URL |
+| `GET` `PUT` | `/api/v1/ntp` | Time-client status; `{"enabled":false}` stops it, `{"op":"sync"}` asks now |
 | `GET` `PUT` | `/api/v1/rtc` | The battery-backed clock; `{"op":"sync"}` stores the time. Only with `RTC=1` |
 | `GET` `PUT` | `/api/v1/eye` | `{"name":"dragon"}`, `{"index":2}` or `{"next":true}` |
 | `GET` `PUT` | `/api/v1/gaze` | `{"x":200,"y":800}` or `{"mode":"auto"}` |

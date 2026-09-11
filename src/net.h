@@ -39,6 +39,33 @@ void netStartTime(void);
 // Called once per frame; a flag check until a reply actually lands.
 void netPollTime(void);
 
+// What the SNTP client is doing, for anything that wants to report it rather
+// than just consume the time.
+struct NtpStatus {
+  bool enabled;         // the saved setting: should we ask at all?
+  bool running;         // the client is started
+  bool linkUp;          // ...and there is a network for it to ask over
+  bool synced;          // a server has answered at least once
+  uint32_t lastSyncSec; // seconds since that answer; NTP_NEVER if none
+  uint32_t intervalSec; // how often it asks again
+  const char *server;
+};
+#define NTP_NEVER 0xFFFFFFFFUL
+
+void netNtpStatus(NtpStatus &out);
+
+// Ask again now rather than waiting out the interval.  False if the client
+// is not running, which means there is nothing to restart.
+bool netNtpSyncNow(void);
+
+// Whether to use a time server at all.  Saved, and on by default.  Turning it
+// off stops the client but leaves the time it already supplied alone: the
+// clock does not become wrong just because we stopped asking.  For a head
+// with an RTC, or one whose time is set by hand, this is how you stop a
+// server three hours from now quietly overruling you.
+bool netNtpEnabled(void);
+void netNtpSetEnabled(bool on);
+
 // Human-readable addresses and time.
 void netReport(Print &out);
 

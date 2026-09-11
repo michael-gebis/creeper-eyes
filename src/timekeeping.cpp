@@ -13,7 +13,10 @@
 bool timeSynced = false;
 char tzString[TZ_MAX] = TZ_DEFAULT;
 
+// What to report, and what it takes to replace it.  Normally the same thing;
+// they come apart when a source is switched off -- see timeRelinquish.
 static TimeSource source = TIME_FREE;
+static TimeSource rank = TIME_FREE;
 
 // Enough of the world to cover wherever the head ends up.  These are POSIX
 // TZ strings, not the IANA database -- the database is megabytes and needs a
@@ -154,14 +157,20 @@ void timeAccept(time_t utc, TimeSource from) {
   // that has already answered.  Without this, an RTC read that happens to
   // land after the first NTP reply would drag the clock back onto the less
   // accurate source.
-  if (from < source)
+  if (from < rank)
     return;
   struct timeval tv;
   tv.tv_sec = utc;
   tv.tv_usec = 0;
   settimeofday(&tv, NULL);
   source = from;
+  rank = from;
   timeSynced = true;
+}
+
+void timeRelinquish(TimeSource from) {
+  if (rank == from)
+    rank = TIME_FREE; // the reading stays; nothing is defending it now
 }
 
 TimeSource timeSource(void) { return source; }

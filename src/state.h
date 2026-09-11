@@ -104,6 +104,10 @@ bool stateClockSetColor(int8_t which, uint32_t rgb);
 
 // ---------------------------------------------------------------- settings --
 
+// Mark the live settings as differing from the stored ones, for a change
+// made somewhere that does not own the flag.
+void stateMarkDirty(void);
+
 void stateSave(void);
 void stateForget(void);
 

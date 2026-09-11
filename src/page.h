@@ -55,6 +55,8 @@ button:hover{background:#333944}
 button.on{background:var(--accent);border-color:var(--accent);color:#0d1117}
 button.danger:hover{background:#4a2b28;border-color:#7a4038}
 .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+/* hidden is display:none, which a later display:flex would otherwise win. */
+[hidden]{display:none!important}
 .row>label{color:var(--dim);min-width:56px;font-size:13px}
 .grow{flex:1;min-width:90px}
 input[type=range]{flex:1;min-width:90px;accent-color:var(--accent)}
@@ -76,6 +78,15 @@ td.v{word-break:break-all}
         background:#2b2418;border:1px solid #5a4526;color:var(--warn);font-size:13px}
 .dim{color:var(--dim)}
 a{color:var(--accent)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;
+     margin-right:7px;vertical-align:1px;background:var(--dim)}
+.dot.good{background:#6fbf73}
+.dot.warn{background:var(--warn)}
+.dot.bad{background:var(--bad)}
+.dot.off{background:transparent;border:1px solid var(--line)}
+#tstat td:first-child{width:3.4em}
+#tstat td.s{color:var(--ink);width:auto;font-family:inherit;font-size:13px}
+#tstat td.d{color:var(--dim);font-size:11.5px}
 hr{border:0;border-top:1px solid var(--line);margin:2px 0}
 </style>
 
@@ -143,19 +154,23 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
 
   <div class=card>
     <h2>Time <span class=tag>not saved</span></h2>
-    <div class=row>
-      <input type=time id=tset step=1 class=grow><button id=timeSet>set</button>
+    <div id=manual hidden>
+      <div class=row>
+        <input type=time id=tset step=1 class=grow><button id=timeSet>set</button>
+      </div>
+      <p class=note id=timeNote></p>
     </div>
-    <p class=note id=timeNote></p>
-    <div class=row><span class=dim id=timeSrc></span></div>
+    <table id=tstat></table>
+    <div class=row>
+      <button id=ntpOn>NTP</button>
+      <button id=ntpSync>sync now</button>
+    </div>
     <h2 style="margin-top:4px">Timezone <span class="tag saved">persistent</span></h2>
     <div class=row><select id=tz class=grow></select></div>
     <div class=row>
       <input type=text id=tzRaw class=grow placeholder="or a POSIX string">
       <button id=tzSet>set</button>
     </div>
-    <p class=note>Sixty-odd places are listed. Anywhere else works too — a
-      POSIX string such as <kbd>&lt;+0545&gt;-5:45</kbd> covers it.</p>
   </div>
 
   <div class=card>
@@ -315,18 +330,20 @@ function render(s) {
   $('#panelNote').textContent =
     s.system.panel === 'ssd1327' ? 'greyscale — shown as brightness' : '';
 
-  // Where the time came from matters more than the time: a clock reading
-  // 3:47 is not worth much until you know whether that is off a time server,
-  // out of a battery-backed chip, or a counter that started at boot.
-  const src = {ntp: 'from a time server', rtc: 'from the battery-backed clock',
-               manual: 'set by hand', free: 'free-running since boot'};
-  $('#timeSrc').textContent = src[s.clock.source] || s.clock.source;
+  renderTimeStatus(s.time);
 
-  $('#timeNote').innerHTML = s.net.timeSynced
-    ? 'NTP has the time, so setting it by hand has no effect — change the ' +
-      'timezone instead.'
-    : '<b>Not synced.</b> The clock is free-running, so this is the only way ' +
-      'to set it, and it is lost on reboot.';
+  // Setting the time by hand is only worth offering when nothing is going to
+  // overrule it.  With a time server in charge the field would accept a value
+  // and then quietly have no effect, which is worse than not being there.
+  const ntp = s.time.ntp;
+  $('#ntpOn').classList.toggle('on', ntp.enabled);
+  $('#ntpOn').textContent = ntp.enabled ? 'NTP on' : 'NTP off';
+  $('#ntpSync').hidden = !ntp.enabled;
+  $('#manual').hidden = ntp.enabled;
+
+  $('#timeNote').innerHTML = s.time.rtc.present
+    ? 'Stored in the battery-backed clock, so it survives a power cut.'
+    : 'Kept until the power goes off. Fit an RTC and it is kept for good.';
 
   $('#wifiTxt').textContent = s.net.state === 'up'
     ? `on ${s.net.ssid}, ${s.net.rssi} dBm`
@@ -352,6 +369,49 @@ function render(s) {
     : '';
 
   $('#dirty').textContent = s.system.settingsDirty ? 'unsaved changes' : 'saved';
+}
+
+// Where the time came from matters more than the time itself: a clock
+// reading 3:47 is not worth much until you know whether that came off a time
+// server, out of a battery-backed chip, or a counter that started at boot.
+// Each row is a state, a colour, and the detail that justifies it.
+const ago = n => n === undefined ? 'never'
+  : n < 60 ? n + 's ago'
+  : n < 3600 ? Math.round(n / 60) + ' min ago'
+  : Math.round(n / 3600) + ' h ago';
+
+function renderTimeStatus(t) {
+  const SRC = {ntp: 'a time server', rtc: 'the battery-backed clock',
+               manual: 'set by hand', free: 'free-running since boot'};
+
+  const n = t.ntp;
+  let ntp;
+  if (!n.available) ntp = ['off', 'not built in', ''];
+  else if (!n.enabled) ntp = ['off', 'switched off',
+                              'the time already set is kept'];
+  else if (!n.linkUp) ntp = ['bad', 'no network', 'nothing to ask'];
+  else if (!n.running) ntp = ['bad', 'not started', ''];
+  else if (!n.synced) ntp = ['warn', 'waiting for a reply', n.server];
+  else ntp = ['good', 'synced ' + ago(n.lastSyncSeconds),
+              `${n.server}, every ${Math.round(n.intervalSeconds / 3600)} h`];
+
+  const r = t.rtc;
+  let rtc;
+  if (!r.enabled) rtc = ['off', 'not built in', 'build with -DRTC=1'];
+  else if (!r.present) rtc = ['bad', 'no module found', 'check the wiring'];
+  else if (!r.valid) rtc = ['warn', 'battery lost or never set',
+                            'set the time and it will be kept'];
+  else rtc = ['good', 'keeping time',
+              (r.utc || '') + (r.temperatureC !== undefined
+                ? `  ${r.temperatureC.toFixed(1)}°C` : '')];
+
+  $('#tstat').innerHTML = [
+    ['now', 'good', SRC[t.source] || t.source, ''],
+    ['ntp', ntp[0], ntp[1], ntp[2]],
+    ['rtc', rtc[0], rtc[1], rtc[2]]
+  ].map(([k, cls, state, detail]) =>
+    `<tr><td>${k}</td><td class=s><i class="dot ${cls}"></i>${state}` +
+    (detail ? `<div class=d>${detail}</div>` : '') + `</td></tr>`).join('');
 }
 
 async function refresh() { render(await api('/state')); }
@@ -397,6 +457,12 @@ const colour = (id, which) => $(id).onchange = e =>
 colour('#cH', 'hour'); colour('#cM', 'minute'); colour('#cS', 'second');
 $('#rateSet').onclick = () =>
   act(() => api('/clock', 'PUT', {rate: +$('#rate').value}));
+// Restarts the client so it asks now instead of waiting out the interval.
+// The answer lands asynchronously; the next poll shows it.
+$('#ntpSync').onclick = () => act(() => api('/ntp', 'PUT', {op: 'sync'}));
+$('#ntpOn').onclick = () =>
+  act(() => api('/ntp', 'PUT', {enabled: !st.time.ntp.enabled}));
+
 $('#timeSet').onclick = () => {
   const v = $('#tset').value;
   if (!v) { $('#err').textContent = 'pick a time first'; return; }

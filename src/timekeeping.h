@@ -71,6 +71,15 @@ bool timeSetTz(const char *nameOrPosix);
 // so a late NTP answer is never undone by anything.
 void timeAccept(time_t utc, TimeSource from);
 
+// Give up a source's claim without changing the time it supplied.
+//
+// For when the thing that set the clock is switched off: what it gave us is
+// still the best time we have and stays on the face, but it no longer
+// outranks anybody.  Without this, turning NTP off would leave the clock
+// defended by a server that is no longer being asked, and setting the time by
+// hand afterwards would silently do nothing.
+void timeRelinquish(TimeSource from);
+
 // Where the time currently on show came from.
 TimeSource timeSource(void);
 const char *timeSourceName(void);
