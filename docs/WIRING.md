@@ -151,6 +151,11 @@ peripheral clocks the same bytes out whether a panel is listening or not.
 So an unchanged frame rate tells you *nothing* about whether the panels are
 wired correctly. Trust your eyes, not the number.
 
+It counts frames actually drawn, so it reads **zero** while something else
+owns the panels — the boot splash, or the twelve seconds of address cards
+after `net`. That is correct rather than alarming: during those, no eye is
+being rendered.
+
 ### Watch the console
 
 ```sh

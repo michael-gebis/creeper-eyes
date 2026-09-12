@@ -1975,7 +1975,9 @@ static void pollBootButton(void) {
 
 void frame(            // Process motion for a single frame of left or right eye
     uint16_t iScale) { // Iris scale (0-1023) passed in
-  static uint32_t frames = 0;  // Used in frame rate calculation
+#if DEBUG || CONTROLLABLE
+  static uint32_t frames = 0; // frames drawn since the last rate report
+#endif
   static uint8_t eyeIndex = 0; // eye[] array counter
   int16_t eyeX, eyeY;
   uint32_t t; // Time at start of function
@@ -2040,18 +2042,33 @@ void frame(            // Process motion for a single frame of left or right eye
     iScale = PUPIL_OFF_SCALE;
 #endif
 
-#if DEBUG
-  // Heartbeat: proves the render loop is alive even with no displays wired.
+#if DEBUG || CONTROLLABLE
+  // The frame rate, once a second.
+  //
+  // Measured whenever anything consumes it, rather than only when DEBUG is
+  // on: the console's `status` and the API's system.fps both read it, and
+  // tying the measurement to a diagnostics switch meant a DEBUG=0 build
+  // reported a frame rate of zero for ever.
   {
     static uint32_t lastReport = 0;
     uint32_t now = millis();
-    frames++;
-    if (now - lastReport >= 1000) {
-      DEBUG_PRINTF("[creeper-eyes] fps=%u heap=%u\n", (unsigned)frames,
+    uint32_t elapsed = now - lastReport;
+    if (elapsed >= 1000) {
+      // Per second, not per interval.  The interval is at least a second but
+      // has no upper bound -- anything that blocks the render loop stretches
+      // it -- so reporting the raw count described a rate that had never
+      // happened.  One observed reading of 2171 was 2171 frames across 57
+      // seconds, which is 38 fps.
+      uint16_t fps = (uint16_t)((frames * 1000UL) / elapsed);
+#if DEBUG
+      // Heartbeat: proves the render loop is alive even with no displays
+      // wired, and the LED proves it without a serial cable.
+      DEBUG_PRINTF("[creeper-eyes] fps=%u heap=%u\n", (unsigned)fps,
                    (unsigned)ESP.getFreeHeap());
       digitalWrite(DEBUG_LED_PIN, !digitalRead(DEBUG_LED_PIN));
+#endif
 #if CONTROLLABLE
-      lastFps = (uint16_t)frames;
+      lastFps = fps;
 #endif
       frames = 0;
       lastReport = now;
@@ -2233,6 +2250,12 @@ void frame(            // Process motion for a single frame of left or right eye
 #if STARTUP_SPLASH
   if (splashPoll()) // the name cards, likewise
     return;
+#endif
+#if DEBUG || CONTROLLABLE
+  // Counted here rather than at the top of the function, so the rate is
+  // frames drawn and not frames attempted: the returns above hand the panels
+  // to the address cards or the splash, and during those nothing is rendered.
+  frames++;
 #endif
   drawEye(eyeIndex, iScale, eyeX, eyeY, n, lThreshold);
 }
