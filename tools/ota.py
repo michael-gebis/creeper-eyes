@@ -4,17 +4,33 @@
     python tools/ota.py --host frank.local
     python tools/ota.py --host 192.168.1.50 --env gray_rtc_ota
 
-Why this exists rather than `pio run -t upload`: espota.py decides whether an
-update worked from its own socket, and its socket is unreliable at exactly the
-moment the update succeeds.  When the transfer completes the board answers
-"OK", closes the connection and reboots -- and espota's trailing read can
-catch the reset instead of the answer, then report "Error Uploading" for an
-update that is already running on the device.  Observed three times in four on
-one afternoon, each time with the whole file transferred.
+Why this exists rather than `pio run -t upload`: espota.py reports failure for
+updates that have already succeeded, and it does so most of the time on a
+weak link.
+
+The cause is ack bookkeeping, not the transfer.  espota performs exactly one
+recv() for every 1024-byte chunk it sends, while the board acknowledges once
+per read of up to 1460 bytes -- ArduinoOTA.cpp clamps to 1460, not to the
+sender's chunk size.  As long as the board keeps up, a read covers one chunk
+and the counts happen to match.  When the link stalls and data backs up in the
+board's receive buffer, one read covers two chunks and emits one ack where
+espota waits for two.  From then on espota is an ack behind, and at the end of
+the file it blocks on a recv that will never come, times out after ten
+seconds, and prints "Error Uploading" -- having delivered every byte.
+
+Confirmed rather than guessed: all 1351 chunks of a 1.38 MB image were sent on
+a run espota called a failure, and draining acks opportunistically instead of
+demanding one per chunk let the same transfer over the same link complete and
+reboot the board.
 
 So this asks the board.  It records which commit is running, uploads, then
-polls /api/v1/info until the commit changes to the one just built.  Success
-means the device says so; nothing else counts.
+polls /api/v1/info until the commit changes to the one just built and uptime
+resets.  Success means the device says so; nothing else counts, and espota's
+own verdict is discarded.
+
+Fixing it properly means either a corrected uploader here, or forking
+ArduinoOTA to clamp its read to the sender's chunk size.  Neither is done; the
+verification below makes the bug harmless in practice.
 
 It also works out which network interface to send from, which on a machine
 with VMware, WSL and VirtualBox installed is five wrong answers and one right

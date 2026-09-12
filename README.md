@@ -767,14 +767,17 @@ python tools/ota.py --host frank.local
 ```
 
 It builds, uploads, and then **asks the board** whether the update took,
-rather than believing the uploader. That matters because `espota.py` decides
-from its own socket, and its socket is least reliable at exactly the moment
-the update succeeds: the board answers "OK", closes the connection and
-reboots, and espota's trailing read can catch the reset instead of the answer.
-Measured on one afternoon, three failures in four were reported for updates
-that were already running on the device. `tools/ota.py` compares the commit
-the board reports against the one just built, and retries if it really did not
-take.
+rather than believing the uploader — because on a weak link `espota.py`
+reports failure for updates that have already succeeded, most of the time.
+
+The bug is in the acknowledgements, not the transfer. espota does exactly one
+`recv()` per 1024-byte chunk it sends; the board acks once per read of up to
+1460 bytes. While the board keeps up the two happen to match, but as soon as
+the link stalls and data backs up, one read swallows two chunks and answers
+once — and espota is an ack behind for the rest of the file, ending on a
+`recv` that never returns. It prints "Error Uploading" having delivered every
+byte. `tools/ota.py` compares the commit the board reports against the one
+just built, and retries only what genuinely failed.
 
 It also picks the right local interface by asking the routing table, which on
 a machine with VMware, WSL and VirtualBox installed is five wrong answers and
@@ -793,9 +796,11 @@ macOS and Linux need neither workaround, and `tools/ota.py` needs neither
 anywhere.
 
 A transfer is about 1350 round trips, so it is exposed to a weak link in a way
-a single request is not. At −64 dBm roughly one attempt in four failed
-genuinely, mid-transfer; `tools/ota.py` retries those. If it keeps failing,
-check `GET /api/v1/net` for the signal before suspecting the firmware.
+a single request is not, and this link drops about 6% of its packets — see
+[docs/HTTP_LATENCY.md](docs/HTTP_LATENCY.md). `tools/ota.py` retries what
+genuinely failed. If it keeps failing, check `GET /api/v1/net` for the signal
+before suspecting the firmware: on this board the radio has been the cause of
+every timing problem measured so far.
 
 ## Testing it
 

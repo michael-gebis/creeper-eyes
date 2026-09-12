@@ -104,8 +104,8 @@ bool webRebootPending(void) { return otaRebootAt != 0; }
 void otaBegin(void) {
   ArduinoOTA.setHostname(WIFI_HOSTNAME);
   // The reboot is ours, not the library's -- see OTA_REBOOT_DELAY_MS.  Its
-  // own is 110 ms after closing the socket, which is too soon to be sure the
-  // sender heard the answer.
+  // own is 110 ms after closing the socket, which on a lossy link is not
+  // obviously enough for that close to finish.
   ArduinoOTA.setRebootOnSuccess(false);
   // See OTA_TIMEOUT_MS: the default is shorter than the sender's, so a lossy
   // link makes the board abort an update that was going to succeed.

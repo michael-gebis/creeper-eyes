@@ -276,16 +276,19 @@
 
 // How long to wait after a successful update before rebooting into it.
 //
-// The library's own sequence is: answer "OK", close the socket, wait 110 ms,
-// reboot.  On a good link that is plenty.  On a weak one the "OK" may need
-// retransmitting and the close has a handshake to finish, and rebooting
-// through that tears the radio away mid-conversation -- so the sender sees a
-// connection reset instead of its answer, and reports a failure for an update
-// that worked.  Three times in four, on one afternoon at -64 dBm.
+// The library answers "OK", closes the socket, waits 110 ms and restarts.  On
+// a link that drops 6% of its packets -- which docs/HTTP_LATENCY.md measures
+// this one doing -- 110 ms is not obviously enough for a retransmitted "OK"
+// and a close to finish, and restarting through that tears the radio away
+// mid-conversation.  Owning the reboot ourselves buys the stack time.
 //
-// Owning the reboot ourselves buys the stack time to finish the conversation.
-// The panels keep showing "DONE" throughout, because the renderer stands back
-// until the reboot happens.
+// Honesty about what this did not fix: it was written to explain espota
+// reporting failure for updates that had plainly worked, and it does not
+// explain them.  That turned out to be ack bookkeeping much earlier in the
+// transfer -- see tools/ota.py.  This remains because not yanking the radio
+// out from under an unfinished close is right on its own terms, and because
+// the panels now hold "DONE" long enough to read, but no measurement says it
+// changed an outcome.  Set it to 0 to get the library's behaviour back.
 #ifndef OTA_REBOOT_DELAY_MS
 #define OTA_REBOOT_DELAY_MS 1500
 #endif
