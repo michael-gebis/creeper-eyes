@@ -23,14 +23,15 @@ a run espota called a failure, and draining acks opportunistically instead of
 demanding one per chunk let the same transfer over the same link complete and
 reboot the board.
 
-So this asks the board.  It records which commit is running, uploads, then
-polls /api/v1/info until the commit changes to the one just built and uptime
-resets.  Success means the device says so; nothing else counts, and espota's
-own verdict is discarded.
+So the upload is implemented here instead, correctly: the image is streamed
+and acknowledgements are drained as they arrive, without requiring any
+particular number of them.  TCP already supplies the backpressure espota was
+trying to impose by counting.  See the comments above push().
 
-Fixing it properly means either a corrected uploader here, or forking
-ArduinoOTA to clamp its read to the sender's chunk size.  Neither is done; the
-verification below makes the bug harmless in practice.
+It then asks the board anyway.  After uploading it polls /api/v1/info until
+the commit changes to the one just built and uptime resets -- because an
+uploader saying "done" and a device running the new firmware are different
+claims, and only the second one is the one anybody wants.
 
 It also works out which network interface to send from, which on a machine
 with VMware, WSL and VirtualBox installed is five wrong answers and one right
@@ -40,9 +41,11 @@ one, and is the other half of why OTA on Windows is a coin toss.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import select
 import socket
 import subprocess
 import sys
@@ -140,21 +143,219 @@ def build(pio: str, env: str) -> Optional[str]:
     return path
 
 
-def upload(espota: str, python: str, ip: str, local: str, password: str,
-           firmware: str) -> tuple[bool, str]:
-    """Run espota once.  Its verdict is advisory; the caller checks the board."""
-    cmd = [python, espota, "-i", ip, "-I", local, "-p", "3232",
-           "-f", firmware]
-    if password:
-        cmd += ["-a", password]
-    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                       timeout=400)
-    out = r.stdout.decode("utf-8", "replace")
-    sent = out.count(".")
-    claimed = "Result: OK" in out or "Success" in out
-    return claimed, "%d blocks sent%s" % (
-        sent, ", espota reported success" if claimed
-        else ", espota reported failure")
+# --------------------------------------------------------------- the upload --
+#
+# The ESP OTA protocol, implemented here rather than shelled out to espota.py.
+#
+# The protocol itself is simple and fine.  We invite the board over UDP, it
+# connects back to us over TCP, we send the image, it writes it to flash and
+# answers "OK".  What espota gets wrong is the bookkeeping in the middle: it
+# performs exactly one recv() for every 1024-byte chunk it sends, while the
+# board acknowledges once per read of up to 1460 bytes.  Those counts match
+# only while the board keeps up.  As soon as the link stalls and data backs up
+# in the board's receive buffer, one read covers two chunks and answers once --
+# and espota spends the rest of the file an acknowledgement behind, ending on
+# a recv that never comes.
+#
+# The fix is to stop counting.  The acknowledgements are advisory: ArduinoOTA
+# sends them so a stalled sender has something to react to, and does not
+# require the sender to wait for them.  TCP already provides the backpressure
+# that matters -- when the board cannot keep up its receive window closes and
+# our send blocks, which is precisely the pacing espota was trying to impose
+# by hand.  So we stream the image and drain acknowledgements as they arrive,
+# never requiring a particular number of them, and read for "OK" at the end.
+#
+# Draining is not optional, though.  If we only ever wrote, the board's
+# acknowledgements would fill our receive buffer, its printf() would fail, and
+# ArduinoOTA treats a failed printf as a dead connection and gives up.  Hence
+# select() on both directions rather than a simple sendall().
+
+FLASH = 0
+AUTH = 200
+SEND_CHUNK = 1460  # what the board reads at once; keeps progress smooth
+
+
+class UploadError(Exception):
+    """The upload genuinely failed, as opposed to espota thinking it did."""
+
+
+def md5hex(s: str) -> str:
+    return hashlib.md5(s.encode("utf-8")).hexdigest()
+
+
+def invite(udp: socket.socket, addr: tuple, local_port: int, size: int,
+           digest: str, password: str, name: str) -> None:
+    """Tell the board an update is coming and where to collect it.
+
+    The board answers "OK", or "AUTH <nonce>" if it wants a password.  Note
+    that it connects back to whatever address our UDP packet came *from*, not
+    to anything named in the message -- which is why the caller binds this
+    socket rather than letting the routing table choose.  espota leaves that
+    to chance and only binds its listener, which is half the reason OTA is a
+    coin toss on a machine with several interfaces.
+    """
+    message = ("%d %d %d %s\n" % (FLASH, local_port, size, digest)).encode()
+    answer = ""
+    for _ in range(10):
+        udp.sendto(message, addr)
+        udp.settimeout(3.0)
+        try:
+            answer = udp.recv(37).decode("utf-8", "replace")
+            break
+        except socket.timeout:
+            continue
+    else:
+        raise UploadError("the board never answered the invitation")
+
+    if answer == "OK":
+        return
+    if not answer.startswith("AUTH"):
+        raise UploadError("unexpected answer to the invitation: %r" % answer)
+
+    # Digest challenge.  The cnonce is ours to choose -- the board only folds
+    # it into the hash -- but it is derived the way espota derives it so that
+    # anything watching sees a familiar exchange.
+    nonce = answer.split()[1]
+    cnonce = md5hex("%s%u%s%s" % (name, size, digest, addr[0]))
+    result = md5hex("%s:%s:%s" % (md5hex(password), nonce, cnonce))
+    udp.sendto(("%d %s %s\n" % (AUTH, cnonce, result)).encode(), addr)
+    udp.settimeout(10.0)
+    try:
+        answer = udp.recv(32).decode("utf-8", "replace")
+    except socket.timeout:
+        raise UploadError("no answer to the authentication")
+    if answer != "OK":
+        raise UploadError("authentication refused (%s) -- wrong OTA password?"
+                          % answer.strip())
+
+
+def stream(conn: socket.socket, blob: bytes, stall_s: float = 30.0) -> bytes:
+    """Send the image, draining acknowledgements as they turn up.
+
+    Returns whatever the board said along the way.  Raises only when the
+    transfer genuinely stops: the connection closing early, or nothing moving
+    in either direction for stall_s.
+    """
+    conn.setblocking(False)
+    total = len(blob)
+    sent = 0
+    heard = bytearray()
+    last_move = time.time()
+    shown = -1
+    tty = sys.stdout.isatty()
+
+    while sent < total:
+        readable, writable, _ = select.select([conn], [conn], [], 1.0)
+
+        if readable:
+            chunk = conn.recv(4096)
+            if not chunk:
+                raise UploadError(
+                    "the board hung up after %d of %d bytes" % (sent, total))
+            heard += chunk
+            last_move = time.time()
+
+        if writable:
+            try:
+                n = conn.send(blob[sent:sent + SEND_CHUNK])
+            except BlockingIOError:
+                # select() and send() can disagree about a socket that filled
+                # in between them.  Not an error; go round again.
+                n = 0
+            if n:
+                sent += n
+                last_move = time.time()
+                pct = sent * 100 // total
+                if tty and pct != shown:
+                    shown = pct
+                    print("\r   uploading %3d%%" % pct, end="", flush=True)
+                elif not tty and pct // 25 != shown // 25:
+                    shown = pct
+                    print("   uploading %d%%" % (pct // 25 * 25), flush=True)
+
+        if time.time() - last_move > stall_s:
+            raise UploadError("stalled for %.0fs with %d of %d bytes sent"
+                              % (stall_s, sent, total))
+
+    print(("\r" if tty else "") + "   uploaded %d bytes   " % total)
+    return bytes(heard)
+
+
+def await_ok(conn: socket.socket, heard: bytes, timeout: float = 60.0) -> None:
+    """Wait for the board to finish writing flash and say so.
+
+    Everything it has sent is acknowledgement counts -- bare decimal numbers,
+    no framing -- until the last word, which is "OK" once Update.end() has
+    verified the image.  Anything else in there is an error message.
+    """
+    tail = bytearray(heard)
+    conn.setblocking(True)
+    deadline = time.time() + timeout
+    while b"OK" not in tail and time.time() < deadline:
+        conn.settimeout(max(1.0, deadline - time.time()))
+        try:
+            chunk = conn.recv(256)
+        except socket.timeout:
+            break
+        if not chunk:
+            break
+        tail += chunk
+
+    if b"OK" in tail:
+        return
+
+    # Strip the acknowledgement digits; whatever is left is the complaint.
+    complaint = re.sub(rb"[0-9]+", b"", bytes(tail)).strip()
+    if complaint:
+        raise UploadError("the board rejected the image: %s"
+                          % complaint.decode("utf-8", "replace"))
+    raise UploadError("the board never confirmed the image "
+                      "(it may still have applied it -- the check below will "
+                      "say)")
+
+
+def push(ip: str, local: str, port: int, password: str,
+         firmware: str) -> tuple[bool, str]:
+    """Upload one image.  True means the board confirmed it."""
+    blob = open(firmware, "rb").read()
+    digest = hashlib.md5(blob).hexdigest()
+
+    # Listen before inviting, so there is no window in which the board
+    # connects back to a socket that does not exist yet.
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    conn = None
+    try:
+        srv.bind((local, 0))
+        srv.listen(1)
+        udp.bind((local, 0))
+
+        invite(udp, (ip, port), srv.getsockname()[1], len(blob), digest,
+               password, os.path.basename(firmware))
+
+        srv.settimeout(30.0)
+        try:
+            conn, _ = srv.accept()
+        except socket.timeout:
+            raise UploadError(
+                "the board accepted the invitation but never connected back "
+                "to %s -- a firewall, or the wrong interface" % local)
+
+        heard = stream(conn, blob)
+        await_ok(conn, heard)
+        return True, "the board confirmed the image"
+    except UploadError as e:
+        return False, str(e)
+    except OSError as e:
+        # A reset, a refused connection, an interface that went away.  The
+        # caller retries, so report it rather than ending the run.
+        return False, "the connection failed: %s" % e
+    finally:
+        if conn:
+            conn.close()
+        srv.close()
+        udp.close()
 
 
 def main(argv: list[str]) -> int:
@@ -200,6 +401,10 @@ def main(argv: list[str]) -> int:
         print("  note: the same commit, so a successful update looks identical")
         print("  from the outside.  Watching uptime instead.")
 
+    if args.no_build:
+        print("  note: --no-build, so the image on disk may predate the")
+        print("  working tree.  The check below compares the board against")
+        print("  what HEAD says now, and will disagree if it does.")
     firmware = None if args.no_build else build(args.pio, args.env)
     if not args.no_build and firmware is None:
         return 1
@@ -208,10 +413,6 @@ def main(argv: list[str]) -> int:
                                    os.path.join(ROOT, ".pio", "build"))
         firmware = os.path.join(build_dir, args.env, "firmware.bin")
 
-    espota = os.path.expanduser(
-        "~/.platformio/packages/framework-arduinoespressif32/tools/espota.py")
-    python = os.path.expanduser("~/.platformio/penv/Scripts/python.exe")
-
     uptime_before = 10 ** 9
     st = api(ip, "/state", token, user, api_pw)
     if st:
@@ -219,10 +420,7 @@ def main(argv: list[str]) -> int:
 
     for attempt in range(1, args.retries + 1):
         print("\nattempt %d of %d" % (attempt, args.retries))
-        try:
-            claimed, detail = upload(espota, python, ip, local, ota_pw, firmware)
-        except subprocess.TimeoutExpired:
-            claimed, detail = False, "espota did not finish"
+        claimed, detail = push(ip, local, 3232, ota_pw, firmware)
         print("   %s" % detail)
 
         # The only verdict that counts: has the board come back on the new

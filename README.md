@@ -747,53 +747,52 @@ panels at all.
 
 ### Over-the-air updates
 
-```sh
-OTA_PASSWORD=... pio run -e gray_rtc_ota -t upload
-```
-
-Use the `_ota` environment matching the build the board is *running* —
-`gray_rtc_ota` for a board built as `gray_rtc`. `gray_ota` extends `gray`, so
-using it on an RTC build would quietly flash away the RTC support and the
-authentication: an update that succeeds and leaves a different device behind,
-with no serial port to undo it.
-
-Progress shows on the panels. The eyes stop during the transfer — that is
-expected, not a hang.
-
-**Or use [`tools/ota.py`](tools/ota.py), which is more reliable:**
+Use [`tools/ota.py`](tools/ota.py):
 
 ```sh
 python tools/ota.py --host frank.local
+python tools/ota.py --host 192.168.1.50 --env gray_rtc_ota
 ```
 
-It builds, uploads, and then **asks the board** whether the update took,
-rather than believing the uploader — because on a weak link `espota.py`
-reports failure for updates that have already succeeded, most of the time.
+It builds, uploads, and then asks the board whether the update took. Progress
+shows on the panels too — the eyes stop during the transfer, which is expected
+and not a hang.
 
-The bug is in the acknowledgements, not the transfer. espota does exactly one
-`recv()` per 1024-byte chunk it sends; the board acks once per read of up to
-1460 bytes. While the board keeps up the two happen to match, but as soon as
-the link stalls and data backs up, one read swallows two chunks and answers
-once — and espota is an ack behind for the rest of the file, ending on a
-`recv` that never returns. It prints "Error Uploading" having delivered every
-byte. `tools/ota.py` compares the commit the board reports against the one
-just built, and retries only what genuinely failed.
+Pick the `--env` matching the build the board is *running*: `gray_rtc_ota` for
+a board built as `gray_rtc`. `gray_ota` extends `gray`, so using it on an RTC
+build would quietly flash away the RTC support and the authentication — an
+update that succeeds and leaves a different device behind, with no serial port
+to undo it.
 
-It also picks the right local interface by asking the routing table, which on
-a machine with VMware, WSL and VirtualBox installed is five wrong answers and
-one right one.
+**Why not `pio run -t upload`.** That calls `espota.py`, which on a weak link
+reports failure for updates that have already succeeded — three times in four,
+measured here. The bug is in the acknowledgements, not the transfer. espota
+performs exactly one `recv()` for every 1024-byte chunk it sends, while the
+board acknowledges once per read of up to *1460* bytes. While the board keeps
+up the counts coincidentally match; as soon as the link stalls and data backs
+up in the board's buffer, one read swallows two chunks and answers once. From
+there espota is an acknowledgement behind for the rest of the file, and ends
+blocking on a `recv` that never comes — printing "Error Uploading" having
+delivered every byte.
 
-Two things still bite on Windows if you use `pio` directly:
+`tools/ota.py` implements the protocol itself and does not count. It streams
+the image and drains acknowledgements as they arrive, letting TCP supply the
+backpressure espota was trying to impose by hand. It also binds the *UDP*
+socket to the chosen interface, not just the listening socket: the board
+connects back to whatever address the invitation came from, which is the other
+half of why OTA is a coin toss on a machine with VMware, WSL and VirtualBox
+each contributing an interface.
 
-- **`frank.local` will not resolve** unless Bonjour is installed; Windows has
-  no mDNS resolver of its own. The device advertises correctly. Use the
-  address: `--upload-port 192.168.1.50`.
-- **"No response from device"** means espota advertised the wrong local
-  interface for the board to call back to. Pin it with
-  `upload_flags = --host_ip=192.168.1.20`.
+Then it asks the board anyway, because an uploader saying "done" and a device
+running the new firmware are different claims. It polls `/api/v1/info` until
+the commit matches the one just built and uptime has reset, and retries only
+what genuinely failed.
 
-macOS and Linux need neither workaround, and `tools/ota.py` needs neither
-anywhere.
+One thing still bites on Windows: **`frank.local` will not resolve** unless
+Bonjour is installed, since Windows has no mDNS resolver of its own. The
+device advertises correctly — pass the address instead.
+
+macOS and Linux resolve it without help.
 
 A transfer is about 1350 round trips, so it is exposed to a weak link in a way
 a single request is not, and this link drops about 6% of its packets — see
@@ -866,7 +865,8 @@ slow request is a stalled render loop.
 
 ## The tools
 
-[`tools/ota.py`](tools/ota.py) updates the board over WiFi and verifies it,
+[`tools/ota.py`](tools/ota.py) uploads firmware over WiFi and verifies it
+against the running device,
 [`tools/gen_eyes.py`](tools/gen_eyes.py) converts the artwork,
 [`tools/gen_page.py`](tools/gen_page.py) compresses the control page into the
 firmware, and [`tools/git_rev.py`](tools/git_rev.py) stamps the build with its
