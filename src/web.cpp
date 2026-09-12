@@ -160,6 +160,7 @@ void webBegin(void) {
 void webPoll(void) {
   if (netState != NET_UP)
     return;
+
   // One call is enough, and draining in a loop was measured to gain nothing.
   // handleClient() falls straight through from accepting a connection into
   // reading, parsing and answering it, so a request never needs a second

@@ -779,6 +779,16 @@ python tools/test_api.py --host 192.168.1.50 --token ...
 python tools/test_api.py --host frank.local --user frank --password ...
 ```
 
+[`tools/soak.py`](tools/soak.py) is for comparing two builds over hours. It
+flashes and measures both in every round, reversing the order each time, so
+both see the same radio — measuring one build and then the other compares
+their weather, which was enough to invert a conclusion twice before this
+existed. See [docs/HTTP_LATENCY.md](docs/HTTP_LATENCY.md).
+
+```sh
+python tools/soak.py --hours 3 --a "-DCLOCK=1" --b "-DCLOCK=0"
+```
+
 It reports latency as percentiles and a histogram rather than an average,
 because on this board the tail is the interesting part — a mean of 60 ms hides
 a request that took eight seconds. `--latency N` skips the tests and times N

@@ -103,6 +103,35 @@ bool stateClockSetTime(uint8_t h, uint8_t m, uint8_t s);
 // which: 0 hour, 1 minute, 2 second, -1 all three.  rgb is 0xRRGGBB.
 bool stateClockSetColor(int8_t which, uint32_t rgb);
 
+// ------------------------------------------------------- when they happen --
+//
+// An operation can arrive in the middle of a frame.  The console is polled
+// from frame(), and so is the web server, so both can land between any two
+// things the renderer does -- including halfway through drawing an eye.
+//
+// So: anything the renderer reads *while* drawing is not written directly.
+// It is queued, and applied between frames by statePollPending().  The eye
+// design is the case that matters -- drawEye() dereferences five artwork
+// pointers per pixel, and swapping them underneath it tears a frame -- and
+// the panel swap already worked this way.
+//
+// The SPI bus follows the same rule for the same reason.  Operations that
+// paint, like the address cards, queue a request and let the renderer draw
+// it, rather than pushing a canvas from under its feet.
+//
+// The lock is belt to that brace.  It costs nothing at this scale, it makes
+// the operations safe to call from somewhere other than the render loop
+// should that ever happen, and it is the memory barrier that makes the
+// queueing above mean what it says.
+
+// Apply anything queued.  Called from the render loop between frames, and
+// only from there.
+void statePollPending(void);
+
+// Held for the duration of an operation.
+void stateLock(void);
+void stateUnlock(void);
+
 // ---------------------------------------------------------------- settings --
 
 // Mark the live settings as differing from the stored ones, for a change

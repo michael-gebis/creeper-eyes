@@ -375,6 +375,9 @@ static void forgetSettings(void) {
 // Repoints the five artwork pointers at another design.  Call between
 // frames: drawEye() reads all five as it scans, so changing them underneath
 // it would tear a frame.  Out-of-range falls back to the first design.
+// Swaps five pointers that drawEye() dereferences per pixel, so this must
+// run between frames.  Reached through pendingEyeDesign, never directly from
+// an operation.
 static void setEyeDesign(uint8_t idx) {
   if (idx >= NUM_EYE_DESIGNS)
     idx = 0;
@@ -1162,15 +1165,62 @@ static void pollStartle(void) {
 }
 
 
+// CROSSING THREADS ----------------------------------------------------------
+// See the note in state.h.  A recursive mutex because a few operations call
+// each other -- stateSetDilation cancels a startle, which is itself an
+// operation -- and a plain one would deadlock on the second take.
+
+static SemaphoreHandle_t stateMutex = NULL;
+
+void stateLock(void) {
+  // Created on first use rather than in setup(), so an operation arriving
+  // before setup() finishes cannot find a null handle.  Single-threaded at
+  // that point, so the check is not itself a race.
+  if (!stateMutex)
+    stateMutex = xSemaphoreCreateRecursiveMutex();
+  xSemaphoreTakeRecursive(stateMutex, portMAX_DELAY);
+}
+
+void stateUnlock(void) { xSemaphoreGiveRecursive(stateMutex); }
+
+// A scope guard, so an early return cannot leave the lock held.
+namespace {
+struct StateGuard {
+  StateGuard() { stateLock(); }
+  ~StateGuard() { stateUnlock(); }
+};
+} // namespace
+#define LOCKED StateGuard _guard
+
+// Queued for the renderer.  -1 means nothing pending.
+static int16_t pendingEyeDesign = -1;
+
+// Applied between frames, from the render loop and nowhere else.  Short
+// enough that holding the lock across it costs the renderer nothing, and
+// taking it once for the whole batch is cheaper than once per item.
+void statePollPending(void) {
+  if (pendingEyeDesign < 0)
+    return; // the common case, and it costs one comparison
+  LOCKED;
+  if (pendingEyeDesign >= 0) { // re-checked now the lock is held
+    setEyeDesign((uint8_t)pendingEyeDesign);
+    pendingEyeDesign = -1;
+  }
+}
+
 // DEVICE OPERATIONS ---------------------------------------------------------
 // The implementation of state.h.  Thin by design: each of these does one
 // thing to the device and reports whether it worked, leaving every decision
 // about wording, status codes and formatting to the caller.
 
 void stateGet(DeviceState &o) {
-  o.eyeIndex = eyeDesign;
+  LOCKED;
+  // The requested design, not the one currently on screen: they differ for at
+  // most a frame, and a client that just set one should be told what it set.
+  uint8_t shown = pendingEyeDesign >= 0 ? (uint8_t)pendingEyeDesign : eyeDesign;
+  o.eyeIndex = shown;
   o.eyeCount = NUM_EYE_DESIGNS;
-  o.eyeName = eyeDesigns[eyeDesign].name;
+  o.eyeName = eyeDesigns[shown].name;
 
   o.gazeManual = gazeCmdActive;
   o.gazeX = gazeCmdX;
@@ -1210,26 +1260,38 @@ const char *stateEyeName(uint8_t i) {
   return i < NUM_EYE_DESIGNS ? eyeDesigns[i].name : NULL;
 }
 
+// Queued rather than applied: see the note in state.h.  eyeDesign itself is
+// updated only when the renderer picks the request up, so a caller reading it
+// back immediately sees the old value for at most one frame -- which is why
+// the API re-reads through stateGet after setting, and gets the pending value
+// from there.
 bool stateSetEyeIndex(uint8_t i) {
+  LOCKED;
   if (i >= NUM_EYE_DESIGNS)
     return false;
-  setEyeDesign(i);
+  pendingEyeDesign = (int16_t)i;
   return true;
 }
 
 bool stateSetEyeName(const char *name) {
+  LOCKED;
   uint8_t i = eyeDesignByName(name);
   if (i >= NUM_EYE_DESIGNS)
     return false;
-  setEyeDesign(i);
+  pendingEyeDesign = (int16_t)i;
   return true;
 }
 
 void stateNextEye(void) {
-  setEyeDesign((uint8_t)((eyeDesign + 1) % NUM_EYE_DESIGNS));
+  LOCKED;
+  // From whichever is the latest intention, so two presses in one frame move
+  // two designs rather than fighting over one.
+  uint8_t from = pendingEyeDesign >= 0 ? (uint8_t)pendingEyeDesign : eyeDesign;
+  pendingEyeDesign = (int16_t)((from + 1) % NUM_EYE_DESIGNS);
 }
 
 bool stateSetGaze(int16_t x, int16_t y) {
+  LOCKED;
   if (x < 0 || x > 1023 || y < 0 || y > 1023)
     return false;
   gazeCmdX = x;
@@ -1239,9 +1301,13 @@ bool stateSetGaze(int16_t x, int16_t y) {
   return true;
 }
 
-void stateGazeAuto(void) { gazeCmdActive = false; }
+void stateGazeAuto(void) {
+  LOCKED;
+  gazeCmdActive = false;
+}
 
 bool stateSetDilation(uint8_t pct) {
+  LOCKED;
   if (pct > 100)
     return false;
 #if CLOCK
@@ -1252,15 +1318,20 @@ bool stateSetDilation(uint8_t pct) {
 }
 
 void stateDilationAuto(void) {
+  LOCKED;
 #if CLOCK
   startleCancel(); // else it restores a commanded width a moment later
 #endif
   dilateCmdActive = false;
 }
 
-void stateSetPupil(bool on) { pupilOn = on; }
+void stateSetPupil(bool on) {
+  LOCKED;
+  pupilOn = on;
+}
 
 void stateSetSwap(bool sw) {
+  LOCKED;
   if (sw == eyesSwapped)
     return;
   eyesSwapped = sw;
@@ -1269,24 +1340,28 @@ void stateSetSwap(bool sw) {
 }
 
 void stateBlink(void) {
+  LOCKED;
 #if AUTOBLINK
   timeToNextBlink = 0; // due on the next frame
 #endif
 }
 
 void stateStartle(void) {
+  LOCKED;
 #if CLOCK
   startleBegin();
 #endif
 }
 
 void stateSplash(void) {
+  LOCKED;
 #if STARTUP_SPLASH
   splashBegin(); // returns at once; the render loop counts it down
 #endif
 }
 
 void stateClockSetOn(bool on) {
+  LOCKED;
 #if CLOCK
   clockOn = on;
   settingsDirty = true;
@@ -1294,6 +1369,7 @@ void stateClockSetOn(bool on) {
 }
 
 void stateClockSetSeconds(bool on) {
+  LOCKED;
 #if CLOCK
   clockSeconds = on;
   settingsDirty = true;
@@ -1301,6 +1377,7 @@ void stateClockSetSeconds(bool on) {
 }
 
 bool stateClockSetRate(uint16_t rate) {
+  LOCKED;
 #if CLOCK
   if (rate < 1 || rate > 3600)
     return false;
@@ -1315,6 +1392,7 @@ bool stateClockSetRate(uint16_t rate) {
 }
 
 bool stateClockSetTime(uint8_t h, uint8_t m, uint8_t sec) {
+  LOCKED;
 #if CLOCK
   if (h > 23 || m > 59 || sec > 59)
     return false;
@@ -1353,6 +1431,7 @@ bool stateClockSetTime(uint8_t h, uint8_t m, uint8_t sec) {
 }
 
 bool stateClockSetColor(int8_t which, uint32_t rgb) {
+  LOCKED;
 #if CLOCK
   if (which >= 3)
     return false;
@@ -1369,10 +1448,20 @@ bool stateClockSetColor(int8_t which, uint32_t rgb) {
 #endif
 }
 
-void stateMarkDirty(void) { settingsDirty = true; }
+void stateMarkDirty(void) {
+  LOCKED;
+  settingsDirty = true;
+}
 
-void stateSave(void) { saveSettings(); }
-void stateForget(void) { forgetSettings(); }
+void stateSave(void) {
+  LOCKED;
+  saveSettings();
+}
+
+void stateForget(void) {
+  LOCKED;
+  forgetSettings();
+}
 
 #endif // CONTROLLABLE
 
@@ -1903,6 +1992,7 @@ void frame(            // Process motion for a single frame of left or right eye
 #endif
 
 #if NETWORK
+  netShowPoll(); // address cards, if something asked for them
   netPollLink(); // a network that turned up after boot
   netPollTime(); // cheap no-op once the first sync has landed
   webPoll();
@@ -1915,6 +2005,8 @@ void frame(            // Process motion for a single frame of left or right eye
 #endif
 
 #if CONTROLLABLE
+  statePollPending(); // eye design and anything else queued by another task
+
   if (swapPending) { // between frames, never mid-transaction
     swapPending = false;
     applySwap();
