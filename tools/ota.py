@@ -388,7 +388,17 @@ def main(argv: list[str]) -> int:
     local = local_address_for(ip)
     print("%s is %s; sending from %s" % (args.host, ip, local))
 
+    # Give a board that is still coming up a chance.  Rejoining WiFi after a
+    # reboot takes twelve to fifteen seconds, which is exactly the window you
+    # land in when updating twice in a row.
     before = api(ip, "/info", token, user, api_pw)
+    if before is None:
+        print("waiting for the board...", end="", flush=True)
+        deadline = time.time() + 60
+        while before is None and time.time() < deadline:
+            time.sleep(3)
+            before = api(ip, "/info", token, user, api_pw, timeout=4)
+        print(" here" if before else " no")
     if before is None:
         print("the board is not answering /api/v1/info -- is it up, and are "
               "the credentials right?")
@@ -413,10 +423,26 @@ def main(argv: list[str]) -> int:
                                    os.path.join(ROOT, ".pio", "build"))
         firmware = os.path.join(build_dir, args.env, "firmware.bin")
 
+    # How to tell the board rebooted.
+    #
+    # Comparing its uptime against the uptime before the upload is not enough,
+    # and fails in the one case worth testing: upload twice in a row and the
+    # "before" reading is itself a board that rebooted a moment ago, so the
+    # new uptime has to beat about fifteen seconds and whether it does is
+    # luck.  What identifies a reboot is not a small uptime but an uptime
+    # smaller than the board would have had if it had stayed up -- which is
+    # the earlier reading plus however long we have taken since.
     uptime_before = 10 ** 9
+    measured_at = time.time()
     st = api(ip, "/state", token, user, api_pw)
     if st:
         uptime_before = st.get("system", {}).get("uptimeSeconds", 10 ** 9)
+
+    def rebooted(up: float) -> bool:
+        if uptime_before >= 10 ** 9:
+            return True  # never got a reading, so do not hold it against it
+        alive = uptime_before + (time.time() - measured_at)
+        return up < alive - 15
 
     for attempt in range(1, args.retries + 1):
         print("\nattempt %d of %d" % (attempt, args.retries))
@@ -434,7 +460,12 @@ def main(argv: list[str]) -> int:
                 continue
             state = api(ip, "/state", token, user, api_pw, timeout=4)
             up = (state or {}).get("system", {}).get("uptimeSeconds", 10 ** 9)
-            if info.get("commit") == want and up < uptime_before:
+            if info.get("commit") != want:
+                continue
+            # A commit that changed is proof on its own.  Only when the new
+            # image carries the same commit as the old one -- reflashing the
+            # same build -- does the reboot have to carry the argument.
+            if before.get("commit") != want or rebooted(up):
                 print(" up %ss on %s" % (up, info.get("commit")))
                 print("\nupdated.")
                 return 0
