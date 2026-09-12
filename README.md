@@ -830,6 +830,20 @@ requests per endpoint instead, which is how you tell whether a change helped:
 python tools/test_api.py --host frank.local --latency 20
 ```
 
+`--decompose N` goes one level further and splits each request into its
+handshake, its wait, and its transfer, using a raw socket because `urllib`
+returns a single number for the whole exchange:
+
+```sh
+python tools/test_api.py --host frank.local --decompose 200
+```
+
+This is what finally explained where the time goes, and the answer was not the
+firmware: on a link losing 6% of its packets, the TCP handshake alone was a
+third of a typical request, and every outlier was a retransmission timer. If
+the board feels slow, run this before changing any code — see
+[docs/HTTP_LATENCY.md](docs/HTTP_LATENCY.md).
+
 Around 117 checks across every endpoint: round trips, range limits, the 400 /
 404 / 405 boundaries, malformed bodies, CORS preflight, credentials, and a
 burst of gaze updates of the kind dragging the aim pad produces — which

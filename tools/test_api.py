@@ -28,6 +28,8 @@ Exit status is 0 if everything passed or was skipped, 1 otherwise.
 from __future__ import annotations
 
 import argparse
+import re
+import socket
 import gzip
 import json
 import sys
@@ -805,6 +807,238 @@ def report_latency(res: Result) -> None:
             print("    %8.0f ms  %s" % (ms, what))
 
 
+def linear_histogram(values: list[float], hi: float, buckets: int = 20,
+                     width: int = 40) -> None:
+    """Even buckets, unlike histogram() above -- and for the opposite reason.
+
+    The log buckets exist to show how far a tail reaches.  This one exists to
+    show a *shape*: if a wait is nothing but "time until the next poll", the
+    waits are spread evenly between zero and one poll interval, and evenness
+    is only visible with even buckets.
+    """
+    if not values:
+        return
+    step = hi / buckets
+    counts = [0] * (buckets + 1)  # the last bucket collects everything over hi
+    for v in values:
+        counts[min(buckets, int(v / step))] += 1
+    top = max(counts) or 1
+    for i, n in enumerate(counts):
+        if i == buckets:
+            label = " >%5.0f" % hi
+        else:
+            label = "%3.0f-%3.0f" % (i * step, (i + 1) * step)
+        bar = "#" * int(round(n * width / top)) if n else ""
+        print("    %9s ms  %-*s %4d" % (label, width, bar, n))
+
+
+def digest_header(host: str, path: str, user: str, password: str,
+                  method: str = "GET") -> Optional[str]:
+    """An Authorization header for raw-socket requests.
+
+    The challenge is collected once and its nonce reused.  That is legal, and
+    this WebServer permits it: it compares the nonce against the one it last
+    issued and folds the client's counter into the hash without checking that
+    the counter ever advances.  Reusing it keeps the measurement to one round
+    trip per request, which is the whole point of measuring.
+
+    The catch is "the one it last issued": every 401 mints a fresh nonce, so
+    any unauthenticated request in between silently invalidates the header
+    this returns -- and because the failure is itself a 401, it never
+    recovers.  Build the header last, immediately before it is used.
+    """
+    import hashlib
+    import urllib.request
+
+    try:
+        urllib.request.urlopen("http://%s%s" % (host, path), timeout=6)
+        return None  # no challenge, so the board is not asking for one
+    except urllib.error.HTTPError as e:
+        if e.code != 401:
+            return None
+        challenge = e.headers.get("WWW-Authenticate", "")
+    except Exception:
+        return None
+
+    def param(name: str) -> str:
+        m = re.search(r'%s="([^"]*)"' % name, challenge)
+        return m.group(1) if m else ""
+
+    realm, nonce, opaque = param("realm"), param("nonce"), param("opaque")
+    if not (realm and nonce and opaque):
+        return None
+
+    def md5(s: str) -> str:
+        return hashlib.md5(s.encode("utf-8")).hexdigest()
+
+    cnonce, nc = "0a4f113b", "00000001"
+    ha1 = md5("%s:%s:%s" % (user, realm, password))
+    ha2 = md5("%s:%s" % (method, path))
+    resp = md5(":".join([ha1, nonce, nc, cnonce, "auth", ha2]))
+    return ('Digest username="%s", realm="%s", nonce="%s", uri="%s", '
+            'qop=auth, nc=%s, cnonce="%s", response="%s", opaque="%s"'
+            % (user, realm, nonce, path, nc, cnonce, resp, opaque))
+
+
+def decompose(res: Result, api: Api, n: int, host: str, path: str,
+              user: Optional[str], password: Optional[str],
+              token: Optional[str]) -> int:
+    """Split a request into handshake, wait, and transfer.
+
+    Written to settle an argument the ordinary timings could not.  A trivial
+    request takes about 50 ms, of which roughly 35 had been attributed to
+    waiting for the render loop to call handleClient() -- but the polls are
+    one frame apart, so an evenly-spread wait should average half a frame,
+    about 16 ms.  Twice the expected figure wants an explanation, and the two
+    candidates are distinguishable by shape:
+
+      one poll     the wait is spread evenly from 0 to one frame
+      two polls    evenly from 0 to two frames, and the mean doubles
+      the network  not spread at all, but piled up away from zero, and
+                   the handshake -- measured here separately -- is large
+
+    urllib cannot see the seam, because it hands back one number for the
+    whole exchange.  A raw socket can: connect() is the handshake alone, and
+    the first byte back cannot arrive until the board has been round the
+    render loop.
+    """
+    ip = socket.gethostbyname(host.split(":")[0])
+
+    st = api.json("/state")
+    fps = 0
+    if st:
+        fps = (st.get("system") or {}).get("fps") or 0
+    frame_ms = 1000.0 / fps if fps else 31.0
+    print("measuring %d requests to %s" % (n, path))
+    print("the board reports %s fps, so one frame is %.1f ms"
+          % (fps or "no", frame_ms))
+    if not fps:
+        print("  (no frame rate reported -- assuming %.0f ms)" % frame_ms)
+
+    # Last thing before the loop: a challenge is only good until the next
+    # one is issued, and everything above could have provoked one.
+    auth: Optional[str] = None
+    if token:
+        auth = "Bearer " + token
+    elif user and password:
+        auth = digest_header(host, path, user, password)
+
+    req = ("GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n"
+           % (path, host))
+    if auth:
+        req += "Authorization: %s\r\n" % auth
+    req += "\r\n"
+    blob = req.encode("ascii")
+
+    connects: list[float] = []
+    waits: list[float] = []
+    transfers: list[float] = []
+    codes: dict[int, int] = {}
+
+    for i in range(n):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(10.0)
+        try:
+            t0 = time.perf_counter()
+            s.connect((ip, 80))
+            t1 = time.perf_counter()
+            s.sendall(blob)
+            first = s.recv(4096)
+            t2 = time.perf_counter()
+            if not first:
+                continue
+            body = first
+            while True:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                body += chunk
+            t3 = time.perf_counter()
+        except Exception as e:
+            print("  request %d failed: %s" % (i + 1, e))
+            continue
+        finally:
+            s.close()
+
+        try:
+            code = int(body.split(b" ", 2)[1])
+        except Exception:
+            code = 0
+        codes[code] = codes.get(code, 0) + 1
+        connects.append((t1 - t0) * 1000.0)
+        waits.append((t2 - t1) * 1000.0)
+        transfers.append((t3 - t2) * 1000.0)
+
+    if not waits:
+        print("no request completed")
+        return 1
+
+    if list(codes) != [200]:
+        print("responses: %s" % codes)
+        if 401 in codes:
+            print("  401 -- pass --user and --password, or measure an "
+                  "AUTH_HTTP=0 build")
+            return 1
+
+    def row(name: str, vals: list[float]) -> None:
+        print("  %-22s %7.1f %8.1f %8.1f %8.1f"
+              % (name, percentile(vals, 50), percentile(vals, 90),
+                 percentile(vals, 99), max(vals)))
+
+    totals = [c + w + t for c, w, t in zip(connects, waits, transfers)]
+    print()
+    print("  %d requests            median      p90      p99      max"
+          % len(waits))
+    row("handshake", connects)
+    row("wait + serve", waits)
+    row("rest of transfer", transfers)
+    row("total", totals)
+
+    mean = sum(waits) / len(waits)
+    print()
+    print("  wait + serve, against one frame of %.1f ms" % frame_ms)
+    linear_histogram(waits, frame_ms * 2)
+    print()
+    print("  mean wait %.1f ms; half a frame is %.1f, a whole frame %.1f"
+          % (mean, frame_ms / 2, frame_ms))
+
+    # The shape is the answer.  Evenly spread up to one frame and the polling
+    # interval explains everything; spread to two and something costs an
+    # extra trip round the loop; piled up above the frame and the delay is
+    # not the render loop at all.
+    over = sum(1 for w in waits if w > frame_ms * 1.1)
+    if over > len(waits) * 0.6:
+        verdict = ("most waits exceed a whole frame, so the render loop is "
+                   "not what they are waiting for")
+    elif over > len(waits) * 0.2:
+        verdict = ("a fifth or more spill past one frame -- some requests "
+                   "are taking a second trip round the loop")
+    else:
+        verdict = ("the waits fit inside one frame, so the polling interval "
+                   "accounts for them")
+    print("  %s" % verdict)
+    print()
+    print("  handshake median %.1f ms is pure network: lwIP answers a SYN "
+          % percentile(connects, 50))
+    print("  from its own task, so the render loop cannot delay it.  Any "
+          "part of")
+    print("  the total above wait + handshake is the reply itself going out.")
+
+    # A slow handshake is the one delay the firmware cannot be blamed for:
+    # the connection is not the application's yet.  So if the outliers show up
+    # here too, they are the link, and the round numbers say so -- a lost
+    # segment waits out a retransmission timer, and those come in steps.
+    slow = sorted((c for c in connects if c > 100), reverse=True)
+    if slow:
+        print()
+        print("  %d handshakes over 100 ms, before the board's own code saw "
+              "the connection:" % len(slow))
+        print("    " + ", ".join("%.0f" % c for c in slow[:12]))
+        print("  Round figures near 250, 500 or 1000 ms are retransmission")
+        print("  timers, which means lost packets rather than a slow board.")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -819,6 +1053,10 @@ def main(argv: list[str]) -> int:
                     help="also test the wifi endpoints (read-only parts)")
     ap.add_argument("--latency", type=int, metavar="N",
                     help="skip the tests; time N requests per endpoint instead")
+    ap.add_argument("--decompose", type=int, metavar="N",
+                    help="split N requests into handshake, wait and transfer")
+    ap.add_argument("--path", default="/api/v1/info",
+                    help="what --decompose asks for (use a small reply)")
     ap.add_argument("--timeout", type=float, default=10.0)
     args = ap.parse_args(argv[1:])
 
@@ -828,6 +1066,10 @@ def main(argv: list[str]) -> int:
 
     if args.latency:
         return measure(res, api, args.latency)
+
+    if args.decompose:
+        return decompose(res, api, args.decompose, args.host, args.path,
+                         args.user, args.password, args.token)
 
     print("testing http://%s/api/v1" % args.host)
     started = time.time()

@@ -296,14 +296,107 @@ each other, the difference between them is not trustworthy -- and a sample of
 "zero stalls in 180 samples" as evidence; at the rate the soak eventually
 established, zero in 180 happens about two times in five by chance.
 
-## Open questions
+## The open questions, answered
 
-- The measured wait is ~35 ms against a 32 ms frame. If `webPoll()` were
-  evenly spaced the average should be ~16 ms. Where the poll sits relative to
-  the SPI push has not been established, and moving the call might be a
-  cheap improvement on its own.
-- The p90 outliers that remain (`GET /rtc` occasionally at 663 ms) have not
-  been explained. They look like retransmissions but nothing has confirmed it.
-- `Connection: close` on every response means a TCP handshake per request,
-  worth roughly 10 ms of the total. Keep-alive is not well supported by this
-  `WebServer`, but the cost has not been measured against the risk.
+Three questions stood at the end of the work above. A raw-socket
+decomposition -- `tools/test_api.py --decompose N` -- and a plain ping
+answered all three, and in the end they had the same answer.
+
+### Where `webPoll()` sits in the frame
+
+Settled by reading rather than measuring. `webPoll()` is near the top of
+`frame()` and `drawEye()`, the SPI push, is the last statement in it. The
+polls are one frame apart by construction, and there was never anything to
+move.
+
+Which leaves the number that prompted the question: a ~35 ms wait against a
+32 ms frame, where even spacing should average half of one. That was an
+artefact of charging the whole of a request to the board. `urllib` returns one
+figure for the exchange; a raw socket can see the seam, because `connect()` is
+the handshake by itself and the first byte back cannot arrive until the board
+has been round the render loop. 200 requests for `/api/v1/info`, at 34 fps and
+-61 dBm:
+
+```
+                        median      p90      p99      max
+handshake                 25.6     53.6    290.0    558.5
+wait + serve              37.8     73.0   2308.6   2442.1
+rest of transfer           7.7     42.3   1898.5   2370.2
+total                     79.6    150.5   2344.6   2996.6
+```
+
+A handshake is a round trip through lwIP's own task, before the sketch has any
+say in it -- and its median is 25 ms. So roughly a third of a request is spent
+before the render loop is even involved.
+
+The shape of the wait says the rest. There is a hard floor at 15 ms -- not one
+wait in 200 came in under it -- and then a flat spread out to about 50 ms.
+That is a fixed network leg with one frame of polling on top of it, which is
+exactly what the code predicts and nothing more. The poll contributes its half
+frame, about 15 ms. It was never the 35.
+
+### The remaining outliers
+
+Confirmed: lost packets. The handshake phase is what proves it, because a slow
+`connect()` finishes before the application owns the connection, so the
+firmware cannot be the cause. Of 200 requests, six handshakes passed 100 ms:
+
+```
+2987, 1064, 242, 143, 111, 110 ms
+```
+
+The first three are the shape of exponential backoff -- about 250 ms, then 1 s,
+then 1 s + 2 s -- which is what waiting out a retransmission timer looks like.
+
+A ping settles it without any HTTP at all. 100 packets to the board: **6 lost**,
+minimum 3 ms, average 27 ms, maximum 1056 ms. The link is quick when a packet
+gets through, and the average is inflated entirely by the ones that don't.
+
+The loss is not on the measuring side. This machine is on Ethernet, and loses
+0 of 60 packets to the gateway at under 1 ms average. (Another device on the
+same access point lost 37 of 60, but a sleeping phone looks like that too, so
+take it as nothing more than a hint that the air is busy.)
+
+That also retires the `GET /rtc` at 663 ms from the earlier table. It was not
+the I2C read.
+
+### Keep-alive
+
+Worth more than the 10 ms guessed above, for a reason the guess missed. The
+handshake is 25 ms of median, not 10 -- but the larger cost is that closing
+every connection makes each request carry more packets, on a link that drops
+6% of them.
+
+A request with `Connection: close` is about seven packets: SYN, SYN-ACK, the
+ACK carrying the request, the reply, and a teardown. At 6% loss, the chance
+that a request gets through without waiting on a timer is 0.94^7, about 65%.
+On an established connection it is three packets and 0.94^3, about 83%. So
+keep-alive would not only save the handshake, it would roughly halve how often
+a request hits a retransmission at all. That matches the tail we see: a fifth
+of requests running well past a frame.
+
+It is still not a cheap change. This `WebServer` hardcodes the header --
+`sendHeader("Connection", "close")` in `_prepareHeader` -- and the code that
+would hold a connection open is commented out in the library with a reference
+to a Chrome bug. Reaching it means vendoring a core library into `lib/` and
+maintaining a fork of it. For 25 ms on a prop, that is the wrong trade today;
+it is written down here so the next person does not have to re-derive the
+arithmetic before deciding.
+
+### What actually governs responsiveness
+
+In order, which the numbers now put beyond argument:
+
+1. **The radio link.** 6% packet loss at -61 dBm, with a 3 ms floor and a
+   1056 ms tail. Every outlier on this page traces back to it. Moving the
+   head, or getting its antenna out of the foam, is worth more than any change
+   to this firmware -- and costs nothing.
+2. **Keep-alive**, for the handshake and the packet count both, at the price
+   of forking a library.
+3. **The polling interval**, worth about 15 ms on average and bounded below by
+   the frame rate. It is the smallest of the three, and the only one that had
+   been getting the attention.
+
+Which is the fourth time on this page that the thing being optimised turned
+out not to be the thing costing the time. The pattern is consistent enough now
+to be the general lesson: measure the phase, not the total.
