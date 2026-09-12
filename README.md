@@ -172,6 +172,7 @@ a source file — which is how the `gray` environment sets `USE_SSD1327`.
 | `RTC_SDA_PIN` / `RTC_SCL_PIN` | `21` / `22` | I²C pins for it. Both otherwise unused. |
 | `RTC_ADDR` | `0x68` | The DS3231's fixed address. |
 | `FAVICON` | `FAVICON_FRANK` | Tab icon. `FAVICON_EYES` is a generic alternative for a build that is not going into a Frankenstein. |
+| `OTA_TIMEOUT_MS` | `10000` | How long the board waits for the next block of an over-the-air update. The core's 1000 is shorter than the sender's patience. |
 | `AUTH_HTTP` | `0` | Digest authentication on the page, the API and `/cmd`. |
 | `AUTH_TOKEN` | `0` | A bearer token as an alternative credential, for scripts. |
 | `AUTH_HOST_CHECK` | `0` | Refuse requests whose `Host` is not this device — the DNS-rebinding defence. |
@@ -747,23 +748,54 @@ panels at all.
 ### Over-the-air updates
 
 ```sh
-pio run -e gray_ota -t upload
+OTA_PASSWORD=... pio run -e gray_rtc_ota -t upload
 ```
+
+Use the `_ota` environment matching the build the board is *running* —
+`gray_rtc_ota` for a board built as `gray_rtc`. `gray_ota` extends `gray`, so
+using it on an RTC build would quietly flash away the RTC support and the
+authentication: an update that succeeds and leaves a different device behind,
+with no serial port to undo it.
 
 Progress shows on the panels. The eyes stop during the transfer — that is
 expected, not a hang.
 
-Two things bite on Windows:
+**Or use [`tools/ota.py`](tools/ota.py), which is more reliable:**
+
+```sh
+python tools/ota.py --host frank.local
+```
+
+It builds, uploads, and then **asks the board** whether the update took,
+rather than believing the uploader. That matters because `espota.py` decides
+from its own socket, and its socket is least reliable at exactly the moment
+the update succeeds: the board answers "OK", closes the connection and
+reboots, and espota's trailing read can catch the reset instead of the answer.
+Measured on one afternoon, three failures in four were reported for updates
+that were already running on the device. `tools/ota.py` compares the commit
+the board reports against the one just built, and retries if it really did not
+take.
+
+It also picks the right local interface by asking the routing table, which on
+a machine with VMware, WSL and VirtualBox installed is five wrong answers and
+one right one.
+
+Two things still bite on Windows if you use `pio` directly:
 
 - **`frank.local` will not resolve** unless Bonjour is installed; Windows has
   no mDNS resolver of its own. The device advertises correctly. Use the
-  address instead: `--upload-port 192.168.1.50`.
+  address: `--upload-port 192.168.1.50`.
 - **"No response from device"** means espota advertised the wrong local
-  interface for the board to call back to, which happens when VMware, WSL or
-  VirtualBox have each added one. Pin it with
+  interface for the board to call back to. Pin it with
   `upload_flags = --host_ip=192.168.1.20`.
 
-macOS and Linux need neither workaround.
+macOS and Linux need neither workaround, and `tools/ota.py` needs neither
+anywhere.
+
+A transfer is about 1350 round trips, so it is exposed to a weak link in a way
+a single request is not. At −64 dBm roughly one attempt in four failed
+genuinely, mid-transfer; `tools/ota.py` retries those. If it keeps failing,
+check `GET /api/v1/net` for the signal before suspecting the firmware.
 
 ## Testing it
 
@@ -815,6 +847,7 @@ slow request is a stalled render loop.
 
 ## The tools
 
+[`tools/ota.py`](tools/ota.py) updates the board over WiFi and verifies it,
 [`tools/gen_eyes.py`](tools/gen_eyes.py) converts the artwork,
 [`tools/gen_page.py`](tools/gen_page.py) compresses the control page into the
 firmware, and [`tools/git_rev.py`](tools/git_rev.py) stamps the build with its

@@ -257,6 +257,39 @@
 #define FIRMWARE_COMMIT GIT_REV
 #endif
 
+// How long the board waits for the next block of an over-the-air update
+// before giving up.
+//
+// The core defaults this to one second, which is shorter than the patience of
+// the thing sending: espota.py allows ten seconds per block.  So on a link
+// with any loss the board aborts first -- a single TCP retransmit is enough --
+// and the update fails a fifth of the way in with "Error Uploading", over and
+// over, while the board itself is perfectly healthy.
+//
+// Observed on a head moved across a room, at -59 dBm: three attempts, three
+// failures, at 8%, 12% and 20%.  Ten seconds matches the sender, which is the
+// number that makes sense: the receiver should not be the one to lose its
+// nerve.
+#ifndef OTA_TIMEOUT_MS
+#define OTA_TIMEOUT_MS 10000
+#endif
+
+// How long to wait after a successful update before rebooting into it.
+//
+// The library's own sequence is: answer "OK", close the socket, wait 110 ms,
+// reboot.  On a good link that is plenty.  On a weak one the "OK" may need
+// retransmitting and the close has a handshake to finish, and rebooting
+// through that tears the radio away mid-conversation -- so the sender sees a
+// connection reset instead of its answer, and reports a failure for an update
+// that worked.  Three times in four, on one afternoon at -64 dBm.
+//
+// Owning the reboot ourselves buys the stack time to finish the conversation.
+// The panels keep showing "DONE" throughout, because the renderer stands back
+// until the reboot happens.
+#ifndef OTA_REBOOT_DELAY_MS
+#define OTA_REBOOT_DELAY_MS 1500
+#endif
+
 // AUTHENTICATION ------------------------------------------------------------
 // All optional, all off, and independent of each other -- see src/auth.h.
 // With them off none of it is compiled in and the board behaves exactly as it

@@ -2239,6 +2239,12 @@ void frame(            // Process motion for a single frame of left or right eye
 
   // Pass all the derived values to the eye-rendering function:
 #if NETWORK
+  // An update has landed and the board is seconds from rebooting into it.
+  // Drawing an eye over the "DONE" card would only be confusing, and there is
+  // nothing to be gained by rendering a frame we are about to throw away.
+  if (webRebootPending())
+    return;
+
   // The address cards own the panels until their deadline passes.
   if (netShowUntil) {
     if ((int32_t)(millis() - netShowUntil) < 0)

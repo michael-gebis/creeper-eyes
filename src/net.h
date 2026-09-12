@@ -128,6 +128,10 @@ void webBegin(void);
 void otaBegin(void);
 void webPoll(void);
 
+// True once an update has landed and the board is about to reboot into it.
+// The renderer stands back so the "DONE" card stays up until it does.
+bool webRebootPending(void);
+
 // The REST API, in api.cpp.  Hangs its routes off the server the web
 // module owns, rather than owning one of its own.
 class WebServer;

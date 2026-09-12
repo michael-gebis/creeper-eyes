@@ -95,8 +95,21 @@ void webHandleRoot(void) {
 // frozen-looking prop is alarming, and the eyes stop rendering during it --
 // ArduinoOTA.handle() runs the transfer to completion once it starts.
 
+// Set once an update has landed and is waiting to be booted into; the value
+// is the millis() deadline.  Zero means no update is pending.
+static uint32_t otaRebootAt = 0;
+
+bool webRebootPending(void) { return otaRebootAt != 0; }
+
 void otaBegin(void) {
   ArduinoOTA.setHostname(WIFI_HOSTNAME);
+  // The reboot is ours, not the library's -- see OTA_REBOOT_DELAY_MS.  Its
+  // own is 110 ms after closing the socket, which is too soon to be sure the
+  // sender heard the answer.
+  ArduinoOTA.setRebootOnSuccess(false);
+  // See OTA_TIMEOUT_MS: the default is shorter than the sender's, so a lossy
+  // link makes the board abort an update that was going to succeed.
+  ArduinoOTA.setTimeout(OTA_TIMEOUT_MS);
 #if OTA_AUTH
   // Without this, anything on the network can flash whatever firmware it
   // likes onto the board -- a larger hole than the API being open, and a
@@ -123,13 +136,19 @@ void otaBegin(void) {
   });
 
   ArduinoOTA.onEnd([]() {
-    DEBUG_PRINTF("[ota] done, rebooting" "\n");
+    DEBUG_PRINTF("[ota] done; rebooting in %d ms" "\n", OTA_REBOOT_DELAY_MS);
     showMessage("UPDATE", "DONE", "rebooting", NULL);
+    // Deferred rather than immediate, so the socket this arrived over closes
+    // properly and the sender hears that it worked.
+    otaRebootAt = millis() + OTA_REBOOT_DELAY_MS;
+    if (!otaRebootAt)
+      otaRebootAt = 1; // millis() wrapped to exactly 0; that means "none"
   });
 
   ArduinoOTA.onError([](ota_error_t e) {
     DEBUG_PRINTF("[ota] failed, error %u" "\n", (unsigned)e);
     showMessage("UPDATE", "FAILED", NULL, NULL);
+    otaRebootAt = 0; // nothing to boot into; carry on running what we have
   });
 
   ArduinoOTA.begin();
@@ -158,6 +177,17 @@ void webBegin(void) {
 // frame rather than from loop(), which spends ten seconds at a time inside
 // split() and would leave requests unanswered for that long.
 void webPoll(void) {
+  // An update is aboard and waiting.  Nothing else here is worth doing, and
+  // the waiting is the point: it is what lets the sender hear that the update
+  // worked before the radio goes away.
+  if (otaRebootAt) {
+    if ((int32_t)(millis() - otaRebootAt) >= 0) {
+      DEBUG_PRINTF("[ota] rebooting now" "\n");
+      ESP.restart();
+    }
+    return;
+  }
+
   if (netState != NET_UP)
     return;
 
