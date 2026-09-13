@@ -1696,9 +1696,8 @@ void handleCommand(char *line, Print &out) {
       return;
     }
     out.printf("ok gaze=(%ld,%ld)\n", x, y);
-#if CLOCK
-  } else if (!strcmp(cmd, "sleep")) {
 #if SLEEP
+  } else if (!strcmp(cmd, "sleep")) {
     char *a = strtok(NULL, " \t");
     if (!a) {
       uint16_t mins;
@@ -1739,9 +1738,8 @@ void handleCommand(char *line, Print &out) {
         out.printf("ok sleep %02u:%02u-%02u:%02u\n", h1, m1, h2, m2);
       }
     }
-#else
-    out.println(F("this firmware was built without SLEEP"));
 #endif
+#if CLOCK
   } else if (!strcmp(cmd, "clock")) {
     char *arg = strtok(NULL, " \t");
     if (!arg) {
