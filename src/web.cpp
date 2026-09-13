@@ -12,6 +12,7 @@
 #include "console.h"
 #include "display.h"
 #include "auth.h"
+#include "credentials.h"
 #include "net.h"
 #include "page_gz.h" // generated from data/index.html by tools/gen_page.py
 #include <ArduinoOTA.h>
@@ -114,7 +115,13 @@ void otaBegin(void) {
   // Without this, anything on the network can flash whatever firmware it
   // likes onto the board -- a larger hole than the API being open, and a
   // cheaper one to close.
-  ArduinoOTA.setPassword(OTA_PASSWORD);
+  //
+  // By hash rather than by password: ArduinoOTA hashes whatever setPassword()
+  // is given anyway, so handing it the hash directly means the plaintext of
+  // this one never has to be stored.  It also explains why changing it needs
+  // a restart -- both setters refuse once _password is set, and end() does
+  // not clear it, so there is no way to replace it in a running firmware.
+  ArduinoOTA.setPasswordHash(credGet(CRED_OTA));
 #endif
 
   ArduinoOTA.onStart([]() {
@@ -160,6 +167,8 @@ void otaBegin(void) {
 // order matters: the specific routes and api.cpp's are registered before the
 // catch-all, because WebServer matches in registration order.
 void webBegin(void) {
+  // Before authBegin() and otaBegin(), both of which read what it loads.
+  credBegin();
   authBegin(server);
   server.on("/", webHandleRoot);
 #if WEB_CMD_ENDPOINT && COMMANDS

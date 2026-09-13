@@ -62,10 +62,11 @@ SECRETS = os.path.join(ROOT, "include", "secrets.h")
 def from_secrets(name: str) -> Optional[str]:
     """A #define out of the gitignored header, for local convenience."""
     try:
-        src = open(SECRETS, encoding="utf-8").read()
+        src: str = open(SECRETS, encoding="utf-8").read()
     except OSError:
         return None
-    m = re.search(r'#define\s+%s\s+"([^"]*)"' % name, src)
+    m: Optional[re.Match[str]] = re.search(
+        r'#define\s+%s\s+"([^"]*)"' % name, src)
     return m.group(1) if m else None
 
 
@@ -79,7 +80,7 @@ def local_address_for(target: str) -> str:
     No packet is sent -- connecting a UDP socket only picks a route -- but it
     is the routing table's own answer, which beats guessing among interfaces.
     """
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect((target, 1))
         return str(s.getsockname()[0])
@@ -89,12 +90,14 @@ def local_address_for(target: str) -> str:
 
 def api(host: str, path: str, token: Optional[str], user: Optional[str],
         password: Optional[str], timeout: float = 6.0) -> Optional[dict]:
-    req = urllib.request.Request("http://%s/api/v1%s" % (host, path))
+    req: urllib.request.Request = urllib.request.Request(
+        "http://%s/api/v1%s" % (host, path))
     if token:
         req.add_header("Authorization", "Bearer " + token)
     opener: urllib.request.OpenerDirector
     if user and password:
-        mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
+        mgr: urllib.request.HTTPPasswordMgrWithDefaultRealm = \
+            urllib.request.HTTPPasswordMgrWithDefaultRealm()
         mgr.add_password(None, "http://%s" % host, user, password)
         opener = urllib.request.build_opener(
             urllib.request.HTTPDigestAuthHandler(mgr))
@@ -108,8 +111,9 @@ def api(host: str, path: str, token: Optional[str], user: Optional[str],
 
 
 def git(*args: str) -> str:
-    out = subprocess.run(["git"] + list(args), cwd=ROOT,
-                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    out: subprocess.CompletedProcess[bytes] = subprocess.run(
+        ["git"] + list(args), cwd=ROOT,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     return out.stdout.decode("utf-8", "replace").strip()
 
 
@@ -118,24 +122,25 @@ def expected_commit() -> str:
 
     Mirrors tools/git_rev.py, because the point is to compare like with like.
     """
-    rev = git("rev-parse", "--short", "HEAD") or "unknown"
+    rev: str = git("rev-parse", "--short", "HEAD") or "unknown"
     return rev + ("+dirty" if git("status", "--porcelain") else "")
 
 
 def build(pio: str, env: str) -> Optional[str]:
     print("building %s..." % env, end="", flush=True)
-    r = subprocess.run([pio, "run", "-e", env], cwd=ROOT,
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    out = r.stdout.decode("utf-8", "replace")
+    r: subprocess.CompletedProcess[bytes] = subprocess.run(
+        [pio, "run", "-e", env], cwd=ROOT,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    out: str = r.stdout.decode("utf-8", "replace")
     if "SUCCESS" not in out:
         print(" failed")
         for line in out.splitlines():
             if "error" in line.lower():
                 print("   " + line)
         return None
-    build_dir = os.environ.get("PLATFORMIO_BUILD_DIR",
-                               os.path.join(ROOT, ".pio", "build"))
-    path = os.path.join(build_dir, env, "firmware.bin")
+    build_dir: str = os.environ.get(
+        "PLATFORMIO_BUILD_DIR", os.path.join(ROOT, ".pio", "build"))
+    path: str = os.path.join(build_dir, env, "firmware.bin")
     if not os.path.exists(path):
         print(" built, but %s is missing" % path)
         return None
@@ -194,8 +199,9 @@ def invite(udp: socket.socket, addr: tuple, local_port: int, size: int,
     to chance and only binds its listener, which is half the reason OTA is a
     coin toss on a machine with several interfaces.
     """
-    message = ("%d %d %d %s\n" % (FLASH, local_port, size, digest)).encode()
-    answer = ""
+    message: bytes = (
+        "%d %d %d %s\n" % (FLASH, local_port, size, digest)).encode()
+    answer: str = ""
     for _ in range(10):
         udp.sendto(message, addr)
         udp.settimeout(3.0)
@@ -215,9 +221,9 @@ def invite(udp: socket.socket, addr: tuple, local_port: int, size: int,
     # Digest challenge.  The cnonce is ours to choose -- the board only folds
     # it into the hash -- but it is derived the way espota derives it so that
     # anything watching sees a familiar exchange.
-    nonce = answer.split()[1]
-    cnonce = md5hex("%s%u%s%s" % (name, size, digest, addr[0]))
-    result = md5hex("%s:%s:%s" % (md5hex(password), nonce, cnonce))
+    nonce: str = answer.split()[1]
+    cnonce: str = md5hex("%s%u%s%s" % (name, size, digest, addr[0]))
+    result: str = md5hex("%s:%s:%s" % (md5hex(password), nonce, cnonce))
     udp.sendto(("%d %s %s\n" % (AUTH, cnonce, result)).encode(), addr)
     udp.settimeout(10.0)
     try:
@@ -237,18 +243,18 @@ def stream(conn: socket.socket, blob: bytes, stall_s: float = 30.0) -> bytes:
     in either direction for stall_s.
     """
     conn.setblocking(False)
-    total = len(blob)
-    sent = 0
-    heard = bytearray()
-    last_move = time.time()
-    shown = -1
-    tty = sys.stdout.isatty()
+    total: int = len(blob)
+    sent: int = 0
+    heard: bytearray = bytearray()
+    last_move: float = time.time()
+    shown: int = -1
+    tty: bool = sys.stdout.isatty()
 
     while sent < total:
         readable, writable, _ = select.select([conn], [conn], [], 1.0)
 
         if readable:
-            chunk = conn.recv(4096)
+            chunk: bytes = conn.recv(4096)
             if not chunk:
                 raise UploadError(
                     "the board hung up after %d of %d bytes" % (sent, total))
@@ -257,7 +263,7 @@ def stream(conn: socket.socket, blob: bytes, stall_s: float = 30.0) -> bytes:
 
         if writable:
             try:
-                n = conn.send(blob[sent:sent + SEND_CHUNK])
+                n: int = conn.send(blob[sent:sent + SEND_CHUNK])
             except BlockingIOError:
                 # select() and send() can disagree about a socket that filled
                 # in between them.  Not an error; go round again.
@@ -265,7 +271,7 @@ def stream(conn: socket.socket, blob: bytes, stall_s: float = 30.0) -> bytes:
             if n:
                 sent += n
                 last_move = time.time()
-                pct = sent * 100 // total
+                pct: int = sent * 100 // total
                 if tty and pct != shown:
                     shown = pct
                     print("\r   uploading %3d%%" % pct, end="", flush=True)
@@ -288,13 +294,13 @@ def await_ok(conn: socket.socket, heard: bytes, timeout: float = 60.0) -> None:
     no framing -- until the last word, which is "OK" once Update.end() has
     verified the image.  Anything else in there is an error message.
     """
-    tail = bytearray(heard)
+    tail: bytearray = bytearray(heard)
     conn.setblocking(True)
-    deadline = time.time() + timeout
+    deadline: float = time.time() + timeout
     while b"OK" not in tail and time.time() < deadline:
         conn.settimeout(max(1.0, deadline - time.time()))
         try:
-            chunk = conn.recv(256)
+            chunk: bytes = conn.recv(256)
         except socket.timeout:
             break
         if not chunk:
@@ -305,7 +311,7 @@ def await_ok(conn: socket.socket, heard: bytes, timeout: float = 60.0) -> None:
         return
 
     # Strip the acknowledgement digits; whatever is left is the complaint.
-    complaint = re.sub(rb"[0-9]+", b"", bytes(tail)).strip()
+    complaint: bytes = re.sub(rb"[0-9]+", b"", bytes(tail)).strip()
     if complaint:
         raise UploadError("the board rejected the image: %s"
                           % complaint.decode("utf-8", "replace"))
@@ -317,15 +323,15 @@ def await_ok(conn: socket.socket, heard: bytes, timeout: float = 60.0) -> None:
 def push(ip: str, local: str, port: int, password: str,
          firmware: str) -> tuple[bool, str]:
     """Upload one image.  True means the board confirmed it."""
-    blob = open(firmware, "rb").read()
-    digest = hashlib.md5(blob).hexdigest()
+    blob: bytes = open(firmware, "rb").read()
+    digest: str = hashlib.md5(blob).hexdigest()
 
     # Listen before inviting, so there is no window in which the board
     # connects back to a socket that does not exist yet.
-    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    conn = None
+    udp: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    conn: Optional[socket.socket] = None
     try:
         srv.bind((local, 0))
         srv.listen(1)
@@ -342,7 +348,7 @@ def push(ip: str, local: str, port: int, password: str,
                 "the board accepted the invitation but never connected back "
                 "to %s -- a firewall, or the wrong interface" % local)
 
-        heard = stream(conn, blob)
+        heard: bytes = stream(conn, blob)
         await_ok(conn, heard)
         return True, "the board confirmed the image"
     except UploadError as e:
@@ -359,7 +365,7 @@ def push(ip: str, local: str, port: int, password: str,
 
 
 def main(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(
+    ap: argparse.ArgumentParser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--host", default="frank.local")
@@ -372,29 +378,29 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--no-build", action="store_true")
     ap.add_argument("--pio", default=os.path.expanduser(
         "~/.platformio/penv/Scripts/pio.exe"))
-    args = ap.parse_args(argv[1:])
+    args: argparse.Namespace = ap.parse_args(argv[1:])
 
-    ota_pw = args.password or from_secrets("OTA_PASSWORD") or ""
-    token = args.token or from_secrets("AUTH_TOKEN_VALUE")
-    user = args.user or from_secrets("AUTH_USER")
-    api_pw = args.api_password or from_secrets("AUTH_PASS")
+    ota_pw: str = args.password or from_secrets("OTA_PASSWORD") or ""
+    token: Optional[str] = args.token or from_secrets("AUTH_TOKEN_VALUE")
+    user: Optional[str] = args.user or from_secrets("AUTH_USER")
+    api_pw: Optional[str] = args.api_password or from_secrets("AUTH_PASS")
 
     try:
-        ip = resolve(args.host)
+        ip: str = resolve(args.host)
     except Exception as e:
         print("cannot resolve %s: %s" % (args.host, e))
         print("(Windows has no mDNS resolver without Bonjour -- use the address)")
         return 1
-    local = local_address_for(ip)
+    local: str = local_address_for(ip)
     print("%s is %s; sending from %s" % (args.host, ip, local))
 
     # Give a board that is still coming up a chance.  Rejoining WiFi after a
     # reboot takes twelve to fifteen seconds, which is exactly the window you
     # land in when updating twice in a row.
-    before = api(ip, "/info", token, user, api_pw)
+    before: Optional[dict] = api(ip, "/info", token, user, api_pw)
     if before is None:
         print("waiting for the board...", end="", flush=True)
-        deadline = time.time() + 60
+        deadline: float = time.time() + 60
         while before is None and time.time() < deadline:
             time.sleep(3)
             before = api(ip, "/info", token, user, api_pw, timeout=4)
@@ -405,7 +411,7 @@ def main(argv: list[str]) -> int:
         return 1
     print("running:  %s (%s)" % (before.get("version"), before.get("commit")))
 
-    want = expected_commit()
+    want: str = expected_commit()
     print("uploading: %s" % want)
     if want == before.get("commit"):
         print("  note: the same commit, so a successful update looks identical")
@@ -415,12 +421,13 @@ def main(argv: list[str]) -> int:
         print("  note: --no-build, so the image on disk may predate the")
         print("  working tree.  The check below compares the board against")
         print("  what HEAD says now, and will disagree if it does.")
-    firmware = None if args.no_build else build(args.pio, args.env)
+    firmware: Optional[str] = (
+        None if args.no_build else build(args.pio, args.env))
     if not args.no_build and firmware is None:
         return 1
     if firmware is None:
-        build_dir = os.environ.get("PLATFORMIO_BUILD_DIR",
-                                   os.path.join(ROOT, ".pio", "build"))
+        build_dir: str = os.environ.get(
+            "PLATFORMIO_BUILD_DIR", os.path.join(ROOT, ".pio", "build"))
         firmware = os.path.join(build_dir, args.env, "firmware.bin")
 
     # How to tell the board rebooted.
@@ -432,16 +439,16 @@ def main(argv: list[str]) -> int:
     # luck.  What identifies a reboot is not a small uptime but an uptime
     # smaller than the board would have had if it had stayed up -- which is
     # the earlier reading plus however long we have taken since.
-    uptime_before = 10 ** 9
-    measured_at = time.time()
-    st = api(ip, "/state", token, user, api_pw)
+    uptime_before: float = 10 ** 9
+    measured_at: float = time.time()
+    st: Optional[dict] = api(ip, "/state", token, user, api_pw)
     if st:
         uptime_before = st.get("system", {}).get("uptimeSeconds", 10 ** 9)
 
     def rebooted(up: float) -> bool:
         if uptime_before >= 10 ** 9:
             return True  # never got a reading, so do not hold it against it
-        alive = uptime_before + (time.time() - measured_at)
+        alive: float = uptime_before + (time.time() - measured_at)
         return up < alive - 15
 
     for attempt in range(1, args.retries + 1):
@@ -452,14 +459,17 @@ def main(argv: list[str]) -> int:
         # The only verdict that counts: has the board come back on the new
         # firmware?  espota's own answer is wrong often enough to ignore.
         print("   asking the board...", end="", flush=True)
-        deadline = time.time() + 90
+        deadline: float = time.time() + 90
         while time.time() < deadline:
             time.sleep(4)
-            info = api(ip, "/info", token, user, api_pw, timeout=4)
+            info: Optional[dict] = api(
+                ip, "/info", token, user, api_pw, timeout=4)
             if not info:
                 continue
-            state = api(ip, "/state", token, user, api_pw, timeout=4)
-            up = (state or {}).get("system", {}).get("uptimeSeconds", 10 ** 9)
+            state: Optional[dict] = api(
+                ip, "/state", token, user, api_pw, timeout=4)
+            up: float = (state or {}).get(
+                "system", {}).get("uptimeSeconds", 10 ** 9)
             if info.get("commit") != want:
                 continue
             # A commit that changed is proof on its own.  Only when the new

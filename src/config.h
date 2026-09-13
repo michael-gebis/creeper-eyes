@@ -293,6 +293,23 @@
 #define OTA_REBOOT_DELAY_MS 1500
 #endif
 
+// How long the BOOT button must be held, while the board is running, to wipe
+// every stored setting and return to what the firmware was built with.
+//
+// This is the way back in after a forgotten password.  It has to be a long
+// press during normal running rather than a hold at power-on, because
+// BOOT_BUTTON_PIN is GPIO0 -- the strapping pin -- and holding that low
+// through a reset puts the ESP32 into its serial bootloader instead of
+// running this firmware at all.
+//
+// Ten seconds is long enough that nobody does it by accident and short enough
+// to do while holding a head in one hand.  The panels count it down from five
+// seconds in, so a press that is going to wipe the board says so before it
+// does.  Set to 0 to remove the gesture entirely.
+#ifndef FACTORY_RESET_MS
+#define FACTORY_RESET_MS 10000
+#endif
+
 // AUTHENTICATION ------------------------------------------------------------
 // All optional, all off, and independent of each other -- see src/auth.h.
 // With them off none of it is compiled in and the board behaves exactly as it

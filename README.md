@@ -188,6 +188,7 @@ a source file — which is how the `gray` environment sets `USE_SSD1327`.
 | `AUTH_HTTP` | `0` | Digest authentication on the page, the API and `/cmd`. |
 | `AUTH_TOKEN` | `0` | A bearer token as an alternative credential, for scripts. |
 | `AUTH_HOST_CHECK` | `0` | Refuse requests whose `Host` is not this device — the DNS-rebinding defence. |
+| `FACTORY_RESET_MS` | `10000` | How long BOOT must be held, while running, to erase every setting. `0` removes the gesture, and so does `COMMANDS=0`, which is what polls the button. |
 | `IPV6` | `0` | All of IPv6, compiled out. Cannot usefully be turned on yet — see [IPv6](#ipv6). |
 | `FIRMWARE_VERSION` | `1.0` | Bumped by hand, for features worth announcing. |
 | `PROJECT_URL` | this repository | Shown by `version` and on the control page. |
@@ -889,10 +890,19 @@ against the running device,
 [`tools/gen_eyes.py`](tools/gen_eyes.py) converts the artwork,
 [`tools/gen_page.py`](tools/gen_page.py) compresses the control page into the
 firmware, and [`tools/git_rev.py`](tools/git_rev.py) stamps the build with its
-commit. All are fully type-annotated — signatures and locals — and both run on Python 3.9,
-which is the oldest interpreter PlatformIO is likely to hand them. Annotations
-are lazy (`from __future__ import annotations`), so the modern generic syntax
-works there too.
+commit. [`tools/test_api.py`](tools/test_api.py) and
+[`tools/soak.py`](tools/soak.py) are described under
+[Testing it](#testing-it).
+
+All are type-annotated: every parameter, every return type, and every local
+at the point it is introduced. Reassignments carry no annotation, which is
+what [PEP 526](https://peps.python.org/pep-0526/) asks for — the name is
+declared once, not at every binding — so a count of bare assignments in these
+files is not a count of missing types.
+
+All run on Python 3.9, the oldest interpreter PlatformIO is likely to hand
+them, and annotations are lazy (`from __future__ import annotations`), so the
+modern generic syntax works there too.
 
 ## Locking it down
 
@@ -921,6 +931,9 @@ Uploading then needs it, from the environment rather than a committed file:
 OTA_PASSWORD=choose-something pio run -e gray_ota -t upload
 ```
 
+That sets the initial one. It can be changed later from the control page
+without a rebuild — see [Changing the passwords](#changing-the-passwords).
+
 ### The web interface
 
 `-DAUTH_HTTP=1` puts **digest** authentication on the control page, the REST
@@ -947,6 +960,60 @@ alone does not stop: a page you visit can make your own browser call
 
 Turning any of them on with no password defined **fails the build** rather
 than producing a device that looks protected and is not.
+
+### Changing the passwords
+
+The credentials start as whatever `include/secrets.h` was built with, and the
+**Passwords** card on the control page replaces them without a rebuild. All
+three: the page password, the update password, and the script token. A stored
+value overrides the built-in one; a board that has never been told otherwise
+behaves exactly as it always did.
+
+Three things are worth knowing before using it.
+
+**They cross the network in clear text.** Digest protects the password on
+every *later* request — it is never sent, only hashed with a server nonce —
+but it cannot protect the one request that carries a new password in its body,
+and there is no HTTPS to fall back on. Set them once, from a machine on the
+same network.
+
+**The update password only takes effect after a reboot.** Not a choice:
+`ArduinoOTA` refuses a new password once one is set, `end()` does not clear
+it, and there is no way to replace it in a running firmware. The card says so
+when one is pending.
+
+**A board whose API needs no credential will refuse to change one.** Build
+without `AUTH_HTTP` and `AUTH_TOKEN` and the endpoint returns 403. This
+matters most in the configuration that looks safest: an `OTA_PASSWORD` with no
+API authentication, where the update password is the only thing between the
+network and arbitrary firmware. An open endpoint that sets passwords is a back
+door however politely it is written.
+
+Passwords are stored in plain text, because `WebServer::authenticate()` takes
+a plaintext password and offers no variant accepting a digest HA1, and
+hand-rolling digest verification is exactly the code that is wrong in ways
+nobody notices. NVS is not encrypted, so anyone who can dump the flash can
+read them. The update password is the exception — `ArduinoOTA` wants an MD5
+hash, so only the hash is kept.
+
+### Forgetting the password
+
+Hold the **BOOT** button for ten seconds while the board is running. The
+panels count down from five seconds in, so a press that is about to wipe the
+board says so first; let go and nothing happens. At zero it erases every
+stored setting, restores the built-in credentials and reboots.
+
+The gesture needs `COMMANDS` (the default), since that is what polls the
+button at all.
+
+It has to be a long press *while running*, not a hold at power-on, because
+`BOOT_BUTTON_PIN` is GPIO0 — the strapping pin — and holding that low through
+a reset puts the ESP32 into its serial bootloader instead of running this
+firmware at all.
+
+This is the only way back into a sealed head whose password has been
+forgotten, which is why it needs physical access and cannot be triggered over
+the network.
 
 ### Why there is no HTTPS
 

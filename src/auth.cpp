@@ -8,6 +8,8 @@
 #include <WebServer.h>
 #include <WiFi.h>
 
+#include "credentials.h"
+
 bool authRequired(void) { return AUTH_HTTP || AUTH_TOKEN; }
 
 #if AUTH_HOST_CHECK
@@ -45,9 +47,9 @@ static bool tokenMatches(const String &header) {
   if (!header.startsWith(prefix))
     return false;
   const char *got = header.c_str() + strlen(prefix);
-  const char *want = AUTH_TOKEN_VALUE;
+  const char *want = credGet(CRED_TOKEN);
   size_t n = strlen(want);
-  if (strlen(got) != n)
+  if (!n || strlen(got) != n)
     return false;
   uint8_t diff = 0;
   for (size_t i = 0; i < n; i++)
@@ -85,7 +87,7 @@ bool authCheck(WebServer &s) {
 #endif
 
 #if AUTH_HTTP
-  if (!s.authenticate(AUTH_USER, AUTH_PASS)) {
+  if (!s.authenticate(credGet(CRED_USER), credGet(CRED_PASS))) {
     // Digest, so the password itself never crosses the wire.  The browser
     // handles the challenge and asks the user once.
     s.requestAuthentication(DIGEST_AUTH, WIFI_HOSTNAME,

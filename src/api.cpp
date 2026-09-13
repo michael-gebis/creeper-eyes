@@ -15,6 +15,7 @@
 #if NETWORK
 
 #include "auth.h"
+#include "credentials.h"
 #include "display.h"
 #include "net.h"
 #include "rtc.h"
@@ -671,6 +672,164 @@ static void postAction(void) {
   sendOk();
 }
 
+// ---------------------------------------------------------- credentials --
+//
+// Compiled in only when there is a credential to change.  Note what is
+// missing: no handler here ever returns a password, a token or even a hash.
+// The page needs to know which credentials are set and whether each is still
+// the one built into the firmware, and that is all it is told.
+
+#if AUTH_HTTP || AUTH_TOKEN || OTA_AUTH
+
+static void getCredentials(void) {
+  JsonDocument d;
+  // "required" is compile-time: which credentials this firmware enforces.
+  // "stored" is runtime: which have been changed from the built-in value.
+  JsonObject http = d["http"].to<JsonObject>();
+  http["required"] = (bool)AUTH_HTTP;
+#if AUTH_HTTP
+  http["user"] = credGet(CRED_USER); // a username is not a secret
+  http["stored"] = credIsStored(CRED_USER) || credIsStored(CRED_PASS);
+#endif
+
+  JsonObject token = d["token"].to<JsonObject>();
+  token["required"] = (bool)AUTH_TOKEN;
+#if AUTH_TOKEN
+  token["stored"] = credIsStored(CRED_TOKEN);
+#endif
+
+  JsonObject ota = d["ota"].to<JsonObject>();
+  ota["required"] = (bool)OTA_AUTH;
+#if OTA_AUTH
+  ota["stored"] = credIsStored(CRED_OTA);
+#endif
+
+  // Set once an OTA password has changed: ArduinoOTA will not accept a new
+  // one until the firmware restarts.
+  d["rebootNeeded"] = credRebootPending();
+  d["clearText"] = true; // no HTTPS; see credentials.h
+  // Whether PUT will be accepted at all -- see putCredentials().
+  d["changeable"] = authRequired();
+  sendJson(200, d);
+}
+
+static void putCredentials(void) {
+  // An unauthenticated API must not be able to set credentials.
+  //
+  // The case that makes this necessary: OTA_PASSWORD set, but AUTH_HTTP and
+  // AUTH_TOKEN both off.  The update password is then the only thing standing
+  // between the network and flashing whatever firmware it likes -- and if
+  // this endpoint were open, anything on the network could simply replace
+  // that password with one of its own.  A way to change a credential without
+  // presenting one is a back door however politely it is written.
+  //
+  // So this needs the API itself to require a credential.  The board still
+  // works exactly as before without one; it just cannot be reconfigured
+  // remotely, which is the correct behaviour for a device that does not know
+  // who it is talking to.
+  if (!authRequired()) {
+    sendError(403, "changing credentials needs the API to require one: build "
+                   "with AUTH_HTTP=1 or AUTH_TOKEN=1");
+    return;
+  }
+
+  JsonDocument b;
+  if (!readBody(b))
+    return;
+
+#if AUTH_HTTP
+  // Prove you know the password you are replacing.  Being authenticated is
+  // not quite the same thing: a browser holds digest credentials for the
+  // realm and will attach them to whatever asks, so without this a page you
+  // merely visited could change the password on a board you are logged into.
+  // AUTH_HOST_CHECK closes most of that, but it is optional and this is one
+  // field.
+  const char *current = b["current"] | "";
+  if (strcmp(current, credGet(CRED_PASS))) {
+    sendError(403, "the current password does not match");
+    return;
+  }
+#endif
+
+  // Collect, then check every value, and only then apply any of them.  A
+  // rejected fourth field must not leave the first three written: "rejected"
+  // should mean nothing happened.
+  struct Change {
+    CredKind kind;
+    const char *field;
+    bool present;
+    const char *value;
+  } changes[] = {
+      {CRED_USER, "user", false, ""},
+      {CRED_PASS, "password", false, ""},
+      {CRED_TOKEN, "token", false, ""},
+      {CRED_OTA, "otaPassword", false, ""},
+  };
+
+  int wanted = 0;
+  for (auto &c : changes) {
+    if (!b[c.field].is<const char *>())
+      continue;
+#if !AUTH_HTTP
+    if (c.kind == CRED_USER || c.kind == CRED_PASS) {
+      sendError(400, "this firmware was built without AUTH_HTTP");
+      return;
+    }
+#endif
+#if !AUTH_TOKEN
+    if (c.kind == CRED_TOKEN) {
+      sendError(400, "this firmware was built without AUTH_TOKEN");
+      return;
+    }
+#endif
+#if !OTA_AUTH
+    if (c.kind == CRED_OTA) {
+      sendError(400, "this firmware was built without an OTA password");
+      return;
+    }
+#endif
+    c.present = true;
+    c.value = b[c.field];
+    wanted++;
+  }
+
+  if (!wanted) {
+    sendError(400, "nothing to change: send user, password, token or "
+                   "otaPassword");
+    return;
+  }
+
+  String err;
+  for (auto &c : changes) {
+    if (c.present && !credCheck(c.kind, c.value, err)) {
+      // Whichever field failed, name it -- "must not be empty" is no use if
+      // four fields were sent.
+      String msg = String(c.field) + ": " + err;
+      sendError(400, msg.c_str());
+      return; // nothing written yet
+    }
+  }
+
+  for (auto &c : changes) {
+    if (c.present && !credSet(c.kind, c.value, err)) {
+      // Checked a moment ago, so this is storage failing rather than the
+      // value being wrong -- and by now some of the others may have been
+      // written, which the caller needs to know.
+      String msg = String(c.field) + ": " + err +
+                   " (earlier fields in this request may have been saved)";
+      sendError(500, msg.c_str());
+      return;
+    }
+  }
+
+  JsonDocument d;
+  d["ok"] = true;
+  d["rebootNeeded"] = credRebootPending();
+  sendJson(200, d);
+}
+
+#endif // AUTH_HTTP || AUTH_TOKEN || OTA_AUTH
+
 static void postSettings(void) {
   JsonDocument b;
   if (!readBody(b))
@@ -695,6 +854,13 @@ static void postSettings(void) {
 // gets a 405 from the framework rather than a confusing 404.
 void apiRegister(WebServer &s) {
   S = &s;
+
+#if AUTH_HTTP || AUTH_TOKEN || OTA_AUTH
+  s.on(API "/credentials", HTTP_GET, guarded<getCredentials>);
+  s.on(API "/credentials", HTTP_PUT, guarded<putCredentials>);
+  s.on(API "/credentials", HTTP_OPTIONS, handleOptions);
+  s.on(API "/credentials", HTTP_ANY, notAllowed);
+#endif
 
   s.on(API "/state", HTTP_GET, guarded<getState>);
   s.on(API "/state", HTTP_ANY, notAllowed);

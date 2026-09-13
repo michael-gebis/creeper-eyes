@@ -176,6 +176,50 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
       written, never read back.</p>
   </div>
 
+  <div class=card id=credCard hidden>
+    <h2>Passwords <span class="tag saved">persistent</span></h2>
+    <p class=note id=credState></p>
+    <div class=row>
+      <input type=password id=cCur class=grow placeholder="current password"
+             autocomplete=current-password>
+    </div>
+    <hr>
+    <div class=row id=cHttpRow>
+      <input type=text id=cUser class=grow placeholder="new username"
+             autocomplete=off>
+    </div>
+    <div class=row id=cPassRow>
+      <input type=password id=cPass class=grow placeholder="new password"
+             autocomplete=new-password>
+    </div>
+    <div class=row id=cOtaRow>
+      <input type=password id=cOta class=grow placeholder="new update password"
+             autocomplete=off>
+    </div>
+    <div class=row id=cTokRow>
+      <input type=text id=cTok class=grow placeholder="new script token"
+             autocomplete=off>
+    </div>
+    <div class=row>
+      <button id=cSave class=danger>change</button>
+      <span id=cMsg class=dim></span>
+    </div>
+    <p class=note id=credLocked hidden><b>This board will not change its own
+      credentials.</b> It was built without <kbd>AUTH_HTTP</kbd> or
+      <kbd>AUTH_TOKEN</kbd>, so the API does not know who is asking — and an
+      endpoint that sets passwords without requiring one is a back door.
+      Rebuild with authentication to use this card.</p>
+    <p class=note><b>These cross the network in clear text.</b> There is no
+      HTTPS on this device, so the request that carries a new password is
+      readable by anything on the path. Set them from a machine on the same
+      network, and rarely.</p>
+    <p class=note>Changing the page password logs this browser out; it will
+      ask again on the next request. The update password only takes effect
+      after a reboot. Forgotten everything? Hold the board's BOOT button for
+      ten seconds — that erases all settings and restores the built-in
+      credentials.</p>
+  </div>
+
   <div class=card>
     <h2>Device</h2>
     <table id=info></table>
@@ -448,6 +492,85 @@ const signalWord = rssi =>
   : rssi >= -75 ? 'weak, expect slow replies'
   : 'very weak';
 
+// --------------------------------------------------------------- passwords --
+//
+// The card is hidden unless the firmware has a credential to change, which
+// GET /credentials reports.  Nothing here ever receives a password back: the
+// board says which credentials exist and whether each is still the built-in
+// one, and that is all the page needs to render.
+let credInfo = null;
+
+async function credRefresh() {
+  try {
+    credInfo = await api('/credentials');
+  } catch (e) {
+    return; // built without any of them, or not allowed to ask
+  }
+  const c = credInfo;
+  $('#credCard').hidden = !(c.http.required || c.token.required || c.ota.required);
+
+  // Only offer the fields this firmware can actually act on.
+  $('#cHttpRow').hidden = !c.http.required;
+  $('#cPassRow').hidden = !c.http.required;
+  $('#cOtaRow').hidden = !c.ota.required;
+  $('#cTokRow').hidden = !c.token.required;
+  $('#cCur').parentElement.hidden = !c.http.required;
+
+  if (c.http.required) $('#cUser').placeholder = `new username (now ${c.http.user})`;
+
+  // A build whose API needs no credential will refuse to change one, because
+  // an open endpoint that sets passwords is a back door.  Say so here rather
+  // than letting the change button fail.
+  $('#cSave').disabled = !c.changeable;
+  $('#credLocked').hidden = c.changeable;
+
+  // "Built in" versus "changed" is worth saying: a board still on the
+  // firmware's own password is one whose password is in a file somewhere.
+  const bits = [];
+  if (c.http.required)
+    bits.push(`page: ${c.http.stored ? 'changed' : 'as built'}`);
+  if (c.ota.required)
+    bits.push(`updates: ${c.ota.stored ? 'changed' : 'as built'}`);
+  if (c.token.required)
+    bits.push(`token: ${c.token.stored ? 'changed' : 'as built'}`);
+  if (c.rebootNeeded) bits.push('reboot to apply the update password');
+  $('#credState').textContent = bits.join(' · ');
+}
+
+$('#cSave').onclick = async () => {
+  const body = {};
+  const cur = $('#cCur').value;
+  if (credInfo && credInfo.http.required) body.current = cur;
+  const put = (id, field) => {
+    const v = $(id).value;
+    if (v) body[field] = v;
+  };
+  put('#cUser', 'user');
+  put('#cPass', 'password');
+  put('#cOta', 'otaPassword');
+  put('#cTok', 'token');
+
+  if (!('user' in body) && !('password' in body) &&
+      !('otaPassword' in body) && !('token' in body)) {
+    $('#cMsg').textContent = 'nothing to change';
+    return;
+  }
+  $('#cMsg').textContent = 'working...';
+  try {
+    const r = await api('/credentials', 'PUT', body);
+    // Clear them out: leaving a password sitting in a form field on a page
+    // that polls every second is not a good place for it to live.
+    for (const id of ['#cCur', '#cUser', '#cPass', '#cOta', '#cTok'])
+      $(id).value = '';
+    $('#cMsg').textContent = r.rebootNeeded
+      ? 'changed - reboot to apply the update password'
+      : 'changed';
+    await credRefresh();
+  } catch (e) {
+    $('#cMsg').textContent = String(e.message || e);
+  }
+};
+
 const pad = $('#pad');
 
 // Dragging produces pointer events far faster than the board can answer them,
@@ -617,6 +740,7 @@ document.addEventListener('visibilitychange', () => {
     await refresh();
     await fillLists();
     await fillInfo();
+    await credRefresh();
   } catch (e) {
     $('#err').textContent = e.message;
   }
