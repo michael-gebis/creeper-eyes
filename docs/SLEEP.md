@@ -1,8 +1,52 @@
 # Sleep mode
 
-A prop in a bedroom or a hallway does not need to stare all night. Sleep mode
-turns the panels dark between two times the user sets, and brings them back in
-the morning.
+## Using it
+
+A prop in a hallway does not need to stare all night. Between two times you
+set, the panels go dark and the eyes stop being drawn.
+
+```sh
+sleep                      # what it is set to, and what it is doing
+sleep on
+sleep 22:00 07:00          # start, then stop
+sleep level 0              # 0 switches the panels off; 1-100 dims instead
+```
+
+Or the **Sleep** card on the control page, or `PUT /api/v1/sleep`.
+
+It goes dark using the panel's own command rather than by drawing black. An
+OLED showing black pixels is already dark, so a frame of black would spend a
+full SPI push to achieve what one byte does — and would leave the panel
+driving its rows besides. Waking costs one command and no redraw, because the
+panel's memory survives being switched off.
+
+**It will not sleep unless the board knows what time it is.** With no network,
+no RTC and no hand-set time, it stays awake and says `waiting for the time`
+rather than guessing. The clock face already hides itself under exactly this
+condition; this follows the same rule for the same reason.
+
+**A window that crosses midnight is the normal case**, and `22:00 07:00` means
+what it looks like. Setting start and stop to the same time means *never*, not
+always — a mistyped field should not leave a prop permanently dark.
+
+**Anything you do wakes it for a minute.** A console command, the BOOT button,
+or any API call that changes something. Reading does not count, deliberately:
+the control page polls once a second while it is open, so counting reads would
+mean a browser tab left open kept the head awake all night.
+
+Sleep is the lowest-priority claim on the panels. An address card asked for at
+3am still appears, an over-the-air update still shows its progress, and the
+startup cards still run — each of those lights the panels for as long as it
+needs them, and sleep takes them back afterwards.
+
+One consequence worth knowing: a sleeping board reports `fps = 0`, because
+nothing is being rendered. `system.fps` sits next to `sleep.asleep` in
+`GET /api/v1/state` so the zero can be told apart from a fault.
+
+Design notes, including what was measured and what was only assumed,
+follow below.
+
+## How it was designed
 
 This was written as a design before any of it existed, and is kept that way:
 the constraints below are what shaped the result, and several of them are less

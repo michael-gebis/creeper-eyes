@@ -1,4 +1,9 @@
-# Eye gallery
+# The eyes
+
+What ships, how to choose between them, and how the pupil and the startup cards
+behave.
+
+## Gallery
 
 Every design that ships with this project, rendered with the same arithmetic
 the firmware uses. Pick what you like, then enable it in
@@ -47,6 +52,126 @@ out. Compare the two halves before committing to one.
 | **`snakegreen`**<br><sub>Green snake, slit pupil</sub> | ![snakeGreen](images/eyes/snakeGreen_constricted.png) | ![snakeGreen](images/eyes/snakeGreen_normal.png) | ![snakeGreen](images/eyes/snakeGreen_dilated.png) | ![snakeGreen](images/eyes/snakeGreen_constricted_grey.png) | ![snakeGreen](images/eyes/snakeGreen_normal_grey.png) | ![snakeGreen](images/eyes/snakeGreen_dilated_grey.png) |
 | **`spikes`**<br><sub>Geometric spikes</sub> | ![spikes](images/eyes/spikes_constricted.png) | ![spikes](images/eyes/spikes_normal.png) | ![spikes](images/eyes/spikes_dilated.png) | ![spikes](images/eyes/spikes_constricted_grey.png) | ![spikes](images/eyes/spikes_normal_grey.png) | ![spikes](images/eyes/spikes_dilated_grey.png) |
 | **`toonstripe`**<br><sub>Striped cartoon, no eyelids</sub> | ![toonstripe](images/eyes/toonstripe_constricted.png) | ![toonstripe](images/eyes/toonstripe_normal.png) | ![toonstripe](images/eyes/toonstripe_dilated.png) | ![toonstripe](images/eyes/toonstripe_constricted_grey.png) | ![toonstripe](images/eyes/toonstripe_normal_grey.png) | ![toonstripe](images/eyes/toonstripe_dilated_grey.png) |
+
+## Choosing which eyes are built in
+
+**[See the gallery above](#gallery)** for every design rendered in colour
+and greyscale.
+
+25 designs ship with the project: two from Adafruit's original Uncanny Eyes,
+and 23 converted from [TeensyEyes](https://github.com/chrismiller/TeensyEyes).
+Each costs roughly **158 KB of flash**, so about four fit alongside everything
+else on the default partition — they are chosen at build time rather than all
+compiled in.
+
+Edit `include/eyes_config.h`:
+
+```c
+#define EYE_DEFAULT 1   // Standard human-ish hazel eye
+#define EYE_NEWT    1   // Eye of newt
+#define EYE_DRAGON  0   // Fiery dragon, slit pupil
+...
+```
+
+Or override without touching the file, from `platformio.ini`:
+
+```ini
+build_flags = -DEYE_DEFAULT=0 -DEYE_NEWT=0 -DEYE_DRAGON=1 -DEYE_SKULL=1
+```
+
+Every switch is `#ifndef`-guarded, so a `-D` always wins. Enabling none fails
+with a clear `#error` — the eye headers are also where the `SCLERA_*`,
+`IRIS_*` and `SCREEN_*` dimensions come from.
+
+The console lists whatever ended up in the build, and selects by name or
+number:
+
+```
+> eye
+  0  default     <- current
+  1  dragon
+  2  skull
+> eye dragon
+ok eye=1 dragon
+```
+
+### On greyscale panels
+
+Designs that carry their character in *hue* rather than *brightness* flatten
+out badly once converted to 16 grey levels. The gallery shows both side by
+side — compare before committing. Designs with strong tonal structure, like
+`skull`, `demon` and `spikes`, survive the conversion best.
+
+### Adding or regenerating designs
+
+The converted headers are generated, and the generator is checked in:
+
+```sh
+git clone --depth 1 https://github.com/chrismiller/TeensyEyes.git
+pip install pillow
+python tools/gen_eyes.py TeensyEyes/resources/eyes/240x240
+```
+
+That writes `include/eyes/*.h` and the gallery images. Then add an `EYE_FOO`
+switch to `include/eyes_config.h` and a registry row to `src/main.cpp`.
+
+Dimensions must match what is already built in: **SCLERA 200×200, IRIS_MAP
+256×64, SCREEN 128×128, IRIS 80×80**. The renderer reaches the artwork through
+pointers whose row width is fixed at compile time, so designs of different
+sizes cannot coexist in one build.
+
+Budget roughly four designs on the default 1.25 MB app partition;
+`board_build.partitions = min_spiffs.csv` buys 1.9 MB while keeping OTA.
+
+## If the panels are wired the wrong way round
+
+`swap` exchanges the chip-select pins in software, so the panel on `D15`
+becomes the one on `D4` and vice versa:
+
+```
+> swap
+ok swap=on
+```
+
+This is a real swap, not a relabelling — everything belonging to an eye moves
+with it, including its mirrored eyelids and its splash label. Verify with
+`splash`, or reboot and read the name cards.
+
+The swap is applied between frames, never mid-transaction, so it cannot leave
+a chip select asserted on the wrong panel.
+
+## Pupil
+
+`pupil off` removes the pupil entirely, leaving a full iris disc:
+
+```
+> pupil off
+ok pupil=off (full iris disc; dilate has no effect)
+```
+
+The iris is drawn where `iScale * distance / 128 < 64`, and distance peaks at
+127 at the centre, so any scale at or below 64 keeps every pixel in the iris.
+There is nothing left to dilate, which is why `dilate` stops having an effect.
+
+Useful on its own, and it pairs with the clock — a full disc makes a better
+dial than a ring around a pupil.
+
+## Startup splash
+
+At boot, each panel names itself for five seconds:
+
+```
+   FRANK'S
+    RIGHT
+  ─────────
+    YOUR
+    LEFT
+      5
+```
+
+Both perspectives are shown because "left eye" is ambiguous in every wiring
+table ever written. This is the quickest way to confirm which panel is on
+which chip select without getting at the wires.
 
 ## Credits
 
