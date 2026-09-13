@@ -80,6 +80,12 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
       <button id=pupil>pupil</button>
       <button id=swap>swap panels</button>
     </div>
+    <div class=row>
+      <button data-act=blink>blink</button>
+      <button data-act=startle>startle</button>
+      <button data-act=splash>splash</button>
+      <span class=tag>momentary</span>
+    </div>
   </div>
 
   <div class=card>
@@ -93,16 +99,6 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
       <span id=dilTxt class=dim></span>
     </div>
     <div class=row><button id=dilAuto>auto width</button></div>
-  </div>
-
-  <div class=card>
-    <h2>Do something <span class=tag>momentary</span></h2>
-    <div class=row>
-      <button data-act=blink>blink</button>
-      <button data-act=startle>startle</button>
-      <button data-act=splash>splash</button>
-    </div>
-    <div class=row><button id=netinfo>show address</button></div>
   </div>
 
   <div class=card>
@@ -243,6 +239,10 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
     <h2>Device</h2>
     <table id=info></table>
     <p class=note id=v6note></p>
+    <div class=row>
+      <button id=netinfo>show address</button>
+      <span class=tag>momentary</span>
+    </div>
     <hr>
     <table id=about></table>
     <p class=note id=project></p>
