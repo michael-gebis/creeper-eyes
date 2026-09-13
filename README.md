@@ -894,12 +894,15 @@ commit. [`tools/test_api.py`](tools/test_api.py) and
 [`tools/soak.py`](tools/soak.py) are described under
 [Testing it](#testing-it).
 
-Every signature is annotated — each parameter and each return type, in all of
-them. Locals are annotated where the type is not obvious from the assignment,
-which is most of them in `gen_eyes.py` and few of them in `git_rev.py`. All
-run on Python 3.9, the oldest interpreter PlatformIO is likely to hand them,
-and annotations are lazy (`from __future__ import annotations`), so the modern
-generic syntax works there too.
+All are type-annotated: every parameter, every return type, and every local
+at the point it is introduced. Reassignments carry no annotation, which is
+what [PEP 526](https://peps.python.org/pep-0526/) asks for — the name is
+declared once, not at every binding — so a count of bare assignments in these
+files is not a count of missing types.
+
+All run on Python 3.9, the oldest interpreter PlatformIO is likely to hand
+them, and annotations are lazy (`from __future__ import annotations`), so the
+modern generic syntax works there too.
 
 ## Locking it down
 

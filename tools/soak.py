@@ -33,10 +33,10 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from typing import Optional
+from typing import Any, Optional, TextIO
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from test_api import Api, Result, percentile  # noqa: E402
+from test_api import Api, Json, Result, percentile  # noqa: E402
 
 # A request slower than this is the thing being counted: not a slow reply but
 # a stalled one, an order of magnitude off the median.
@@ -57,12 +57,13 @@ class Config:
 
 def run(cmd: list[str], env: Optional[dict[str, str]] = None,
         timeout: int = 600) -> tuple[int, str]:
-    full = dict(os.environ)
+    full: dict[str, str] = dict(os.environ)
     if env:
         full.update(env)
     try:
-        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                           env=full, timeout=timeout)
+        p: subprocess.CompletedProcess[bytes] = subprocess.run(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            env=full, timeout=timeout)
         return p.returncode, p.stdout.decode("utf-8", "replace")
     except subprocess.TimeoutExpired:
         return 1, "timed out"
@@ -76,14 +77,15 @@ def flash(pio: str, env_name: str, port: str, flags: str,
                      "PLATFORMIO_BUILD_DIR": build_dir})
     if "SUCCESS" in out and code == 0:
         return True
-    tail = [l for l in out.splitlines() if "error" in l.lower()][:3]
+    tail: list[str] = [
+        l for l in out.splitlines() if "error" in l.lower()][:3]
     print("      flash failed: %s" % ("; ".join(tail) or "unknown"))
     return False
 
 
 def wait_for_board(host: str, limit: int = 90) -> bool:
     """Up and answering, whether or not it wants a credential."""
-    deadline = time.time() + limit
+    deadline: float = time.time() + limit
     while time.time() < deadline:
         try:
             urllib.request.urlopen("http://%s/" % host, timeout=4)
@@ -102,21 +104,21 @@ def signal(api: Api) -> Optional[int]:
     and asking for it is itself a request that would go in the timings.
     """
     try:
-        net = api.json("/net")
+        net: Json = api.json("/net")
     except Exception:
         return None
     if not isinstance(net, dict):
         return None
-    rssi = net.get("rssi")
+    rssi: Any = net.get("rssi")
     return rssi if isinstance(rssi, int) else None
 
 
 def measure(api: Api, n: int, gap: float) -> tuple[list[float], int]:
     """n identical requests.  Returns the timings and a failure count."""
     out: list[float] = []
-    failed = 0
+    failed: int = 0
     for _ in range(n):
-        t0 = time.time()
+        t0: float = time.time()
         code, _body = api.raw("/state")
         if code == 200:
             out.append((time.time() - t0) * 1000.0)
@@ -129,7 +131,7 @@ def measure(api: Api, n: int, gap: float) -> tuple[list[float], int]:
 def summarise(c: Config) -> str:
     if not c.samples:
         return "%-10s no samples" % c.name
-    s = sorted(c.samples)
+    s: list[float] = sorted(c.samples)
     return ("%-10s n=%-5d median %5.0f  p90 %5.0f  p99 %6.0f  max %7.0f  "
             "stalls %3d (%.2f%%)  failed %d"
             % (c.name, len(s), percentile(s, 50), percentile(s, 90),
@@ -138,7 +140,7 @@ def summarise(c: Config) -> str:
 
 
 def main(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(
+    ap: argparse.ArgumentParser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--hours", type=float, default=2.0)
@@ -160,20 +162,23 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--pio", default=os.path.expanduser(
         "~/.platformio/penv/Scripts/pio.exe"))
     ap.add_argument("--build-dir", default="")
-    args = ap.parse_args(argv[1:])
+    args: argparse.Namespace = ap.parse_args(argv[1:])
 
-    a = Config(args.a_name, args.a)
-    b = Config(args.b_name, args.b)
-    res = Result()
-    api = Api(args.host, res, args.user, args.password, args.token, 20.0)
+    a: Config = Config(args.a_name, args.a)
+    b: Config = Config(args.b_name, args.b)
+    res: Result = Result()
+    api: Api = Api(
+        args.host, res, args.user, args.password, args.token, 20.0)
 
-    deadline = time.time() + args.hours * 3600
+    deadline: float = time.time() + args.hours * 3600
     order: list[Config] = [a, b]
-    rnd = 0
+    rnd: int = 0
 
-    fresh = not os.path.exists(args.csv)
-    fh = open(args.csv, "a", newline="", encoding="utf-8")
-    out = csv.writer(fh)
+    fresh: bool = not os.path.exists(args.csv)
+    fh: TextIO = open(args.csv, "a", newline="", encoding="utf-8")
+    # csv.writer's type is private to the module, so Any is the honest
+    # annotation rather than a guess at _csv._writer.
+    out: Any = csv.writer(fh)
     if fresh:
         out.writerow(["round", "config", "flags", "unix_time", "ms", "rssi"])
 
@@ -185,7 +190,7 @@ def main(argv: list[str]) -> int:
     try:
         while time.time() < deadline:
             rnd += 1
-            left = (deadline - time.time()) / 3600.0
+            left: float = (deadline - time.time()) / 3600.0
             print("round %d  (%.2f h left)" % (rnd, left))
             for cfg in order:
                 print("   %-6s flashing..." % cfg.name, end="", flush=True)
@@ -198,19 +203,19 @@ def main(argv: list[str]) -> int:
                     print(" board did not come back")
                     continue
                 time.sleep(2)
-                rssi = signal(api)
+                rssi: Optional[int] = signal(api)
                 got, failed = measure(api, args.samples, args.gap)
-                stalls = len([v for v in got if v > STALL_MS])
+                stalls: int = len([v for v in got if v > STALL_MS])
                 cfg.samples += got
                 cfg.stalls += stalls
                 cfg.failures += failed
                 cfg.rounds += 1
-                now = time.time()
+                now: float = time.time()
                 for v in got:
                     out.writerow([rnd, cfg.name, cfg.flags, "%.3f" % now,
                                   "%.1f" % v, "" if rssi is None else rssi])
                 fh.flush()
-                s = sorted(got)
+                s: list[float] = sorted(got)
                 print("\r   %-6s %s median %5.0f  p99 %6.0f  max %7.0f  "
                       "stalls %d/%d          "
                       % (cfg.name,
@@ -233,9 +238,10 @@ def main(argv: list[str]) -> int:
         print()
         # Stalls are the number that decides this; a median that improves
         # while the tail collapses is not an improvement.
-        ra = 100.0 * a.stalls / len(a.samples)
-        rb = 100.0 * b.stalls / len(b.samples)
-        better = a.name if ra < rb else b.name if rb < ra else "neither"
+        ra: float = 100.0 * a.stalls / len(a.samples)
+        rb: float = 100.0 * b.stalls / len(b.samples)
+        better: str = (
+            a.name if ra < rb else b.name if rb < ra else "neither")
         print("  stalls over %.0f ms: %s %.2f%%, %s %.2f%%  -> %s"
               % (STALL_MS, a.name, ra, b.name, rb, better))
         ma, mb = statistics.median(a.samples), statistics.median(b.samples)

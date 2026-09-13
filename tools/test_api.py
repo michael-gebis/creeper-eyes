@@ -107,7 +107,8 @@ class Api:
         if user and password:
             # Digest, matching AUTH_HTTP.  urllib retries with credentials
             # after the challenge, exactly as a browser does.
-            mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
+            mgr: urllib.request.HTTPPasswordMgrWithDefaultRealm = \
+                urllib.request.HTTPPasswordMgrWithDefaultRealm()
             mgr.add_password(None, self.root, user, password)
             self.opener = urllib.request.build_opener(
                 urllib.request.HTTPDigestAuthHandler(mgr))
@@ -119,8 +120,9 @@ class Api:
             headers: Optional[dict[str, str]] = None,
             full: bool = False) -> tuple[int, bytes]:
         """One request.  Returns the status and body; never raises for HTTP."""
-        url = (self.root + path) if full else (self.base + path)
-        req = urllib.request.Request(url, method=method)
+        url: str = (self.root + path) if full else (self.base + path)
+        req: urllib.request.Request = urllib.request.Request(
+            url, method=method)
         data: Optional[bytes] = None
         if body is not None:
             data = json.dumps(body).encode()
@@ -130,15 +132,15 @@ class Api:
         for k, v in (headers or {}).items():
             req.add_header(k, v)
 
-        started = time.time()
+        started: float = time.time()
         # The board answers one client at a time from inside its render loop,
         # so an occasional request loses a race with a long frame.  Retrying a
         # read-only request is honest; a retried write would not be.
-        attempts = 3 if method == "GET" else 1
+        attempts: int = 3 if method == "GET" else 1
         for attempt in range(attempts):
             try:
                 with self.opener.open(req, data, timeout=self.timeout) as r:
-                    out = (r.status, r.read())
+                    out: tuple[int, bytes] = (r.status, r.read())
                     break
             except urllib.error.HTTPError as e:
                 out = (e.code, e.read())
@@ -148,10 +150,10 @@ class Api:
                     self.res.fail("%s %s" % (method, path), repr(e)[:70])
                     return (0, b"")
                 time.sleep(1.0)
-        ms = (time.time() - started) * 1000
+        ms: float = (time.time() - started) * 1000
         self.res.requests += 1
         self.res.total_ms += ms
-        what = "%s %s" % (method, path)
+        what: str = "%s %s" % (method, path)
         self.res.samples.append((ms, what))
         if ms > self.res.slowest:
             self.res.slowest = ms
@@ -212,7 +214,7 @@ def same(res: Result, label: str, got: Any, want: Any) -> bool:
 
 def test_info(res: Result, api: Api) -> Json:
     res.heading("what this firmware is")
-    info = expect(res, api, "GET /info", "/info")
+    info: Json = expect(res, api, "GET /info", "/info")
     for key in ("name", "version", "commit", "project", "built", "api"):
         if key not in info:
             res.fail("/info has %s" % key, "absent")
@@ -230,7 +232,7 @@ def test_info(res: Result, api: Api) -> Json:
 
 def test_state(res: Result, api: Api) -> Json:
     res.heading("GET /state -- everything a client polls")
-    s = expect(res, api, "GET /state", "/state")
+    s: Json = expect(res, api, "GET /state", "/state")
     for path in ("eye.index", "eye.name", "eye.count",
                  "gaze.mode", "gaze.x", "gaze.y",
                  "dilate.mode", "dilate.percent",
@@ -251,7 +253,8 @@ def test_state(res: Result, api: Api) -> Json:
 
 def test_eyes(res: Result, api: Api, start: Json) -> None:
     res.heading("eyes")
-    designs = expect(res, api, "GET /eyes", "/eyes").get("designs", [])
+    designs: list[Any] = expect(
+        res, api, "GET /eyes", "/eyes").get("designs", [])
     if not designs:
         res.fail("eye list", "empty")
         return
@@ -259,7 +262,7 @@ def test_eyes(res: Result, api: Api, start: Json) -> None:
         len(designs), ", ".join(d["name"] for d in designs[:6])))
 
     first, last = designs[0], designs[-1]
-    r = expect(res, api, "PUT /eye by name", "/eye", "PUT",
+    r: Json = expect(res, api, "PUT /eye by name", "/eye", "PUT",
                {"name": last["name"]})
     same(res, "selected by name", r.get("name"), last["name"])
 
@@ -267,7 +270,7 @@ def test_eyes(res: Result, api: Api, start: Json) -> None:
                {"index": first["index"]})
     same(res, "selected by index", r.get("index"), first["index"])
 
-    before = api.json("/eye").get("index")
+    before: Any = api.json("/eye").get("index")
     r = expect(res, api, "PUT /eye next", "/eye", "PUT", {"next": True})
     if len(designs) > 1:
         if r.get("index") != before:
@@ -286,7 +289,8 @@ def test_eyes(res: Result, api: Api, start: Json) -> None:
 
 def test_gaze(res: Result, api: Api) -> None:
     res.heading("gaze")
-    r = expect(res, api, "PUT /gaze", "/gaze", "PUT", {"x": 200, "y": 800})
+    r: Json = expect(res, api, "PUT /gaze", "/gaze", "PUT",
+                     {"x": 200, "y": 800})
     same(res, "x round trips", r.get("x"), 200)
     same(res, "y round trips", r.get("y"), 800)
     same(res, "mode became manual", r.get("mode"), "manual")
@@ -313,15 +317,16 @@ def test_gaze_burst(res: Result, api: Api) -> None:
     while it happens.
     """
     res.heading("a burst of gaze updates, as a drag produces")
-    fps_before = field(res, api.json("/state"), "system.fps", "fps") or 0
+    fps_before: Any = field(res, api.json("/state"), "system.fps", "fps") or 0
 
-    started = time.time()
-    points = [(120 + i * 45, 900 - i * 40) for i in range(16)]
+    started: float = time.time()
+    points: list[tuple[int, int]] = [
+        (120 + i * 45, 900 - i * 40) for i in range(16)]
     for (x, y) in points:
         api.raw("/gaze", "PUT", {"x": x, "y": y})
-    elapsed = time.time() - started
+    elapsed: float = time.time() - started
 
-    final = api.json("/gaze")
+    final: Json = api.json("/gaze")
     lx, ly = points[-1]
     if final.get("x") == lx and final.get("y") == ly:
         res.ok("the last position is the one that sticks", "%d,%d" % (lx, ly))
@@ -333,7 +338,7 @@ def test_gaze_burst(res: Result, api: Api) -> None:
     res.ok("16 updates took", "%.1fs, %.0f ms each" % (elapsed, elapsed / 16 * 1000))
 
     time.sleep(1.5)
-    fps_after = field(res, api.json("/state"), "system.fps", "fps") or 0
+    fps_after: Any = field(res, api.json("/state"), "system.fps", "fps") or 0
     if fps_after >= fps_before * 0.5:
         res.ok("the eyes kept rendering", "%s -> %s fps" % (fps_before, fps_after))
     else:
@@ -344,7 +349,8 @@ def test_gaze_burst(res: Result, api: Api) -> None:
 
 def test_dilate(res: Result, api: Api) -> None:
     res.heading("pupil width")
-    r = expect(res, api, "PUT /dilate", "/dilate", "PUT", {"percent": 40})
+    r: Json = expect(res, api, "PUT /dilate", "/dilate", "PUT",
+                     {"percent": 40})
     same(res, "percent round trips", r.get("percent"), 40)
     same(res, "mode became manual", r.get("mode"), "manual")
     for edge in (0, 100):
@@ -361,8 +367,9 @@ def test_dilate(res: Result, api: Api) -> None:
 def test_toggles(res: Result, api: Api, start: Json) -> None:
     res.heading("pupil and panel swap")
     for name in ("pupil", "swap"):
-        was = field(res, start, "%s.on" % name, name)
-        r = expect(res, api, "PUT /%s flips it" % name, "/" + name, "PUT",
+        was: Any = field(res, start, "%s.on" % name, name)
+        r: Json = expect(res, api, "PUT /%s flips it" % name,
+                         "/" + name, "PUT",
                    {"on": not was})
         same(res, "%s is now %s" % (name, not was), r.get("on"), not was)
         r = expect(res, api, "PUT /%s back" % name, "/" + name, "PUT",
@@ -374,8 +381,8 @@ def test_toggles(res: Result, api: Api, start: Json) -> None:
 
 def test_clock(res: Result, api: Api, start: Json, info: Json) -> None:
     res.heading("clock")
-    was_on = field(res, start, "clock.on", "clock.on")
-    r = expect(res, api, "PUT /clock on", "/clock", "PUT", {"on": True})
+    was_on: Any = field(res, start, "clock.on", "clock.on")
+    r: Json = expect(res, api, "PUT /clock on", "/clock", "PUT", {"on": True})
     same(res, "clock is on", r.get("on"), True)
 
     r = expect(res, api, "PUT /clock seconds", "/clock", "PUT",
@@ -400,7 +407,7 @@ def test_clock(res: Result, api: Api, start: Json, info: Json) -> None:
            {"time": "not-a-time"}, status=400)
 
     # Only meaningful while nothing outranks a hand-set time.
-    src = field(res, api.json("/state"), "time.source", "time.source")
+    src: Any = field(res, api.json("/state"), "time.source", "time.source")
     if src == "ntp":
         res.skip("PUT /clock time", "a time server is in charge and outranks it")
     else:
@@ -422,12 +429,12 @@ def test_clock(res: Result, api: Api, start: Json, info: Json) -> None:
 
 def test_time(res: Result, api: Api) -> None:
     res.heading("timezone and time sources")
-    tz = expect(res, api, "GET /tz", "/tz")
-    zones = tz.get("zones", [])
+    tz: Json = expect(res, api, "GET /tz", "/tz")
+    zones: list[Any] = tz.get("zones", [])
     if len(zones) < 10:
         res.fail("zone list", "only %d zones" % len(zones))
     else:
-        regions = sorted({z["region"] for z in zones})
+        regions: list[str] = sorted({z["region"] for z in zones})
         res.ok("zones offered", "%d across %d regions" % (len(zones), len(regions)))
     # Name and region only: the POSIX string was two thirds of this reply and
     # nothing reads it -- a client picks a name and sends the name back.
@@ -438,8 +445,9 @@ def test_time(res: Result, api: Api) -> None:
         if "tz" in z:
             res.fail("zone entries are lean", "still carrying the POSIX string")
 
-    was = tz.get("tz")
-    r = expect(res, api, "PUT /tz by city", "/tz", "PUT", {"tz": "tokyo"})
+    was: Any = tz.get("tz")
+    r: Json = expect(res, api, "PUT /tz by city", "/tz", "PUT",
+                     {"tz": "tokyo"})
     same(res, "tokyo applied", r.get("tz"), "JST-9")
 
     r = expect(res, api, "PUT /tz by old regional name", "/tz", "PUT",
@@ -461,8 +469,8 @@ def test_time(res: Result, api: Api) -> None:
 
 def test_ntp(res: Result, api: Api) -> None:
     res.heading("the time client")
-    n = expect(res, api, "GET /ntp", "/ntp")
-    ntp = n.get("ntp", {})
+    n: Json = expect(res, api, "GET /ntp", "/ntp")
+    ntp: Any = n.get("ntp", {})
     for key in ("available", "enabled", "running", "linkUp", "synced",
                 "intervalSeconds", "server"):
         if key not in ntp:
@@ -477,13 +485,13 @@ def test_ntp(res: Result, api: Api) -> None:
            status=400)
 
     if ntp.get("enabled") and ntp.get("linkUp"):
-        before = ntp.get("lastSyncSeconds")
+        before: Any = ntp.get("lastSyncSeconds")
         expect(res, api, "PUT /ntp sync now", "/ntp", "PUT", {"op": "sync"})
         # A pool server has to be resolved and then asked over the internet,
         # which is not bounded by any particular number of seconds -- so wait
         # for the counter to reset rather than guessing how long it takes.
-        after = before
-        deadline = time.time() + 20
+        after: Any = before
+        deadline: float = time.time() + 20
         while time.time() < deadline:
             time.sleep(2)
             after = api.json("/ntp").get("ntp", {}).get("lastSyncSeconds")
@@ -505,7 +513,7 @@ def test_rtc(res: Result, api: Api, info: Json) -> None:
         res.skip("GET /rtc", "not compiled into this firmware")
         expect(res, api, "/rtc is absent without RTC=1", "/rtc", status=404)
         return
-    r = expect(res, api, "GET /rtc", "/rtc")
+    r: Json = expect(res, api, "GET /rtc", "/rtc")
     for key in ("present", "valid"):
         if key not in r:
             res.fail("/rtc reports %s" % key, "absent")
@@ -523,7 +531,8 @@ def test_rtc(res: Result, api: Api, info: Json) -> None:
 
 def test_netinfo(res: Result, api: Api) -> None:
     res.heading("address cards on the panels")
-    r = expect(res, api, "PUT /netinfo on", "/netinfo", "PUT", {"on": True})
+    r: Json = expect(res, api, "PUT /netinfo on", "/netinfo", "PUT",
+                     {"on": True})
     same(res, "cards are up", r.get("on"), True)
     if field(res, api.json("/state"), "net.showingInfo", "showingInfo") is True:
         res.ok("state agrees the cards are up")
@@ -562,13 +571,14 @@ def test_errors(res: Result, api: Api) -> None:
     else:
         res.fail("a missing body is 400", "got %s" % code)
 
-    req = urllib.request.Request(api.base + "/gaze", method="PUT")
+    req: urllib.request.Request = urllib.request.Request(
+        api.base + "/gaze", method="PUT")
     req.add_header("Content-Type", "application/json")
     if api.token:
         req.add_header("Authorization", "Bearer " + api.token)
     try:
         with api.opener.open(req, b"{not json", timeout=api.timeout) as r:
-            code = r.status
+            code: int = r.status
     except urllib.error.HTTPError as e:
         code = e.code
     except Exception as e:
@@ -578,7 +588,7 @@ def test_errors(res: Result, api: Api) -> None:
     else:
         res.fail("malformed JSON is 400", "got %s" % code)
 
-    err = api.json("/eye", "PUT", {"name": "nosucheye"})
+    err: Json = api.json("/eye", "PUT", {"name": "nosucheye"})
     if isinstance(err.get("error"), str) and err["error"]:
         res.ok("errors carry a reason", err["error"][:44])
     else:
@@ -593,11 +603,14 @@ def test_cors(res: Result, api: Api, info: Json) -> None:
     else:
         res.fail("preflight is answered", "got %s" % code)
 
-    req = urllib.request.Request(api.base + "/eye", method="OPTIONS")
+    req: urllib.request.Request = urllib.request.Request(
+        api.base + "/eye", method="OPTIONS")
     try:
         with api.opener.open(req, timeout=api.timeout) as r:
-            origin = r.headers.get("Access-Control-Allow-Origin")
-            methods = r.headers.get("Access-Control-Allow-Methods")
+            origin: Optional[str] = r.headers.get(
+                "Access-Control-Allow-Origin")
+            methods: Optional[str] = r.headers.get(
+                "Access-Control-Allow-Methods")
     except Exception as e:
         res.fail("preflight headers", repr(e)[:50])
         return
@@ -620,12 +633,13 @@ def test_auth(res: Result, api: Api, info: Json, host: str) -> None:
     if not info.get("auth"):
         res.skip("unauthenticated requests", "this build requires no credential")
         return
-    bare = urllib.request.build_opener()
+    bare: urllib.request.OpenerDirector = urllib.request.build_opener()
     for path in ("/api/v1/state", "/"):
-        req = urllib.request.Request("http://%s%s" % (host, path))
+        req: urllib.request.Request = urllib.request.Request(
+            "http://%s%s" % (host, path))
         try:
             with bare.open(req, timeout=api.timeout) as r:
-                code = r.status
+                code: int = r.status
         except urllib.error.HTTPError as e:
             code = e.code
         except Exception as e:
@@ -648,24 +662,25 @@ def test_credentials(res: Result, api: Api, info: Json, args) -> None:
     """
     res.heading("credentials")
 
-    r = api.raw("/credentials")[0]
+    r: int = api.raw("/credentials")[0]
     if r == 404:
         res.skip("the credential endpoints", "not compiled into this firmware")
         return
 
-    c = api.json("/credentials")
+    c: Json = api.json("/credentials")
     if not c:
         res.fail("GET /credentials", "no body")
         return
 
     # The point of the endpoint is to report without revealing.  Anything that
     # looks like a secret coming back is a bug worth failing loudly for.
-    blob = json.dumps(c).lower()
-    leaked = [w for w in ("password", "secret", "hash") if '"%s"' % w in blob]
+    blob: str = json.dumps(c).lower()
+    leaked: list[str] = [
+        w for w in ("password", "secret", "hash") if '"%s"' % w in blob]
     # "password" may legitimately appear as a *key* name; what must not appear
     # is any credential we know the value of.
-    known = [v for v in (args.password, args.token) if v]
-    spilled = [v for v in known if v and v.lower() in blob]
+    known: list[str] = [v for v in (args.password, args.token) if v]
+    spilled: list[str] = [v for v in known if v and v.lower() in blob]
     if spilled:
         res.fail("GET /credentials leaks a credential",
                  "the response contains a value we authenticated with")
@@ -712,7 +727,7 @@ def test_credentials(res: Result, api: Api, info: Json, args) -> None:
         res.skip("the round trip", "needs an AUTH_HTTP build and --password")
         return
 
-    temp = "frank-test-" + str(int(time.time()))
+    temp: str = "frank-test-" + str(int(time.time()))
     r = api.json("/credentials", "PUT",
                  {"current": args.password, "password": temp})
     if not r or not r.get("ok"):
@@ -722,13 +737,13 @@ def test_credentials(res: Result, api: Api, info: Json, args) -> None:
 
     # The old credential must stop working, or nothing was really changed.
     api.recredential(args.user, temp)
-    after = api.json("/credentials")
+    after: Json = api.json("/credentials")
     if after:
         res.ok("the new password works")
     else:
         res.fail("the new password", "the board did not accept it")
 
-    back = api.json("/credentials", "PUT",
+    back: Json = api.json("/credentials", "PUT",
                     {"current": temp, "password": args.password})
     api.recredential(args.user, args.password)
     if back and back.get("ok"):
@@ -750,13 +765,13 @@ def test_page(res: Result, api: Api) -> None:
     # client that does not exist would be the wrong trade.
     if body[:2] == b"\x1f\x8b":
         try:
-            plain = gzip.decompress(body)
+            plain: bytes = gzip.decompress(body)
         except Exception as e:
             res.fail("the gzip stream decompresses", repr(e)[:50])
             return
         res.ok("GET /", "%d bytes gzipped, %d unpacked (%.0f%%)"
                % (len(body), len(plain), 100.0 * len(body) / len(plain)))
-        text = plain.decode("utf-8", "replace")
+        text: str = plain.decode("utf-8", "replace")
     else:
         res.fail("the page is compressed", "%d bytes, not gzip" % len(body))
         text = body.decode("utf-8", "replace")
@@ -774,7 +789,8 @@ def test_settings(res: Result, api: Api) -> None:
     res.heading("saving (writes flash)")
     expect(res, api, "POST /settings save", "/settings", "POST",
            {"op": "save"})
-    dirty = field(res, api.json("/state"), "system.settingsDirty", "dirty")
+    dirty: Any = field(res, api.json("/state"), "system.settingsDirty",
+                       "dirty")
     same(res, "nothing unsaved afterwards", dirty, False)
     expect(res, api, "rejects a bad op", "/settings", "POST", {"op": "nope"},
            status=400)
@@ -782,11 +798,11 @@ def test_settings(res: Result, api: Api) -> None:
 
 def test_wifi(res: Result, api: Api) -> None:
     res.heading("wifi (reboots the board)")
-    r = expect(res, api, "GET /wifi", "/wifi")
+    r: Json = expect(res, api, "GET /wifi", "/wifi")
     for key in ("state", "ssid", "stored", "portalName"):
         if key not in r:
             res.fail("/wifi reports %s" % key, "absent")
-    blob = json.dumps(r).lower()
+    blob: str = json.dumps(r).lower()
     if "pass" in blob and "password" not in blob:
         res.fail("no password in the reply", blob[:60])
     else:
@@ -811,7 +827,7 @@ def restore(api: Api, start: Json) -> None:
             else {"percent": start["dilate"]["percent"]})
     api.raw("/pupil", "PUT", {"on": start.get("pupil", {}).get("on", True)})
     api.raw("/swap", "PUT", {"on": start.get("swap", {}).get("on", False)})
-    clock = start.get("clock", {})
+    clock: Any = start.get("clock", {})
     if clock:
         api.raw("/clock", "PUT", {"on": clock.get("on", False),
                                   "seconds": clock.get("seconds", False),
@@ -858,7 +874,7 @@ def percentile(values: list[float], p: float) -> float:
     """Nearest-rank, which needs no interpolation and no numpy."""
     if not values:
         return 0.0
-    k = max(1, min(len(values), int(round(p / 100.0 * len(values)))))
+    k: int = max(1, min(len(values), int(round(p / 100.0 * len(values)))))
     return sorted(values)[k - 1]
 
 
@@ -868,20 +884,22 @@ def histogram(values: list[float], width: int = 42) -> None:
     A linear histogram of this data is one tall bar and a lot of empty space;
     the whole question is how far the slow end reaches.
     """
-    edges = [0, 20, 30, 40, 50, 65, 80, 100, 150, 250, 500, 1000, 1 << 30]
-    labels = ["   <20", " 20-30", " 30-40", " 40-50", " 50-65", " 65-80",
+    edges: list[int] = [0, 20, 30, 40, 50, 65, 80, 100, 150, 250, 500,
+                        1000, 1 << 30]
+    labels: list[str] = ["   <20", " 20-30", " 30-40", " 40-50", " 50-65",
+                         " 65-80",
               " 80-100", "100-150", "150-250", "250-500", "0.5-1s", "  >1s"]
-    counts = [0] * (len(edges) - 1)
+    counts: list[int] = [0] * (len(edges) - 1)
     for v in values:
         for i in range(len(counts)):
             if edges[i] <= v < edges[i + 1]:
                 counts[i] += 1
                 break
-    top = max(counts) or 1
+    top: int = max(counts) or 1
     for label, n in zip(labels, counts):
         if not n:
             continue
-        bar = "#" * max(1, int(round(n * width / top)))
+        bar: str = "#" * max(1, int(round(n * width / top)))
         print("    %7s ms  %-*s %4d" % (label, width, bar, n))
 
 
@@ -894,7 +912,7 @@ def report_latency(res: Result) -> None:
     """
     if not res.samples:
         return
-    allms = [ms for ms, _ in res.samples]
+    allms: list[float] = [ms for ms, _ in res.samples]
     print()
     print("%d requests: median %.0f ms, p90 %.0f, p99 %.0f, max %.0f (%s)"
           % (len(allms), percentile(allms, 50), percentile(allms, 90),
@@ -907,7 +925,8 @@ def report_latency(res: Result) -> None:
     by: dict[str, list[float]] = {}
     for ms, what in res.samples:
         by.setdefault(what, []).append(ms)
-    rows = sorted(by.items(), key=lambda kv: percentile(kv[1], 50),
+    rows: list[tuple[str, list[float]]] = sorted(
+        by.items(), key=lambda kv: percentile(kv[1], 50),
                   reverse=True)
     print()
     print("  slowest endpoints          n   median      p90      max")
@@ -934,17 +953,18 @@ def linear_histogram(values: list[float], hi: float, buckets: int = 20,
     """
     if not values:
         return
-    step = hi / buckets
-    counts = [0] * (buckets + 1)  # the last bucket collects everything over hi
+    step: float = hi / buckets
+    # The last bucket collects everything over hi.
+    counts: list[int] = [0] * (buckets + 1)
     for v in values:
         counts[min(buckets, int(v / step))] += 1
-    top = max(counts) or 1
+    top: int = max(counts) or 1
     for i, n in enumerate(counts):
         if i == buckets:
-            label = " >%5.0f" % hi
+            label: str = " >%5.0f" % hi
         else:
             label = "%3.0f-%3.0f" % (i * step, (i + 1) * step)
-        bar = "#" * int(round(n * width / top)) if n else ""
+        bar: str = "#" * int(round(n * width / top)) if n else ""
         print("    %9s ms  %-*s %4d" % (label, width, bar, n))
 
 
@@ -972,12 +992,13 @@ def digest_header(host: str, path: str, user: str, password: str,
     except urllib.error.HTTPError as e:
         if e.code != 401:
             return None
-        challenge = e.headers.get("WWW-Authenticate", "")
+        challenge: str = e.headers.get("WWW-Authenticate", "")
     except Exception:
         return None
 
     def param(name: str) -> str:
-        m = re.search(r'%s="([^"]*)"' % name, challenge)
+        m: Optional[re.Match[str]] = re.search(
+            r'%s="([^"]*)"' % name, challenge)
         return m.group(1) if m else ""
 
     realm, nonce, opaque = param("realm"), param("nonce"), param("opaque")
@@ -988,9 +1009,9 @@ def digest_header(host: str, path: str, user: str, password: str,
         return hashlib.md5(s.encode("utf-8")).hexdigest()
 
     cnonce, nc = "0a4f113b", "00000001"
-    ha1 = md5("%s:%s:%s" % (user, realm, password))
-    ha2 = md5("%s:%s" % (method, path))
-    resp = md5(":".join([ha1, nonce, nc, cnonce, "auth", ha2]))
+    ha1: str = md5("%s:%s:%s" % (user, realm, password))
+    ha2: str = md5("%s:%s" % (method, path))
+    resp: str = md5(":".join([ha1, nonce, nc, cnonce, "auth", ha2]))
     return ('Digest username="%s", realm="%s", nonce="%s", uri="%s", '
             'qop=auth, nc=%s, cnonce="%s", response="%s", opaque="%s"'
             % (user, realm, nonce, path, nc, cnonce, resp, opaque))
@@ -1018,13 +1039,13 @@ def decompose(res: Result, api: Api, n: int, host: str, path: str,
     the first byte back cannot arrive until the board has been round the
     render loop.
     """
-    ip = socket.gethostbyname(host.split(":")[0])
+    ip: str = socket.gethostbyname(host.split(":")[0])
 
-    st = api.json("/state")
-    fps = 0
+    st: Json = api.json("/state")
+    fps: Any = 0
     if st:
         fps = (st.get("system") or {}).get("fps") or 0
-    frame_ms = 1000.0 / fps if fps else 31.0
+    frame_ms: float = 1000.0 / fps if fps else 31.0
     print("measuring %d requests to %s" % (n, path))
     print("the board reports %s fps, so one frame is %.1f ms"
           % (fps or "no", frame_ms))
@@ -1039,12 +1060,12 @@ def decompose(res: Result, api: Api, n: int, host: str, path: str,
     elif user and password:
         auth = digest_header(host, path, user, password)
 
-    req = ("GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n"
+    req: str = ("GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n"
            % (path, host))
     if auth:
         req += "Authorization: %s\r\n" % auth
     req += "\r\n"
-    blob = req.encode("ascii")
+    blob: bytes = req.encode("ascii")
 
     connects: list[float] = []
     waits: list[float] = []
@@ -1052,24 +1073,24 @@ def decompose(res: Result, api: Api, n: int, host: str, path: str,
     codes: dict[int, int] = {}
 
     for i in range(n):
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(10.0)
         try:
-            t0 = time.perf_counter()
+            t0: float = time.perf_counter()
             s.connect((ip, 80))
-            t1 = time.perf_counter()
+            t1: float = time.perf_counter()
             s.sendall(blob)
-            first = s.recv(4096)
-            t2 = time.perf_counter()
+            first: bytes = s.recv(4096)
+            t2: float = time.perf_counter()
             if not first:
                 continue
-            body = first
+            body: bytes = first
             while True:
-                chunk = s.recv(4096)
+                chunk: bytes = s.recv(4096)
                 if not chunk:
                     break
                 body += chunk
-            t3 = time.perf_counter()
+            t3: float = time.perf_counter()
         except Exception as e:
             print("  request %d failed: %s" % (i + 1, e))
             continue
@@ -1077,7 +1098,7 @@ def decompose(res: Result, api: Api, n: int, host: str, path: str,
             s.close()
 
         try:
-            code = int(body.split(b" ", 2)[1])
+            code: int = int(body.split(b" ", 2)[1])
         except Exception:
             code = 0
         codes[code] = codes.get(code, 0) + 1
@@ -1101,7 +1122,8 @@ def decompose(res: Result, api: Api, n: int, host: str, path: str,
               % (name, percentile(vals, 50), percentile(vals, 90),
                  percentile(vals, 99), max(vals)))
 
-    totals = [c + w + t for c, w, t in zip(connects, waits, transfers)]
+    totals: list[float] = [
+        c + w + t for c, w, t in zip(connects, waits, transfers)]
     print()
     print("  %d requests            median      p90      p99      max"
           % len(waits))
@@ -1110,7 +1132,7 @@ def decompose(res: Result, api: Api, n: int, host: str, path: str,
     row("rest of transfer", transfers)
     row("total", totals)
 
-    mean = sum(waits) / len(waits)
+    mean: float = sum(waits) / len(waits)
     print()
     print("  wait + serve, against one frame of %.1f ms" % frame_ms)
     linear_histogram(waits, frame_ms * 2)
@@ -1122,9 +1144,10 @@ def decompose(res: Result, api: Api, n: int, host: str, path: str,
     # interval explains everything; spread to two and something costs an
     # extra trip round the loop; piled up above the frame and the delay is
     # not the render loop at all.
-    over = sum(1 for w in waits if w > frame_ms * 1.1)
+    over: int = sum(1 for w in waits if w > frame_ms * 1.1)
     if over > len(waits) * 0.6:
-        verdict = ("most waits exceed a whole frame, so the render loop is "
+        verdict: str = (
+            "most waits exceed a whole frame, so the render loop is "
                    "not what they are waiting for")
     elif over > len(waits) * 0.2:
         verdict = ("a fifth or more spill past one frame -- some requests "
@@ -1144,7 +1167,7 @@ def decompose(res: Result, api: Api, n: int, host: str, path: str,
     # the connection is not the application's yet.  So if the outliers show up
     # here too, they are the link, and the round numbers say so -- a lost
     # segment waits out a retransmission timer, and those come in steps.
-    slow = sorted((c for c in connects if c > 100), reverse=True)
+    slow: list[float] = sorted((c for c in connects if c > 100), reverse=True)
     if slow:
         print()
         print("  %d handshakes over 100 ms, before the board's own code saw "
@@ -1156,7 +1179,7 @@ def decompose(res: Result, api: Api, n: int, host: str, path: str,
 
 
 def main(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
+    ap: argparse.ArgumentParser = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--host", default="frank.local",
                     help="name or address of the board (default frank.local)")
@@ -1176,10 +1199,10 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--path", default="/api/v1/info",
                     help="what --decompose asks for (use a small reply)")
     ap.add_argument("--timeout", type=float, default=10.0)
-    args = ap.parse_args(argv[1:])
+    args: argparse.Namespace = ap.parse_args(argv[1:])
 
-    res = Result()
-    api = Api(args.host, res, args.user, args.password, args.token,
+    res: Result = Result()
+    api: Api = Api(args.host, res, args.user, args.password, args.token,
               args.timeout)
 
     if args.latency:
@@ -1190,15 +1213,15 @@ def main(argv: list[str]) -> int:
                          args.user, args.password, args.token)
 
     print("testing http://%s/api/v1" % args.host)
-    started = time.time()
+    started: float = time.time()
 
-    info = test_info(res, api)
+    info: Json = test_info(res, api)
     if not info:
         print("\nthe board did not answer /api/v1/info -- is it up, and does "
               "it need a credential?")
         return 1
 
-    start = test_state(res, api)
+    start: Json = test_state(res, api)
     if not start:
         return 1
 
@@ -1233,7 +1256,7 @@ def main(argv: list[str]) -> int:
     restore(api, start)
     res.ok("restored", "eye, gaze, width, pupil, swap, clock")
 
-    elapsed = time.time() - started
+    elapsed: float = time.time() - started
     print()
     print("%d passed, %d failed, %d skipped in %.0fs"
           % (res.passed, len(res.failed), len(res.skipped), elapsed))

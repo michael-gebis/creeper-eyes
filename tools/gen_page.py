@@ -20,7 +20,7 @@ from __future__ import annotations
 import gzip
 import os
 import re
-from typing import Any
+from typing import Any, Optional
 
 Import("env")  # noqa: F821
 env: Any
@@ -48,8 +48,9 @@ def selected_favicon() -> str:
                 want = str(define[1])
 
     name: str = "FAVICON_URI_EYES" if want.endswith("EYES") else "FAVICON_URI_FRANK"
-    m = re.search(r"#define\s+" + name + r"\b(.*?)(?=\n#define|\n#if|\Z)",
-                  src, re.S)
+    m: Optional[re.Match[str]] = re.search(
+        r"#define\s+" + name + r"\b(.*?)(?=\n#define|\n#if|\Z)",
+        src, re.S)
     if not m:
         raise SystemExit("gen_page: could not find %s in favicon.h" % name)
     # Adjacent string literals, concatenated the way the preprocessor would.
@@ -77,7 +78,7 @@ def emit(data: bytes, raw_len: int, icon: str) -> str:
         "static const uint8_t PAGE_GZ[] PROGMEM = {",
     ]
     for i in range(0, len(data), 16):
-        row = ", ".join("0x%02X" % b for b in data[i:i + 16])
+        row: str = ", ".join("0x%02X" % b for b in data[i:i + 16])
         lines.append("    " + row + ",")
     lines += ["};", "", "#endif // PAGE_GZ_H", ""]
     return "\n".join(lines)
