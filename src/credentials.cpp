@@ -87,7 +87,7 @@ bool credIsStored(CredKind k) {
 
 bool credRebootPending(void) { return rebootPending; }
 
-bool credSet(CredKind k, const char *value, String &err) {
+bool credCheck(CredKind k, const char *value, String &err) {
   if (k < 0 || k >= CRED_COUNT) {
     err = "no such credential";
     return false;
@@ -119,7 +119,14 @@ bool credSet(CredKind k, const char *value, String &err) {
     err = "a username may not contain a colon";
     return false;
   }
+  return true;
+}
 
+bool credSet(CredKind k, const char *value, String &err) {
+  if (!credCheck(k, value, err))
+    return false;
+
+  String v(value);
   String toStore = (k == CRED_OTA) ? md5Of(v.c_str()) : v;
 
   Preferences prefs;

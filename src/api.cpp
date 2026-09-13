@@ -751,8 +751,9 @@ static void putCredentials(void) {
   }
 #endif
 
-  // Collect first, apply second, so a bad value in the third field does not
-  // leave the first two already changed.
+  // Collect, then check every value, and only then apply any of them.  A
+  // rejected fourth field must not leave the first three written: "rejected"
+  // should mean nothing happened.
   struct Change {
     CredKind kind;
     const char *field;
@@ -800,11 +801,23 @@ static void putCredentials(void) {
 
   String err;
   for (auto &c : changes) {
-    if (c.present && !credSet(c.kind, c.value, err)) {
+    if (c.present && !credCheck(c.kind, c.value, err)) {
       // Whichever field failed, name it -- "must not be empty" is no use if
       // four fields were sent.
       String msg = String(c.field) + ": " + err;
       sendError(400, msg.c_str());
+      return; // nothing written yet
+    }
+  }
+
+  for (auto &c : changes) {
+    if (c.present && !credSet(c.kind, c.value, err)) {
+      // Checked a moment ago, so this is storage failing rather than the
+      // value being wrong -- and by now some of the others may have been
+      // written, which the caller needs to know.
+      String msg = String(c.field) + ": " + err +
+                   " (earlier fields in this request may have been saved)";
+      sendError(500, msg.c_str());
       return;
     }
   }

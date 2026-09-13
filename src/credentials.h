@@ -57,6 +57,13 @@ const char *credGet(CredKind k);
 // is set to.
 bool credIsStored(CredKind k);
 
+// Whether a value would be accepted, without storing it.  Separate from
+// credSet() so that a caller changing several credentials at once can judge
+// all of them before committing any -- otherwise a rejected third field
+// leaves the first two already written, which is not what "rejected" should
+// mean.
+bool credCheck(CredKind k, const char *value, String &err);
+
 // Replace one credential and persist it.  Pass the plain password for
 // CRED_OTA; the hash is computed here.  Returns false, with why in `err`, if
 // the value is unusable -- empty, too long, or containing a colon where the
