@@ -1,0 +1,4 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "creeper-eyes-rows-25.4mm")(type "KiCad")(uri "${KIPRJMOD}/creeper-eyes-rows-25.4mm.kicad_sym")(options "")(descr ""))
+)

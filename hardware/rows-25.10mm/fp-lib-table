@@ -1,0 +1,4 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "creeper-eyes-rows-25.10mm")(type "KiCad")(uri "${KIPRJMOD}/creeper-eyes-rows-25.10mm.pretty")(options "")(descr ""))
+)

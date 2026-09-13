@@ -10,3 +10,15 @@ include/secrets.h
 # Python bytecode from the tools
 __pycache__/
 *.pyc
+
+# KiCad's own scratch: per-user view state, backups, the fab files that
+# hardware/make_outputs.py regenerates.  The zip it produces is kept, so a
+# board can be ordered from a clone without installing KiCad.
+hardware/**/*.kicad_prl
+hardware/**/*-backups/
+hardware/**/_autosave-*
+hardware/**/*.lck
+hardware/**/fp-info-cache
+hardware/**/3DxService.log
+hardware/*/gerbers/*
+!hardware/*/gerbers/*-gerbers.zip
