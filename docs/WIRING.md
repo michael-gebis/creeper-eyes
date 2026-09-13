@@ -202,7 +202,7 @@ Every pin this project uses is broken out on the 30-pin DevKit V1:
 | 5 | `D5` | CLK | Strapping pin; must be high at boot, which SPI idle satisfies |
 | 15 | `D15` | CS, Frank's right | Strapping pin; CS idles high, so this is fine |
 | 18 | `D18` | DIN | |
-| 19 | `D19` | *(reserved MISO)* | Unused — free |
+| 19 | `D19` | *(taken by SPI)* | Nothing is read back, but `SPI.begin()` attaches the peripheral to it |
 | 21 | `D21` | *(free)* | I²C data, if the optional RTC is fitted |
 | 22 | `D22` | *(free)* | I²C clock, if the optional RTC is fitted |
 | 27 | `D27` | RST | |

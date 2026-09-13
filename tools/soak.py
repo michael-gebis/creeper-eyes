@@ -95,6 +95,22 @@ def wait_for_board(host: str, limit: int = 90) -> bool:
     return False
 
 
+def signal(api: Api) -> Optional[int]:
+    """The board's own view of its radio, in dBm.
+
+    Sampled per round rather than per request: it is a slow-moving condition,
+    and asking for it is itself a request that would go in the timings.
+    """
+    try:
+        net = api.json("/net")
+    except Exception:
+        return None
+    if not isinstance(net, dict):
+        return None
+    rssi = net.get("rssi")
+    return rssi if isinstance(rssi, int) else None
+
+
 def measure(api: Api, n: int, gap: float) -> tuple[list[float], int]:
     """n identical requests.  Returns the timings and a failure count."""
     out: list[float] = []
@@ -159,7 +175,7 @@ def main(argv: list[str]) -> int:
     fh = open(args.csv, "a", newline="", encoding="utf-8")
     out = csv.writer(fh)
     if fresh:
-        out.writerow(["round", "config", "flags", "unix_time", "ms"])
+        out.writerow(["round", "config", "flags", "unix_time", "ms", "rssi"])
 
     print("soaking for %.1f h: %s (%s) against %s (%s)"
           % (args.hours, a.name, a.flags, b.name, b.flags))
@@ -182,6 +198,7 @@ def main(argv: list[str]) -> int:
                     print(" board did not come back")
                     continue
                 time.sleep(2)
+                rssi = signal(api)
                 got, failed = measure(api, args.samples, args.gap)
                 stalls = len([v for v in got if v > STALL_MS])
                 cfg.samples += got
@@ -191,12 +208,14 @@ def main(argv: list[str]) -> int:
                 now = time.time()
                 for v in got:
                     out.writerow([rnd, cfg.name, cfg.flags, "%.3f" % now,
-                                  "%.1f" % v])
+                                  "%.1f" % v, "" if rssi is None else rssi])
                 fh.flush()
                 s = sorted(got)
-                print("\r   %-6s median %5.0f  p99 %6.0f  max %7.0f  "
+                print("\r   %-6s %s median %5.0f  p99 %6.0f  max %7.0f  "
                       "stalls %d/%d          "
-                      % (cfg.name, percentile(s, 50) if s else 0,
+                      % (cfg.name,
+                         "--  " if rssi is None else "%4d dBm" % rssi,
+                         percentile(s, 50) if s else 0,
                          percentile(s, 99) if s else 0, s[-1] if s else 0,
                          stalls, len(got)))
             order.reverse()  # so drift inside a round cancels across rounds

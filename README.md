@@ -100,6 +100,18 @@ Module silkscreens vary between sellers — `DIN` may be labelled `SDA`, `SI` or
 Optional, and compiled out by default: a **battery-backed clock**, four more
 wires onto two otherwise idle pins — [docs/WIRING_RTC.md](docs/WIRING_RTC.md).
 
+### Or a circuit board instead of the jumpers
+
+The same fourteen wires exist as a carrier board in
+[hardware/](hardware/README.md): the DevKit plugs into a socket, each eye gets
+its own header, and the SPI bus is copper rather than Dupont leads — which
+matters mostly because nothing can work loose inside a sealed head. About $10
+for five boards.
+
+> It is **untested**. The design passes KiCad's electrical, netlist and design
+> rule checks, and nothing more: no board has been made and no eye has blinked
+> on one. The breadboard is the wiring that is known to work.
+
 ## Build and flash
 
 This is a [PlatformIO](https://platformio.org/) project. No Arduino IDE needed.
@@ -825,6 +837,13 @@ existed. See [docs/HTTP_LATENCY.md](docs/HTTP_LATENCY.md).
 python tools/soak.py --hours 3 --a "-DCLOCK=1" --b "-DCLOCK=0"
 ```
 
+Each row of the CSV carries the signal strength at the time it was taken, and
+each round prints it. That column is there because the radio is the variable
+that moves on its own: the first comparison run on this project concluded a
+change was catastrophically worse, while RSSI drifted from −48 to −56 dBm
+underneath it. Timings without the conditions they were taken in are not
+evidence.
+
 It reports latency as percentiles and a histogram rather than an average,
 because on this board the tail is the interesting part — a mean of 60 ms hides
 a request that took eight seconds. `--latency N` skips the tests and times N
@@ -1013,6 +1032,7 @@ that the binary *is* that commit.
 | Garbled serial output | `DEBUG_BAUD` and `monitor_speed` disagree, or a CH340 clone struggling above 115200. |
 | Board resets when a panel is connected | Brownout. Use a powered hub or feed 5 V to `VIN`. |
 | Board will not boot | Something on `D12`. Held high at reset it stops the ESP32 starting. No eye signal uses it. |
+| The web page lags, or an update fails | Almost certainly the radio. Check the signal on the Wi-Fi card — the page says what the number means. Every delay and every failed update measured on this project traced back to packet loss, not to the firmware. `python tools/test_api.py --host frank.local --decompose 200` takes the guesswork out of it. |
 
 Frame rate is **not** a useful signal for whether panels are connected — the
 SPI writes happen either way, so the rate is the same with nothing attached.

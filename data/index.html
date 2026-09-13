@@ -159,6 +159,7 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
   <div class=card>
     <h2>Wi-Fi <span class=tag>stored by the radio</span></h2>
     <div class=row><span class=dim id=wifiTxt></span></div>
+    <p class=note id=wifiNote></p>
     <div class=row>
       <input type=text id=wSsid class=grow placeholder=network autocomplete=off>
     </div>
@@ -336,8 +337,16 @@ function render(s) {
     : 'Kept until the power goes off. Fit an RTC and it is kept for good.';
 
   $('#wifiTxt').textContent = s.net.state === 'up'
-    ? `on ${s.net.ssid}, ${s.net.rssi} dBm`
+    ? `on ${s.net.ssid}, ${s.net.rssi} dBm — ${signalWord(s.net.rssi)}`
     : (s.net.state === 'portal' ? 'setup portal open' : 'not connected');
+
+  // Worth saying out loud only when it is the thing to fix.  A strong signal
+  // needs no comment; a weak one explains everything else the page is doing.
+  $('#wifiNote').textContent = s.net.state === 'up' && s.net.rssi < -55
+    ? 'Every delay measured on this board has come back to the radio. If the '
+      + 'eyes lag or an update fails, move the head or the access point '
+      + 'before suspecting anything else.'
+    : '';
 
   const rows = [
     ['host', s.net.mdns], ['mac', s.net.mac], ['ipv4', s.net.ipv4 || '—']
@@ -423,6 +432,21 @@ $('#swap').onclick = () => act(() => api('/swap', 'PUT', {on: !st.swap.on}));
 // firmware, so `look` over serial and the API keep the convention they have
 // always documented.
 const flipY = y => 1023 - y;
+
+// What a signal strength means, in words, because "-62 dBm" is a number most
+// people have no scale for -- and on this board it is the number that decides
+// whether the page feels quick.
+//
+// The thresholds are lower than the usual WiFi advice, which calls -67 the
+// floor for reliable use.  They are set from what was actually measured here:
+// at -62 dBm this board was losing 6 to 7 percent of its packets, which is
+// enough to put a second on an occasional request and to make a firmware
+// update fail outright.  So -55 is where the warning starts.
+const signalWord = rssi =>
+  rssi >= -55 ? 'strong'
+  : rssi >= -65 ? 'fair, some packets lost'
+  : rssi >= -75 ? 'weak, expect slow replies'
+  : 'very weak';
 
 const pad = $('#pad');
 

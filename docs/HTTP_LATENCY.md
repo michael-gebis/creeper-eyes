@@ -243,6 +243,10 @@ first, confounded comparison suggested.
 configurations in every round, reversing the order each round, so both see the
 same radio. Forty-five rounds, sixty samples per side per round, two hours.
 
+(It now also records the signal strength on every row, which this run had to
+establish by hand afterwards. The conditions a measurement was taken in belong
+in the file with it.)
+
 | | p90 | p99 | p99.9 | max | stalls over 500 ms |
 | :--- | ---: | ---: | ---: | ---: | ---: |
 | task | 105 | 280 | 1640 | 3890 | 14 of 2700 (0.52%) |
