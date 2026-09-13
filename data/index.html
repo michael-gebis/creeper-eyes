@@ -80,8 +80,6 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
       <button id=pupil>pupil</button>
       <button id=swap>swap panels</button>
     </div>
-    <p class=note>Swap trades which panel is Frank's left, for when the
-      wiring came out the other way round.</p>
   </div>
 
   <div class=card>
@@ -105,8 +103,6 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
       <button data-act=splash>splash</button>
     </div>
     <div class=row><button id=netinfo>show address</button></div>
-    <p class=note>The address cards hold the panels for twelve seconds, or
-      until you press the button again.</p>
   </div>
 
   <div class=card>
@@ -159,7 +155,6 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
   <div class=card>
     <h2>Wi-Fi <span class=tag>stored by the radio</span></h2>
     <div class=row><span class=dim id=wifiTxt></span></div>
-    <p class=note id=wifiNote></p>
     <div class=row>
       <input type=text id=wSsid class=grow placeholder=network autocomplete=off>
     </div>
@@ -263,8 +258,6 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
       to flash. Forget clears them, so the next boot starts from the build-time
       defaults. Wi-Fi is stored separately, by the radio, and neither button
       touches it.</p>
-    <p class=note>Everything here is <kbd>/api/v1</kbd>. The serial console
-      drives the same operations.</p>
   </div>
 </div>
 
@@ -429,14 +422,6 @@ function render(s) {
   $('#wifiTxt').textContent = s.net.state === 'up'
     ? `on ${s.net.ssid}, ${s.net.rssi} dBm — ${signalWord(s.net.rssi)}`
     : (s.net.state === 'portal' ? 'setup portal open' : 'not connected');
-
-  // Worth saying out loud only when it is the thing to fix.  A strong signal
-  // needs no comment; a weak one explains everything else the page is doing.
-  $('#wifiNote').textContent = s.net.state === 'up' && s.net.rssi < -55
-    ? 'Every delay measured on this board has come back to the radio. If the '
-      + 'eyes lag or an update fails, move the head or the access point '
-      + 'before suspecting anything else.'
-    : '';
 
   const rows = [
     ['host', s.net.mdns], ['mac', s.net.mac], ['ipv4', s.net.ipv4 || '—']
