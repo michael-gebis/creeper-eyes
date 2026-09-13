@@ -220,6 +220,30 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
       credentials.</p>
   </div>
 
+  <div class=card id=sleepCard hidden>
+    <h2>Sleep <span class="tag saved">persistent</span></h2>
+    <div class=row>
+      <button id=slpOn></button>
+      <span class=dim id=slpTxt></span>
+    </div>
+    <div class=row id=slpWindow>
+      <span class=dim>from</span>
+      <input type=time id=slpStart>
+      <span class=dim>to</span>
+      <input type=time id=slpStop>
+      <button id=slpSet>set</button>
+    </div>
+    <div class=row id=slpLevelRow>
+      <span class=dim>brightness</span>
+      <input type=range id=slpLevel min=0 max=100 step=5 class=grow>
+      <span class=dim id=slpLevelTxt></span>
+    </div>
+    <p class=note>At 0 the panels are switched off and the eyes stop being
+      drawn, which is the point of it. Above 0 they stay lit but dim and keep
+      moving, which is a nightlight rather than a sleep.</p>
+    <p class=note id=slpNote></p>
+  </div>
+
   <div class=card>
     <h2>Device</h2>
     <table id=info></table>
@@ -257,6 +281,26 @@ async function api(path, method, body) {
     o.body = JSON.stringify(body);
   }
   const r = await fetch('/api/v1' + path, o);
+
+  // A refused credential has to stop the page, not just fail one request.
+  //
+  // The browser answers a 401 challenge itself, before this code sees
+  // anything, by asking for a username and password.  So a page that keeps
+  // polling through a refusal asks again every second, and cancelling the
+  // box achieves nothing because the next poll is already on its way -- the
+  // only escape is closing the tab.  Stopping here turns an endless prompt
+  // into one prompt and an explanation.
+  if (r.status === 401 || r.status === 403) {
+    halted = true;
+    $('#banner').style.display = 'block';
+    $('#banner').textContent = r.status === 401
+      ? 'Not signed in. Reload the page to try again — and check the ' +
+        'username and password, since the board refused them.'
+      : 'Refused: this board only answers to its own name or address. ' +
+        'Try http://frank.local/ or its IP address directly.';
+    throw new Error(r.status === 401 ? 'not signed in' : 'wrong host');
+  }
+
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
   return j;
@@ -379,6 +423,8 @@ function render(s) {
   $('#timeNote').innerHTML = s.time.rtc.present
     ? 'Stored in the battery-backed clock, so it survives a power cut.'
     : 'Kept until the power goes off. Fit an RTC and it is kept for good.';
+
+  if (s.sleep) sleepRender(Object.assign({}, sleepInfo || {}, s.sleep));
 
   $('#wifiTxt').textContent = s.net.state === 'up'
     ? `on ${s.net.ssid}, ${s.net.rssi} dBm — ${signalWord(s.net.rssi)}`
@@ -571,6 +617,73 @@ $('#cSave').onclick = async () => {
   }
 };
 
+// ------------------------------------------------------------------ sleep --
+//
+// The window is stored on the board; this only shows it and sets it.  Note
+// that refresh() renders the status from /state, which carries a compact
+// copy, so the once-a-second poll does not need a second request.
+let sleepInfo = null;
+
+const hhmm = m => String(m / 60 | 0).padStart(2, '0') + ':' +
+                  String(m % 60).padStart(2, '0');
+
+async function sleepRefresh() {
+  try {
+    sleepInfo = await api('/sleep');
+  } catch (e) {
+    return; // compiled out
+  }
+  $('#sleepCard').hidden = false;
+  if (!held($('#slpStart'))) $('#slpStart').value = sleepInfo.start;
+  if (!held($('#slpStop'))) $('#slpStop').value = sleepInfo.stop;
+  if (!held($('#slpLevel'))) $('#slpLevel').value = sleepInfo.level;
+  $('#slpLevelTxt').textContent = sleepInfo.level == 0
+    ? 'off' : sleepInfo.level + '%';
+  sleepRender(sleepInfo);
+}
+
+// Both the card's own state line and the one refresh() updates every second.
+function sleepRender(s) {
+  if (!s) return;
+  $('#slpOn').classList.toggle('on', s.enabled);
+  $('#slpOn').textContent = s.enabled ? 'on' : 'off';
+  $('#slpWindow').hidden = !s.enabled;
+  $('#slpLevelRow').hidden = !s.enabled;
+
+  // "waiting for the time" is the one people will actually hit: enabled, but
+  // the board has no idea what time it is, so it stays awake.  Saying so
+  // beats letting them wonder why nothing happened.
+  let txt;
+  if (!s.enabled) txt = 'off';
+  else if (s.reason === 'waiting for the time')
+    txt = 'waiting for the time — set it, or turn on NTP';
+  else if (s.reason === 'asleep') txt = 'asleep';
+  else if (s.reason === 'woken') txt = 'awake for a moment';
+  else txt = 'awake';
+  if (s.changesInMinutes !== undefined && s.reason !== 'waiting for the time') {
+    const h = s.changesInMinutes / 60 | 0, m = s.changesInMinutes % 60;
+    txt += ` — ${s.changesToAsleep ? 'sleeps' : 'wakes'} in ` +
+           (h ? `${h}h ${m}m` : `${m}m`);
+  }
+  $('#slpTxt').textContent = txt;
+}
+
+$('#slpOn').onclick = () => act(async () => {
+  await api('/sleep', 'PUT', {enabled: !(sleepInfo && sleepInfo.enabled)});
+  await sleepRefresh();
+});
+
+$('#slpSet').onclick = () => act(async () => {
+  await api('/sleep', 'PUT',
+            {start: $('#slpStart').value, stop: $('#slpStop').value});
+  await sleepRefresh();
+});
+
+$('#slpLevel').onchange = () => act(async () => {
+  await api('/sleep', 'PUT', {level: Number($('#slpLevel').value)});
+  await sleepRefresh();
+});
+
 const pad = $('#pad');
 
 // Dragging produces pointer events far faster than the board can answer them,
@@ -741,6 +854,7 @@ document.addEventListener('visibilitychange', () => {
     await fillLists();
     await fillInfo();
     await credRefresh();
+    await sleepRefresh();
   } catch (e) {
     $('#err').textContent = e.message;
   }

@@ -22,6 +22,7 @@
 #include "state.h"
 #include "display.h"
 #include "net.h"
+#include "sleepmode.h"
 #include "credentials.h"
 #include "rtc.h"
 #include "timekeeping.h"
@@ -337,6 +338,10 @@ static bool settingsDirty = false;
 #define PREFS_KEY_CLK_C0 "clkC0"
 #define PREFS_KEY_CLK_C1 "clkC1"
 #define PREFS_KEY_CLK_C2 "clkC2"
+#define PREFS_KEY_SLP_ON "slpOn"
+#define PREFS_KEY_SLP_A "slpStart"
+#define PREFS_KEY_SLP_B "slpStop"
+#define PREFS_KEY_SLP_LVL "slpLevel"
 
 // The clock's display preferences are saved; the time itself is not.
 // Restoring a time from whenever the power went off would be wrong by
@@ -360,6 +365,12 @@ static void saveSettings(void) {
   prefs.putULong(PREFS_KEY_CLK_C1, clockRGB[1]);
   prefs.putULong(PREFS_KEY_CLK_C2, clockRGB[2]);
   // Not the time -- see the note by the keys.
+#endif
+#if SLEEP
+  prefs.putBool(PREFS_KEY_SLP_ON, sleepEnabled());
+  prefs.putUShort(PREFS_KEY_SLP_A, sleepStart());
+  prefs.putUShort(PREFS_KEY_SLP_B, sleepStop());
+  prefs.putUChar(PREFS_KEY_SLP_LVL, sleepLevel());
 #endif
   prefs.end();
   settingsDirty = false;
@@ -542,7 +553,68 @@ void splashCenter(GFXcanvas1 &c, const char *str, uint8_t size,
 // mapping can be read off the panels once and settled here for good.
 // Push a 1-bit canvas to one panel, in whichever format it wants.  Shared by
 // the splash and by the network messages below.
+// PANEL POWER ---------------------------------------------------------------
+// Lit or dark, and how bright, without drawing anything.
+//
+// Sleep mode uses these rather than pushing black pixels.  An OLED showing
+// black is already dark, so a frame of black costs a full SPI push to achieve
+// what one command does -- and the command also stops the panel driving its
+// rows, which a frame of black does not.
+//
+// The state is tracked here so callers can ask for what they want without
+// caring what is already true.  pushCanvas() in particular asks for the
+// panels on before every card it draws, which is what stops an address card
+// or an update message arriving invisibly on a sleeping head.
+
+static bool panelsOn = true;
+static uint8_t panelBrightness = 100;
+
+bool displayIsOn(void) { return panelsOn; }
+
+void displaySetPower(bool on) {
+  if (on == panelsOn)
+    return;
+  panelsOn = on;
+  for (uint8_t e = 0; e < NUM_EYES; e++) {
+#if USE_SSD1327
+    eye[e].display.setPower(graySPI, on);
+#else
+    // startWrite()/endWrite() arbitrate the bus and this panel's own chip
+    // select; each display object carries its own.
+    eye[e].display.startWrite();
+    eye[e].display.writeCommand(on ? SSD1351_CMD_DISPLAYON
+                                   : SSD1351_CMD_DISPLAYOFF);
+    eye[e].display.endWrite();
+#endif
+  }
+}
+
+void displaySetBrightness(uint8_t percent) {
+  if (percent > 100)
+    percent = 100;
+  if (percent == panelBrightness)
+    return;
+  panelBrightness = percent;
+  for (uint8_t e = 0; e < NUM_EYES; e++) {
+#if USE_SSD1327
+    // 0x80 is what begin() sets, so 100% means the panel as it was set up
+    // rather than the register's maximum.
+    eye[e].display.setContrast(graySPI, (uint8_t)((percent * 0x80) / 100));
+#else
+    // Master contrast is four bits; 0x0F is what the library's init sends.
+    eye[e].display.startWrite();
+    eye[e].display.writeCommand(SSD1351_CMD_CONTRASTMASTER);
+    eye[e].display.spiWrite((uint8_t)((percent * 15) / 100));
+    eye[e].display.endWrite();
+#endif
+  }
+}
+
 void pushCanvas(uint8_t e, GFXcanvas1 &canvas) {
+  // Anything drawing a card wants the panels lit, whether or not sleep
+  // mode has turned them off.  Cheap when they already are.
+  displaySetPower(true);
+
 #if USE_SSD1327
   // 1 bit per pixel in, 4 bits per pixel out, two pixels to a byte.
   static uint8_t buf[SSD1327_FRAME_BYTES];
@@ -1016,6 +1088,12 @@ static void loadSettings(void) {
   uint32_t c0 = prefs.getULong(PREFS_KEY_CLK_C0, clockRGB[0]);
   uint32_t c1 = prefs.getULong(PREFS_KEY_CLK_C1, clockRGB[1]);
   uint32_t c2 = prefs.getULong(PREFS_KEY_CLK_C2, clockRGB[2]);
+#endif
+#if SLEEP
+  sleepLoad(prefs.getBool(PREFS_KEY_SLP_ON, SLEEP_ENABLED),
+            prefs.getUShort(PREFS_KEY_SLP_A, SLEEP_START_MIN),
+            prefs.getUShort(PREFS_KEY_SLP_B, SLEEP_STOP_MIN),
+            prefs.getUChar(PREFS_KEY_SLP_LVL, SLEEP_LEVEL));
 #endif
   prefs.end();
 
@@ -1491,6 +1569,12 @@ static void cmdHelp(Print &out) {
                  "  clock rate <1-3600>       run it faster, for testing\n"
                  "  clock secs [on|off]       show the second hand\n"
                  "  clock color [hour|min|sec] RRGGBB\n"
+#if SLEEP
+                 "  sleep [on|off]            dark panels overnight\n"
+                 "  sleep HH:MM HH:MM         when to sleep, and when to "
+                 "wake\n"
+                 "  sleep level <0-100>       0 turns the panels off\n"
+#endif
                  "  net [quiet]               address info, on screen too\n"
                  "  net off                   dismiss the address cards\n"
                  "  wifi                      the network, and how to change "
@@ -1546,6 +1630,11 @@ void cmdStatus(Print &out) {
 // discards it afterwards.  The command word is lowercased; arguments are
 // only lowercased where case should not matter, such as eye names.
 void handleCommand(char *line, Print &out) {
+#if SLEEP
+  // A typed command is a person, so the eyes come up even mid-window.  This
+  // covers /cmd as well, which lands here.
+  sleepNudge();
+#endif
   char *cmd = strtok(line, " \t");
   if (!cmd)
     return;
@@ -1608,6 +1697,51 @@ void handleCommand(char *line, Print &out) {
     }
     out.printf("ok gaze=(%ld,%ld)\n", x, y);
 #if CLOCK
+  } else if (!strcmp(cmd, "sleep")) {
+#if SLEEP
+    char *a = strtok(NULL, " \t");
+    if (!a) {
+      uint16_t mins;
+      bool toAsleep;
+      out.printf("sleep %s %02u:%02u-%02u:%02u level=%u (%s)",
+                 sleepEnabled() ? "on" : "off", sleepStart() / 60,
+                 sleepStart() % 60, sleepStop() / 60, sleepStop() % 60,
+                 (unsigned)sleepLevel(), sleepReason());
+      if (sleepNextChange(mins, toAsleep))
+        out.printf(", %s in %uh%02um", toAsleep ? "sleeps" : "wakes",
+                   mins / 60, mins % 60);
+      out.println();
+    } else if (!strcmp(a, "on") || !strcmp(a, "off")) {
+      sleepSetEnabled(!strcmp(a, "on"));
+      stateMarkDirty();
+      out.printf("ok sleep=%s\n", sleepEnabled() ? "on" : "off");
+    } else if (!strcmp(a, "level")) {
+      char *v = strtok(NULL, " \t");
+      int pct = v ? atoi(v) : -1;
+      if (!v || pct < 0 || pct > 100) {
+        out.println(F("usage: sleep level <0-100>   (0 = panels off)"));
+      } else {
+        sleepSetLevel((uint8_t)pct);
+        stateMarkDirty();
+        out.printf("ok sleep level=%u\n", (unsigned)sleepLevel());
+      }
+    } else {
+      // "sleep 22:00 07:00"
+      char *b = strtok(NULL, " \t");
+      unsigned h1, m1, h2, m2;
+      if (!b || sscanf(a, "%u:%u", &h1, &m1) != 2 ||
+          sscanf(b, "%u:%u", &h2, &m2) != 2 || h1 > 23 || h2 > 23 ||
+          m1 > 59 || m2 > 59) {
+        out.println(F("usage: sleep HH:MM HH:MM   (start, then stop)"));
+      } else {
+        sleepSetWindow((uint16_t)(h1 * 60 + m1), (uint16_t)(h2 * 60 + m2));
+        stateMarkDirty();
+        out.printf("ok sleep %02u:%02u-%02u:%02u\n", h1, m1, h2, m2);
+      }
+    }
+#else
+    out.println(F("this firmware was built without SLEEP"));
+#endif
   } else if (!strcmp(cmd, "clock")) {
     char *arg = strtok(NULL, " \t");
     if (!arg) {
@@ -1965,6 +2099,9 @@ static void pollBootButton(void) {
     lastEdge = now;
     wasDown = isDown;
     if (isDown) { // act on press, not release
+#if SLEEP
+      sleepNudge();
+#endif
       stateNextEye();
       Serial.printf("ok eye=%u %s (button)\n", (unsigned)eyeDesign,
                     eyeDesigns[eyeDesign].name);
@@ -2297,6 +2434,14 @@ void frame(            // Process motion for a single frame of left or right eye
 #if STARTUP_SPLASH
   if (splashPoll()) // the name cards, likewise
     return;
+#endif
+
+#if SLEEP
+  // Lowest priority of everything that can own the panels: the cards and the
+  // splash above have already had their chance, and an address asked for at
+  // three in the morning is still worth showing.
+  if (sleepPoll())
+    return; // dark, and nothing to draw
 #endif
 #if DEBUG || CONTROLLABLE
   // Counted here rather than at the top of the function, so the rate is

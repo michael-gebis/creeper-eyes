@@ -310,6 +310,50 @@
 #define FACTORY_RESET_MS 10000
 #endif
 
+// SLEEP MODE ----------------------------------------------------------------
+// Dark panels between two times -- see docs/SLEEP.md.
+//
+// Compiled in by default but switched off, so a board that is never told
+// otherwise behaves exactly as it always did.  It costs about a kilobyte of
+// flash and one comparison per frame.
+
+#ifndef SLEEP
+#define SLEEP 1
+#endif
+
+// Whether the window is in force out of the box.  Off: a prop that goes dark
+// on its first night without being asked would read as a fault.
+#ifndef SLEEP_ENABLED
+#define SLEEP_ENABLED 0
+#endif
+
+// The default window, in local minutes since midnight.  Start after stop is
+// normal and means the window crosses midnight, which is the usual case.
+#ifndef SLEEP_START_MIN
+#define SLEEP_START_MIN (22 * 60) // 22:00
+#endif
+#ifndef SLEEP_STOP_MIN
+#define SLEEP_STOP_MIN (7 * 60) // 07:00
+#endif
+
+// How dark.  0 turns the panels off outright and stops rendering, which is
+// the point of the feature; 1-100 dims them instead and keeps the eyes
+// moving faintly, which is a nightlight rather than a sleep.
+#ifndef SLEEP_LEVEL
+#define SLEEP_LEVEL 0
+#endif
+
+// How long a deliberate action holds the eyes awake inside the window.
+// Someone walking past at midnight who wants to show the thing off should not
+// have to disable the feature to do it.  0 removes the behaviour: the window
+// is then absolute.
+//
+// The page's own polling deliberately does not count -- see sleepNudge() --
+// or a browser tab left open overnight would keep the head awake.
+#ifndef SLEEP_WAKE_S
+#define SLEEP_WAKE_S 60
+#endif
+
 // AUTHENTICATION ------------------------------------------------------------
 // All optional, all off, and independent of each other -- see src/auth.h.
 // With them off none of it is compiled in and the board behaves exactly as it

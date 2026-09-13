@@ -704,6 +704,13 @@ def test_credentials(res: Result, api: Api, info: Json, args) -> None:
         return
 
     # Refusals.  None of these change anything.
+    # Without the management password there is nothing to put in "current",
+    # and the board checks identity before it validates input -- correctly, so
+    # these would all come back 403 and prove nothing.
+    if c.get("http", {}).get("required") and not args.password:
+        res.skip("the refusal cases", "pass --password to include them")
+        return
+
     expect(res, api, "rejects an empty change", "/credentials", "PUT", {},
            status=400)
     if c.get("http", {}).get("required"):
@@ -751,6 +758,118 @@ def test_credentials(res: Result, api: Api, info: Json, args) -> None:
     else:
         res.fail("restoring the password",
                  "THE BOARD IS NOW ON %r -- write that down" % temp)
+
+
+def test_sleep(res: Result, api: Api) -> None:
+    """The overnight window.
+
+    The interesting cases are the ones a naive implementation gets wrong: a
+    window that crosses midnight, and a board that does not know the time.
+    Both are checked here without waiting for either to happen, by setting a
+    window around the board's own clock and reading back what it concludes.
+    """
+    res.heading("sleep")
+
+    code: int = api.raw("/sleep")[0]
+    if code == 404:
+        res.skip("the sleep endpoints", "not compiled into this firmware")
+        return
+
+    before: Json = api.json("/sleep")
+    if not before:
+        res.fail("GET /sleep", "no body")
+        return
+    for k in ("enabled", "start", "stop", "level", "asleep", "reason"):
+        if k not in before:
+            res.fail("GET /sleep", "no %s in the body" % k)
+            return
+    res.ok("reports the window", "%s-%s, %s"
+           % (before["start"], before["stop"], before["reason"]))
+
+    expect(res, api, "rejects a bad start", "/sleep", "PUT",
+           {"start": "25:00"}, status=400)
+    expect(res, api, "rejects a bad stop", "/sleep", "PUT",
+           {"stop": "nonsense"}, status=400)
+    expect(res, api, "rejects a bad level", "/sleep", "PUT",
+           {"level": 101}, status=400)
+    expect(res, api, "rejects an empty change", "/sleep", "PUT", {},
+           status=400)
+
+    # What time does the board think it is?  Everything below is relative to
+    # that, so the test works whatever the zone and whatever the hour.
+    #
+    # Taken from /sleep's own "now" rather than reconstructed from the clock
+    # card: clock.secondOfDay can be running at an accelerated rate for
+    # testing, and would quietly put every window in the wrong place.
+    hhmm: Any = before.get("now")
+    known: bool = bool(hhmm)
+
+    if not known:
+        # The guard is the feature: no time, no sleeping.
+        r: Json = api.json("/sleep", "PUT", {"enabled": True})
+        if r.get("reason") == "waiting for the time":
+            res.ok("will not sleep without a clock", r.get("reason"))
+        else:
+            res.fail("the no-clock guard",
+                     "enabled with no time source and said %r" % r.get("reason"))
+        api.json("/sleep", "PUT", {"enabled": before["enabled"]})
+        return
+
+    def minutes(text: str) -> int:
+        h, m = text.split(":")[:2]
+        return int(h) * 60 + int(m)
+
+    now: int = minutes(str(hhmm))
+
+    def at(offset: int) -> str:
+        v = (now + offset + 1440) % 1440
+        return "%02d:%02d" % (v // 60, v % 60)
+
+    # A window that started an hour ago and ends in an hour: the board should
+    # say it is asleep.  Level 100 so the panels stay lit while we do it --
+    # turning them off during a test is unhelpful to anyone watching.
+    r = api.json("/sleep", "PUT",
+                 {"enabled": True, "start": at(-60), "stop": at(60),
+                  "level": 100})
+    same(res, "inside the window it sleeps", r.get("asleep"), True)
+
+    # Now one that ended an hour ago.
+    r = api.json("/sleep", "PUT", {"start": at(-120), "stop": at(-60)})
+    same(res, "outside the window it wakes", r.get("asleep"), False)
+
+    # The case that matters: a window running across midnight, positioned so
+    # that "now" is inside it.  If the comparison is the naive start<stop one,
+    # this reads as awake and the test catches it.
+    across: Json = api.json(
+        "/sleep", "PUT", {"start": at(-60), "stop": at(-120)})
+    if across.get("asleep") is True:
+        res.ok("a window across midnight", "%s-%s and asleep"
+               % (across.get("start"), across.get("stop")))
+    else:
+        res.fail("a window across midnight",
+                 "%s-%s reported awake" % (across.get("start"),
+                                           across.get("stop")))
+
+    # Equal times mean never, not always.
+    r = api.json("/sleep", "PUT", {"start": at(0), "stop": at(0)})
+    same(res, "a zero-length window never sleeps", r.get("asleep"), False)
+
+    # A state-changing request should have woken it; a poll should not.  Put
+    # it back inside the window first.
+    api.json("/sleep", "PUT", {"start": at(-60), "stop": at(60)})
+    api.json("/gaze", "PUT", {"x": 512, "y": 512})
+    r = api.json("/sleep")
+    if r.get("reason") == "woken":
+        res.ok("a command wakes it", "for the hold-off period")
+    elif r.get("reason") == "asleep":
+        res.skip("waking on a command", "SLEEP_WAKE_S is 0 in this build")
+    else:
+        res.fail("waking on a command", "reason was %r" % r.get("reason"))
+
+    api.json("/sleep", "PUT",
+             {"enabled": before["enabled"], "start": before["start"],
+              "stop": before["stop"], "level": before["level"]})
+    res.ok("put the window back", "%s-%s" % (before["start"], before["stop"]))
 
 
 def test_page(res: Result, api: Api) -> None:
@@ -1241,6 +1360,7 @@ def main(argv: list[str]) -> int:
     test_cors(res, api, info)
     test_auth(res, api, info, args.host)
     test_credentials(res, api, info, args)
+    test_sleep(res, api)
     if args.wifi:
         test_wifi(res, api)
     else:
