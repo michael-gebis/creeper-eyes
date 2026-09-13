@@ -88,7 +88,22 @@ class Api:
         self.res: Result = res
         self.token: Optional[str] = token
         self.timeout: float = timeout
+        self.user: Optional[str] = user
+        self.password: Optional[str] = password
         self.opener: urllib.request.OpenerDirector
+        self.recredential(user, password)
+
+    def recredential(self, user: Optional[str],
+                     password: Optional[str]) -> None:
+        """Start using a different password.
+
+        Needed because the credential test changes the board's password and
+        has to keep talking to it afterwards.  The opener caches the digest
+        credentials it was built with, so a new password means a new opener --
+        assigning to self.password alone would change nothing.
+        """
+        self.user = user
+        self.password = password
         if user and password:
             # Digest, matching AUTH_HTTP.  urllib retries with credentials
             # after the challenge, exactly as a browser does.
@@ -622,6 +637,107 @@ def test_auth(res: Result, api: Api, info: Json, host: str) -> None:
             res.fail("%s without a credential is 401" % path, "got %s" % code)
 
 
+def test_credentials(res: Result, api: Api, info: Json, args) -> None:
+    """The credential endpoints.
+
+    Everything here except the last group is read-only or expected to be
+    refused, which is deliberate: a test that changes a password and then dies
+    before changing it back leaves a board nobody can talk to.  The part that
+    actually changes one runs only under --credentials, sets a password it
+    knows, and puts the original back.
+    """
+    res.heading("credentials")
+
+    r = api.raw("/credentials")[0]
+    if r == 404:
+        res.skip("the credential endpoints", "not compiled into this firmware")
+        return
+
+    c = api.json("/credentials")
+    if not c:
+        res.fail("GET /credentials", "no body")
+        return
+
+    # The point of the endpoint is to report without revealing.  Anything that
+    # looks like a secret coming back is a bug worth failing loudly for.
+    blob = json.dumps(c).lower()
+    leaked = [w for w in ("password", "secret", "hash") if '"%s"' % w in blob]
+    # "password" may legitimately appear as a *key* name; what must not appear
+    # is any credential we know the value of.
+    known = [v for v in (args.password, args.token) if v]
+    spilled = [v for v in known if v and v.lower() in blob]
+    if spilled:
+        res.fail("GET /credentials leaks a credential",
+                 "the response contains a value we authenticated with")
+    else:
+        res.ok("reveals no credential", "reports state, not secrets")
+    if leaked:
+        res.ok("mentions %s" % ", ".join(leaked), "as field names only")
+
+    for k in ("http", "token", "ota"):
+        if isinstance(c.get(k), dict) and "required" in c[k]:
+            res.ok("reports %s" % k,
+                   "required=%s" % c[k]["required"])
+        else:
+            res.fail("GET /credentials", "no %s.required in the body" % k)
+
+    if c.get("changeable") is False:
+        res.skip("changing a credential",
+                 "this build's API requires none, so it refuses to set any")
+        expect(res, api, "refuses to change without auth", "/credentials",
+               "PUT", {"password": "whatever"}, status=403)
+        return
+
+    # Refusals.  None of these change anything.
+    expect(res, api, "rejects an empty change", "/credentials", "PUT", {},
+           status=400)
+    if c.get("http", {}).get("required"):
+        expect(res, api, "rejects a wrong current password", "/credentials",
+               "PUT", {"current": "definitely-not-it", "password": "xyzzy123"},
+               status=403)
+        expect(res, api, "rejects an empty new password", "/credentials",
+               "PUT", {"current": args.password or "", "password": ""},
+               status=400)
+        expect(res, api, "rejects a colon in the username", "/credentials",
+               "PUT", {"current": args.password or "", "user": "a:b"},
+               status=400)
+
+    if not args.credentials:
+        res.skip("actually changing a password",
+                 "pass --credentials to include it")
+        return
+
+    # The real thing, and then back again.
+    if not (c.get("http", {}).get("required") and args.password):
+        res.skip("the round trip", "needs an AUTH_HTTP build and --password")
+        return
+
+    temp = "frank-test-" + str(int(time.time()))
+    r = api.json("/credentials", "PUT",
+                 {"current": args.password, "password": temp})
+    if not r or not r.get("ok"):
+        res.fail("PUT /credentials", "the change was refused")
+        return
+    res.ok("changed the page password")
+
+    # The old credential must stop working, or nothing was really changed.
+    api.recredential(args.user, temp)
+    after = api.json("/credentials")
+    if after:
+        res.ok("the new password works")
+    else:
+        res.fail("the new password", "the board did not accept it")
+
+    back = api.json("/credentials", "PUT",
+                    {"current": temp, "password": args.password})
+    api.recredential(args.user, args.password)
+    if back and back.get("ok"):
+        res.ok("put the original password back")
+    else:
+        res.fail("restoring the password",
+                 "THE BOARD IS NOW ON %r -- write that down" % temp)
+
+
 def test_page(res: Result, api: Api) -> None:
     res.heading("the control page")
     code, body = api.raw("/", full=True)
@@ -1049,6 +1165,8 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--token", help="bearer token, for AUTH_TOKEN builds")
     ap.add_argument("--settings", action="store_true",
                     help="also test save/forget, which write flash")
+    ap.add_argument("--credentials", action="store_true",
+                    help="also change a password and change it back")
     ap.add_argument("--wifi", action="store_true",
                     help="also test the wifi endpoints (read-only parts)")
     ap.add_argument("--latency", type=int, metavar="N",
@@ -1099,6 +1217,7 @@ def main(argv: list[str]) -> int:
     test_errors(res, api)
     test_cors(res, api, info)
     test_auth(res, api, info, args.host)
+    test_credentials(res, api, info, args)
     if args.wifi:
         test_wifi(res, api)
     else:

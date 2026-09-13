@@ -22,6 +22,7 @@
 #include "state.h"
 #include "display.h"
 #include "net.h"
+#include "credentials.h"
 #include "rtc.h"
 #include "timekeeping.h"
 
@@ -1969,6 +1970,46 @@ static void pollBootButton(void) {
                     eyeDesigns[eyeDesign].name);
     }
   }
+
+#if FACTORY_RESET_MS
+  // Held down long enough, this wipes every stored setting -- see
+  // FACTORY_RESET_MS.  It is the only way back into a board whose password
+  // has been forgotten, which is why it exists and why it is deliberately
+  // awkward.
+  // Nothing held: forget any countdown in progress, so that the next press
+  // starts from the top.  Letting go also needs no repainting -- drawEye()
+  // covers the whole panel at the end of this same frame.
+  static uint32_t lastDrawn = 0;
+  if (!wasDown) {
+    lastDrawn = 0;
+    return;
+  }
+
+  uint32_t held = now - lastEdge;
+  if (held >= FACTORY_RESET_MS) {
+    Serial.printf("ok factory reset (button held %us)\n",
+                  (unsigned)(FACTORY_RESET_MS / 1000));
+    showMessage("FACTORY", "RESET", NULL, NULL);
+    stateForget();
+#if NETWORK
+    credForget();
+#endif
+    delay(1500); // long enough to read, and nothing else matters now
+    ESP.restart();
+  }
+
+  // Warn before wiping, not after.  Counting down from halfway leaves time to
+  // let go, and says plainly what letting go avoids.
+  if (held >= FACTORY_RESET_MS / 2) {
+    uint32_t left = (FACTORY_RESET_MS - held + 999) / 1000;
+    if (left != lastDrawn) {
+      lastDrawn = left;
+      char buf[8];
+      snprintf(buf, sizeof(buf), "%u", (unsigned)left);
+      showMessage("ERASE ALL", buf, "let go to", "cancel");
+    }
+  }
+#endif
 }
 
 #endif // COMMANDS
