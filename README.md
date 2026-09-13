@@ -188,6 +188,11 @@ a source file — which is how the `gray` environment sets `USE_SSD1327`.
 | `AUTH_HTTP` | `0` | Digest authentication on the page, the API and `/cmd`. |
 | `AUTH_TOKEN` | `0` | A bearer token as an alternative credential, for scripts. |
 | `AUTH_HOST_CHECK` | `0` | Refuse requests whose `Host` is not this device — the DNS-rebinding defence. |
+| `SLEEP` | `1` | Dark panels overnight. `0` compiles it out. |
+| `SLEEP_ENABLED` | `0` | Whether the window is in force out of the box. Off: a prop going dark unasked reads as a fault. |
+| `SLEEP_START_MIN` / `SLEEP_STOP_MIN` | `22*60` / `7*60` | The default window, in local minutes past midnight. |
+| `SLEEP_LEVEL` | `0` | 0 switches the panels off and stops rendering; 1–100 dims them and keeps the eyes moving. |
+| `SLEEP_WAKE_S` | `60` | How long a command holds the eyes awake inside the window. `0` makes the window absolute. |
 | `FACTORY_RESET_MS` | `10000` | How long BOOT must be held, while running, to erase every setting. `0` removes the gesture, and so does `COMMANDS=0`, which is what polls the button. |
 | `IPV6` | `0` | All of IPv6, compiled out. Cannot usefully be turned on yet — see [IPv6](#ipv6). |
 | `FIRMWARE_VERSION` | `1.0` | Bumped by hand, for features worth announcing. |
@@ -1029,6 +1034,52 @@ through DNS-01. Three other reasons:
 Digest answers most of the same question at none of that cost. If you want
 real TLS, terminate it on something else — a Pi or a NAS in front of the
 board — and leave Frank speaking plain HTTP on a segment you trust.
+
+## Sleep mode
+
+A prop in a hallway does not need to stare all night. Between two times you
+set, the panels go dark and the eyes stop being drawn.
+
+```sh
+sleep                      # what it is set to, and what it is doing
+sleep on
+sleep 22:00 07:00          # start, then stop
+sleep level 0              # 0 switches the panels off; 1-100 dims instead
+```
+
+Or the **Sleep** card on the control page, or `PUT /api/v1/sleep`.
+
+It goes dark using the panel's own command rather than by drawing black. An
+OLED showing black pixels is already dark, so a frame of black would spend a
+full SPI push to achieve what one byte does — and would leave the panel
+driving its rows besides. Waking costs one command and no redraw, because the
+panel's memory survives being switched off.
+
+**It will not sleep unless the board knows what time it is.** With no network,
+no RTC and no hand-set time, it stays awake and says `waiting for the time`
+rather than guessing. The clock face already hides itself under exactly this
+condition; this follows the same rule for the same reason.
+
+**A window that crosses midnight is the normal case**, and `22:00 07:00` means
+what it looks like. Setting start and stop to the same time means *never*, not
+always — a mistyped field should not leave a prop permanently dark.
+
+**Anything you do wakes it for a minute.** A console command, the BOOT button,
+or any API call that changes something. Reading does not count, deliberately:
+the control page polls once a second while it is open, so counting reads would
+mean a browser tab left open kept the head awake all night.
+
+Sleep is the lowest-priority claim on the panels. An address card asked for at
+3am still appears, an over-the-air update still shows its progress, and the
+startup cards still run — each of those lights the panels for as long as it
+needs them, and sleep takes them back afterwards.
+
+One consequence worth knowing: a sleeping board reports `fps = 0`, because
+nothing is being rendered. `system.fps` sits next to `sleep.asleep` in
+`GET /api/v1/state` so the zero can be told apart from a fault.
+
+Design notes, including what was measured and what was only assumed, are in
+[docs/SLEEP.md](docs/SLEEP.md).
 
 ## Booting with no network
 

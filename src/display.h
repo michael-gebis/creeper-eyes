@@ -31,4 +31,15 @@ void pushCanvas(uint8_t e, GFXcanvas1 &canvas);
 void showMessage(const char *l1, const char *l2, const char *l3,
                  const char *l4);
 
+// Panels lit or dark, via the controller's own command rather than by
+// drawing black.  GDDRAM survives, so waking costs one command and no
+// redraw.  Both are no-ops when already in the requested state, so callers
+// may ask freely.
+void displaySetPower(bool on);
+bool displayIsOn(void);
+
+// Brightness, 0-100.  100 is what the panels are initialised to; 0 is very
+// dark but still lit -- use displaySetPower(false) for actually off.
+void displaySetBrightness(uint8_t percent);
+
 #endif // DISPLAY_H

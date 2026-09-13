@@ -16,6 +16,7 @@
 
 #include "auth.h"
 #include "credentials.h"
+#include "sleepmode.h"
 #include "display.h"
 #include "net.h"
 #include "rtc.h"
@@ -26,6 +27,11 @@
 #include <WiFi.h>
 
 // The server is owned by web.cpp; this module only hangs routes off it.
+// The prefix every route in this file hangs off.  Defined here rather
+// than beside the route table because guarded() below compares against
+// it.
+#define API "/api/v1"
+
 static WebServer *S = nullptr;
 
 // --------------------------------------------------------------- plumbing --
@@ -35,8 +41,25 @@ static WebServer *S = nullptr;
 // guard: there is one place a route is named, and the guard is part of
 // naming it.  Compiles away to nothing when no credential is required.
 template <void (*H)()> static void guarded(void) {
-  if (authCheck(*S))
-    H();
+  if (!authCheck(*S))
+    return;
+#if SLEEP
+  // Anything that changes state counts as someone being there, and wakes the
+  // eyes for a while.  Two exceptions.
+  //
+  // Reads do not count: the control page polls once a second while it is
+  // open, so counting GET would mean a forgotten browser tab kept the head
+  // awake all night.
+  //
+  // Nor do the sleep settings themselves.  Configuring the schedule is
+  // administration rather than presence, and a request that says "sleep from
+  // now" must not also say "and someone is here, so stay up" -- which would
+  // leave the board awake for a minute and look like the setting did nothing.
+  if (S->method() != HTTP_GET && S->method() != HTTP_OPTIONS &&
+      S->uri() != API "/sleep")
+    sleepNudge();
+#endif
+  H();
 }
 
 // Browsers refuse cross-origin requests without these, which would stop a
@@ -236,6 +259,14 @@ static void getState(void) {
   sys["panel"] = "ssd1351";
 #endif
   sys["panels"] = displayCount();
+#if SLEEP
+  // Compact, because /state is polled once a second: whether it is dark and
+  // why, with the settings left to GET /sleep.
+  JsonObject slp = d["sleep"].to<JsonObject>();
+  slp["enabled"] = sleepEnabled();
+  slp["asleep"] = sleepIsAsleep();
+  slp["reason"] = sleepReason();
+#endif
   sys["fps"] = s.fps;
   sys["freeHeap"] = s.freeHeap;
   sys["uptimeSeconds"] = s.uptimeSec;
@@ -830,6 +861,138 @@ static void putCredentials(void) {
 
 #endif // AUTH_HTTP || AUTH_TOKEN || OTA_AUTH
 
+// ----------------------------------------------------------------- sleep --
+//
+// Times go over the wire as "HH:MM" rather than as minute counts: the page's
+// <input type=time> produces exactly that, and an API a person can drive from
+// curl is worth more here than saving two string parses.
+
+#if SLEEP
+
+static void fillSleep(JsonObject o) {
+  char buf[6];
+  o["enabled"] = sleepEnabled();
+  snprintf(buf, sizeof(buf), "%02u:%02u", sleepStart() / 60, sleepStart() % 60);
+  o["start"] = buf;
+  snprintf(buf, sizeof(buf), "%02u:%02u", sleepStop() / 60, sleepStop() % 60);
+  o["stop"] = buf;
+  o["level"] = sleepLevel();
+  o["asleep"] = sleepIsAsleep();
+  // The board's own local time of day, which is the value the window is
+  // judged against.  Reported so that a client never has to reconstruct it
+  // from a timezone and a UTC clock and hope it agreed -- and so the page can
+  // say what the board thinks the time is when that is the thing in doubt.
+  uint32_t sec;
+  if (timeLocalSecOfDay(sec)) {
+    char n[6];
+    snprintf(n, sizeof(n), "%02u:%02u", (unsigned)(sec / 3600),
+             (unsigned)((sec / 60) % 60));
+    o["now"] = n;
+  }
+  // Why, not just whether.  "enabled but the board does not know the time" is
+  // a different state from "enabled and it is daytime", and a user whose eyes
+  // did not go dark needs to be told which one they are in.
+  o["reason"] = sleepReason();
+
+  uint16_t mins;
+  bool toAsleep;
+  if (sleepNextChange(mins, toAsleep)) {
+    o["changesInMinutes"] = mins;
+    o["changesToAsleep"] = toAsleep;
+  }
+}
+
+static void getSleep(void) {
+  JsonDocument d;
+  fillSleep(d.to<JsonObject>());
+  sendJson(200, d);
+}
+
+// "HH:MM", or a bare minute count for anything driving this by hand.
+static bool parseHHMM(const char *s, uint16_t &out) {
+  if (!s || !*s)
+    return false;
+  unsigned h = 0, m = 0;
+  if (sscanf(s, "%u:%u", &h, &m) == 2) {
+    if (h > 23 || m > 59)
+      return false;
+    out = (uint16_t)(h * 60 + m);
+    return true;
+  }
+  char *end = NULL;
+  long v = strtol(s, &end, 10);
+  if (end && !*end && v >= 0 && v < 1440) {
+    out = (uint16_t)v;
+    return true;
+  }
+  return false;
+}
+
+static void putSleep(void) {
+  JsonDocument b;
+  if (!readBody(b))
+    return;
+
+  // Validate everything before changing anything, so a bad "stop" does not
+  // leave a new "start" applied.
+  uint16_t start = sleepStart(), stop = sleepStop();
+  bool haveWindow = false;
+
+  if (b["start"].is<const char *>()) {
+    if (!parseHHMM(b["start"], start)) {
+      sendError(400, "start must be \"HH:MM\"");
+      return;
+    }
+    haveWindow = true;
+  }
+  if (b["stop"].is<const char *>()) {
+    if (!parseHHMM(b["stop"], stop)) {
+      sendError(400, "stop must be \"HH:MM\"");
+      return;
+    }
+    haveWindow = true;
+  }
+
+  uint8_t level = sleepLevel();
+  bool haveLevel = false;
+  if (b["level"].is<int>()) {
+    int v = b["level"];
+    if (v < 0 || v > 100) {
+      sendError(400, "level must be 0-100");
+      return;
+    }
+    level = (uint8_t)v;
+    haveLevel = true;
+  }
+
+  bool haveEnabled = b["enabled"].is<bool>();
+  if (!haveWindow && !haveLevel && !haveEnabled) {
+    sendError(400, "expected enabled, start, stop or level");
+    return;
+  }
+
+  // Reconfiguring the schedule is administration rather than someone being
+  // in the room, so it drops any hold that is keeping the eyes up -- both the
+  // one this very request would otherwise have created, and any left over
+  // from a moment ago.  Without this, setting a window that includes now
+  // leaves the board awake for another minute and looks like it did nothing.
+  sleepCancelWake();
+
+  if (haveWindow)
+    sleepSetWindow(start, stop);
+  if (haveLevel)
+    sleepSetLevel(level);
+  if (haveEnabled)
+    sleepSetEnabled(b["enabled"]);
+  stateMarkDirty();
+
+  JsonDocument d;
+  fillSleep(d.to<JsonObject>());
+  sendJson(200, d);
+}
+
+#endif // SLEEP
+
 static void postSettings(void) {
   JsonDocument b;
   if (!readBody(b))
@@ -848,7 +1011,6 @@ static void postSettings(void) {
 
 // ------------------------------------------------------------ registration --
 
-#define API "/api/v1"
 
 // Read-only and mutable routes are registered separately so a wrong method
 // gets a 405 from the framework rather than a confusing 404.
@@ -860,6 +1022,13 @@ void apiRegister(WebServer &s) {
   s.on(API "/credentials", HTTP_PUT, guarded<putCredentials>);
   s.on(API "/credentials", HTTP_OPTIONS, handleOptions);
   s.on(API "/credentials", HTTP_ANY, notAllowed);
+#endif
+
+#if SLEEP
+  s.on(API "/sleep", HTTP_GET, guarded<getSleep>);
+  s.on(API "/sleep", HTTP_PUT, guarded<putSleep>);
+  s.on(API "/sleep", HTTP_OPTIONS, handleOptions);
+  s.on(API "/sleep", HTTP_ANY, notAllowed);
 #endif
 
   s.on(API "/state", HTTP_GET, guarded<getState>);

@@ -121,6 +121,26 @@ public:
     SPI.endTransaction();
   }
 
+  // Panel on or off, for sleep mode.  The contents of GDDRAM survive this,
+  // so waking does not need a redraw -- which is the whole reason to use the
+  // panel's own command rather than pushing a frame of black.
+  void setPower(SPISettings cfg, bool on) {
+    SPI.beginTransaction(cfg);
+    digitalWrite(_cs, LOW);
+    cmd(on ? 0xAF : 0xAE);
+    digitalWrite(_cs, HIGH);
+    SPI.endTransaction();
+  }
+
+  // 0 is very dark but not off; 0x80 is what begin() sets.
+  void setContrast(SPISettings cfg, uint8_t level) {
+    SPI.beginTransaction(cfg);
+    digitalWrite(_cs, LOW);
+    cmd1(0x81, level);
+    digitalWrite(_cs, HIGH);
+    SPI.endTransaction();
+  }
+
 private:
   int8_t _cs, _dc;
 
