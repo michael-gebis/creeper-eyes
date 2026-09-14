@@ -305,7 +305,19 @@ void setupNetwork(void) {
   }
 
   bool ok = WiFi.status() == WL_CONNECTED;
-  wm.stopConfigPortal();
+
+  // Only if it is still up.
+  //
+  // When the portal succeeds, WiFiManager's own process() has already called
+  // shutdownConfigPortal(), which resets the server and clears the active
+  // flag.  Calling stopConfigPortal() after that dereferences the null server
+  // and panics -- LoadProhibited, in shutdownConfigPortal() itself.
+  //
+  // Which means this crashed on every successful setup and on no failed one,
+  // so it survived every test that ended in a timeout.  The first time the
+  // portal was driven all the way through, it took the board down with it.
+  if (wm.getConfigPortalActive())
+    wm.stopConfigPortal();
   netState = ok ? NET_UP : NET_DOWN;
   if (!ok)
     DEBUG_PRINTF("[net] portal timed out after %ds; carrying on offline" "\n",

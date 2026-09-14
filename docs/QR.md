@@ -65,6 +65,33 @@ it is always current, which a printed label could never be. It costs nothing:
 23 bytes is still version 2, and fifteen characters is as long as an IPv4
 address gets, so that is the worst case rather than a flattering one.
 
+## Does the whole thing work
+
+Yes, verified end to end on hardware:
+
+1. The portal opens and the right eye shows the join code.
+2. A phone camera reads it off the eye and joins `frank-setup` — nobody
+   types the network name or the password.
+3. The captive portal opens the setup page by itself.
+4. The network is chosen, the board connects, and comes back on it.
+
+Which found a crash that had nothing to do with QR codes.
+
+`wm.stopConfigPortal()` had been called unconditionally after the portal
+loop since long before any of this. When the portal *succeeds*,
+WiFiManager's own `process()` has already called `shutdownConfigPortal()`,
+which resets the server and clears the active flag — so the second call
+dereferenced a null server and panicked, `LoadProhibited`, inside
+`shutdownConfigPortal()` itself.
+
+It crashed on every successful setup and on no failed one. Every test that
+ended in a sixty-second timeout passed, which is every test anyone had run:
+until the join code made the portal quick enough to drive all the way
+through, nobody had ever completed a setup. Making a feature usable is a way
+of reaching the code nobody reaches.
+
+Guarded with `getConfigPortalActive()`.
+
 ## What the test does not tell us
 
 - **Anything about other phones.** One camera, one decoder.
