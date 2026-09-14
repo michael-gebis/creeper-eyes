@@ -5,6 +5,7 @@
 #if NETWORK
 
 #include "display.h"
+#include "qr.h"
 #include "rtc.h"
 #include "timekeeping.h"
 #include <esp_sntp.h>
@@ -212,29 +213,93 @@ void setupNetwork(void) {
   showMessage("WIFI", "SETUP", "join the network", WIFI_AP_NAME);
 
   netState = NET_PORTAL;
+
+#if PORTAL_PASSWORD
+  // A password on the setup network, which is only reasonable because the
+  // panels can show it.  Without that it would be a password somebody has to
+  // know before they can reach the page where passwords are set.
+  //
+  // Random every time, and deliberately not derived from anything about the
+  // board: the MAC is broadcast in every beacon frame, so a MAC-derived
+  // password is one anyone in range can compute.  The alphabet leaves out
+  // O/0 and I/1/L, because the left panel shows this as text for anyone who
+  // cannot scan and those are the characters people mistype.
+  static const char ALPHABET[] = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  char apPass[9];
+  for (uint8_t i = 0; i < sizeof(apPass) - 1; i++)
+    apPass[i] = ALPHABET[esp_random() % (sizeof(ALPHABET) - 1)];
+  apPass[sizeof(apPass) - 1] = '\0';
+#endif
+
   WiFiManager wm;
   wm.setHostname(WIFI_HOSTNAME);
   // Non-blocking, so this loop keeps the panels updated.  In blocking mode
   // WiFiManager owns the CPU until it is done and the head sits on one static
   // card for the whole timeout, with no sign of how long is left.
   wm.setConfigPortalBlocking(false);
+#if PORTAL_PASSWORD
+  wm.startConfigPortal(WIFI_AP_NAME, apPass);
+#else
   wm.startConfigPortal(WIFI_AP_NAME);
+#endif
+
+#if QR_CODES
+  // The join code, on the viewer's right panel.  A phone camera reads it,
+  // joins the network without anyone typing anything, and the captive portal
+  // opens the page by itself.
+  //
+  // WIFI:T:...;S:...;P:...;; is the format every phone camera understands.
+  // nopass rather than WPA when there is no password, because an empty P
+  // field makes some readers offer a password prompt.
+  char join[96];
+#if PORTAL_PASSWORD
+  snprintf(join, sizeof(join), "WIFI:T:WPA;S:%s;P:%s;;", WIFI_AP_NAME, apPass);
+#else
+  snprintf(join, sizeof(join), "WIFI:T:nopass;S:%s;;", WIFI_AP_NAME);
+#endif
+  bool haveCode = displayCount() > 1 && qrShow(1, join);
+  if (!haveCode)
+    DEBUG_PRINTF("[net] join code too long to draw legibly; text only" "\n");
+#else
+  // No code to caption, so the text card goes to both panels as it
+  // always did.
+  const bool haveCode = false;
+#endif
 
   // setConfigPortalTimeout does not apply in non-blocking mode, so the
   // deadline is ours to keep.
   uint32_t deadline = millis() + (uint32_t)WIFI_PORTAL_S * 1000UL;
   int16_t lastShown = -1;
+  bool hadClient = false;
   while ((int32_t)(millis() - deadline) < 0) {
     wm.process();
     if (WiFi.status() == WL_CONNECTED)
       break;
+
+    // Somebody is here.  Cutting the portal off while they are still typing
+    // their WiFi password is the one failure this timeout should never cause,
+    // and a code that joins the network in one tap makes it likelier, not
+    // less: it leaves more of the window for the typing.
+    if (WiFi.softAPgetStationNum() > 0) {
+      if (!hadClient) {
+        hadClient = true;
+        DEBUG_PRINTF("[net] someone joined the portal; holding it open" "\n");
+      }
+      deadline = millis() + (uint32_t)WIFI_PORTAL_S * 1000UL;
+    }
 
     int16_t remain = (int16_t)((deadline - millis() + 999UL) / 1000UL);
     if (remain != lastShown) { // redraw on the second, not on every pass
       lastShown = remain;
       char secs[8];
       snprintf(secs, sizeof(secs), "%ds", (int)remain);
-      showMessage("WIFI", "SETUP", WIFI_AP_NAME, secs);
+#if PORTAL_PASSWORD
+      // The password as text on the left, for anyone who cannot point a
+      // camera at an eye.  Left only: a broadcast would wipe the code.
+      showMessageOn(haveCode ? 0 : -1, "JOIN", WIFI_AP_NAME, apPass, secs);
+#else
+      showMessageOn(haveCode ? 0 : -1, "JOIN", WIFI_AP_NAME, NULL, secs);
+#endif
     }
     delay(10);
   }

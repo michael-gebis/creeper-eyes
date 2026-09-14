@@ -31,6 +31,11 @@ void pushCanvas(uint8_t e, GFXcanvas1 &canvas);
 void showMessage(const char *l1, const char *l2, const char *l3,
                  const char *l4);
 
+// The same, on one panel only.  `eye` of -1 means all of them.  The setup
+// portal uses this to caption a QR code on the other eye without wiping it.
+void showMessageOn(int8_t which, const char *l1, const char *l2,
+                   const char *l3, const char *l4);
+
 // Panels lit or dark, via the controller's own command rather than by
 // drawing black.  GDDRAM survives, so waking costs one command and no
 // redraw.  Both are no-ops when already in the requested state, so callers

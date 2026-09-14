@@ -645,8 +645,12 @@ HardwareSerial SerialIn(1);
 // and the head would otherwise sit there dark with no explanation: the setup
 // portal, and OTA progress.  Not behind STARTUP_SPLASH -- the boot cards are
 // optional, this is not.
-void showMessage(const char *l1, const char *l2, const char *l3,
-                        const char *l4) {
+// Four centred lines, drawn once and pushed to whichever panels the caller
+// wants.  `eye` of -1 means all of them, which is the usual case; the setup
+// portal passes a single index because the other eye is showing a QR code and
+// would be wiped by a broadcast.
+void showMessageOn(int8_t which, const char *l1, const char *l2,
+                   const char *l3, const char *l4) {
   GFXcanvas1 canvas(SCREEN_WIDTH, SCREEN_HEIGHT);
   canvas.fillScreen(0);
   canvas.setTextColor(1);
@@ -658,8 +662,19 @@ void showMessage(const char *l1, const char *l2, const char *l3,
     splashCenter(canvas, l3, 1, 70);
   if (l4)
     splashCenter(canvas, l4, 1, 86);
-  for (uint8_t e = 0; e < NUM_EYES; e++)
-    pushCanvas(e, canvas);
+  // Not named `eye`: that is the panel array at file scope, and NUM_EYES is
+  // sizeof(eye)/sizeof(eye[0]), so a parameter of that name silently turns
+  // the panel count into arithmetic on a signed char.
+  if (which < 0)
+    for (uint8_t e = 0; e < NUM_EYES; e++)
+      pushCanvas(e, canvas);
+  else if ((uint8_t)which < NUM_EYES)
+    pushCanvas((uint8_t)which, canvas);
+}
+
+void showMessage(const char *l1, const char *l2, const char *l3,
+                 const char *l4) {
+  showMessageOn(-1, l1, l2, l3, l4);
 }
 
 #if STARTUP_SPLASH
