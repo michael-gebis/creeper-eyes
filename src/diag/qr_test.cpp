@@ -17,11 +17,7 @@
 // left to send the next update to.  Flash it over USB, which you want anyway,
 // since the measurements come back over serial.
 //
-// Part one steps the panel's own scan rate, because a camera pointed at an
-// OLED running slowly sees it beat.  The codes here are drawn once and left
-// alone, so any flicker is the panel refreshing itself, not this sketch.
-//
-// Part two is the legibility test.  Three phases, narrated over serial.  Every one of them
+// Two codes, narrated over serial.  Both of them
 // ends up at three pixels per module, because 128 divided by anything in this
 // range is three; what changes is how much of the panel gets used:
 //
@@ -321,21 +317,6 @@ void setup(void) {
 #endif
 }
 
-// The panel's frame rate, stepped from the value begin() uses to the fastest
-// the controller offers.  Low nibble is the DCLK divide ratio, high nibble the
-// oscillator frequency; both raise the scan rate as they rise.
-static const struct {
-  uint8_t value;
-  const char *note;
-} CLOCKS[] = {
-    {0x00, "as shipped -- slowest oscillator, no division"},
-    {0x50, "mid oscillator"},
-    {0x91, "high oscillator, divide by 2 -- a common vendor default"},
-    {0xC0, "higher oscillator, no division"},
-    {0xF0, "fastest the controller offers"},
-};
-#define CLOCK_COUNT (sizeof(CLOCKS) / sizeof(CLOCKS[0]))
-
 static void buildWifiPayload(char *out, size_t n) {
   // The password the real feature would derive from the MAC: six bytes as
   // twelve hex characters, so the payload length here is exactly what it
@@ -351,52 +332,19 @@ void loop(void) {
   buildWifiPayload(wifiPayload, sizeof(wifiPayload));
 
 #if USE_SSD1327
-  // Part one: find a panel frame rate the camera can live with.
-  //
-  // Nothing about the legibility question can be answered while the image is
-  // beating with the shutter, and the test draws each code exactly once --
-  // the flicker is the panel scanning itself, not us redrawing.  So step the
-  // scan rate with one fixed code on screen and watch through the camera.
-  Serial.printf("\n\n==== part one: flicker ====\n");
-  Serial.printf("One code, held still, while the panel's own frame rate\n"
-                "changes.  Watch through the camera and note which settings\n"
-                "are steady.  Eight seconds each.\n");
-  uint8_t v = 0;
-  if (!fit(ADDRESS_URL, ECC_MEDIUM, v)) {
-    Serial.printf("could not build the test code\n");
-    delay(5000);
-    return;
-  }
-  drawQR();
-  for (size_t i = 0; i < CLOCK_COUNT; i++) {
-    leftEye.setFrontClock(panelSPI, CLOCKS[i].value);
-    rightEye.setFrontClock(panelSPI, CLOCKS[i].value);
-    char hex[6], idx[12];
-    snprintf(hex, sizeof(hex), "%02X", CLOCKS[i].value);
-    snprintf(idx, sizeof(idx), "%u of %u", (unsigned)(i + 1),
-             (unsigned)CLOCK_COUNT);
-    caption("0xB3", hex, idx);
-    Serial.printf("\n  0xB3 = 0x%02X   %s\n", CLOCKS[i].value,
-                  CLOCKS[i].note);
-    Serial.printf("  steady, or still flickering?\n");
-    delay(8000);
-  }
-  // Leave it at the fastest for part two; if that is wrong you will see it.
+  // 0xF0 measured steady through a camera where 0x00 -- the slowest
+  // oscillator, and what begin() used to send -- beat visibly.  begin() sends
+  // 0xF0 now, so this only restores it after a reset that did not run it.
   leftEye.setFrontClock(panelSPI, 0xF0);
   rightEye.setFrontClock(panelSPI, 0xF0);
-  Serial.printf("\n  (holding 0xF0 for the legibility phases below)\n");
 #endif
 
-  Serial.printf("\n\n==== part two: legibility ====\n");
-  phase("1. WiFi join, ECC M -- the candidate", wifiPayload, ECC_MEDIUM,
+  Serial.printf("\n\n==== legibility ====\n");
+  phase("1. WiFi join, ECC M", wifiPayload, ECC_MEDIUM,
         "M (15% recovery)");
   delay(15000);
 
-  phase("2. WiFi join, ECC Q -- denser, twice the error correction",
-        wifiPayload, ECC_QUARTILE, "Q (25% recovery)");
-  delay(15000);
-
-  phase("3. Address, ECC M -- the easy one", ADDRESS_URL, ECC_MEDIUM,
+  phase("2. Address, ECC M", ADDRESS_URL, ECC_MEDIUM,
         "M (15% recovery)");
   delay(15000);
 }
