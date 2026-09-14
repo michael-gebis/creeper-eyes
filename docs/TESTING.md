@@ -83,16 +83,25 @@ slow request is a stalled render loop.
 against the running device,
 [`tools/gen_eyes.py`](../tools/gen_eyes.py) converts the artwork,
 [`tools/gen_page.py`](../tools/gen_page.py) compresses the control page into the
-firmware, and [`tools/git_rev.py`](../tools/git_rev.py) stamps the build with its
-commit. [`tools/test_api.py`](../tools/test_api.py) and
+firmware, [`tools/git_rev.py`](../tools/git_rev.py) stamps the build with its
+commit, and [`tools/nvs_backup.py`](../tools/nvs_backup.py) saves everything the
+board remembers to a JSON file and puts it back — including the WiFi network,
+which the radio keeps in a namespace of its own. That one is USB only, and
+[Configuring](CONFIG.md) explains what is in there. [`tools/test_api.py`](../tools/test_api.py) and
 [`tools/soak.py`](../tools/soak.py) are described under
 [Testing it](#testing-it).
 
 All are type-annotated: every parameter, every return type, and every local
-at the point it is introduced. Reassignments carry no annotation, which is
-what [PEP 526](https://peps.python.org/pep-0526/) asks for — the name is
-declared once, not at every binding — so a count of bare assignments in these
-files is not a count of missing types.
+at the point it is introduced. A count of bare assignments in these files is
+not a count of missing types, for three reasons. Reassignments carry no
+annotation, which is what [PEP 526](https://peps.python.org/pep-0526/) asks
+for — the name is declared once, not at every binding. Tuple unpacking
+(`code, raw = api.req(...)`) and the targets of `with` and `for` cannot carry
+one syntactically; every such binding here takes its type from an annotated
+call or a literal, and where neither applies — the fields `struct.unpack`
+returns, say — the names are declared on their own lines just above. And `Any` appears where it is honest to — decoded JSON and
+parsed NVS values really are of unknown type, and claiming otherwise would
+be worse than saying so.
 
 All run on Python 3.9, the oldest interpreter PlatformIO is likely to hand
 them, and annotations are lazy (`from __future__ import annotations`), so the
