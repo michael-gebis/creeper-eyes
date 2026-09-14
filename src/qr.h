@@ -21,10 +21,15 @@
 
 // Render `text` as a QR code filling one panel, and push it.
 //
-// `eye` is an index into the panels, 0 being the viewer's left.  Returns false
-// if the payload will not fit in a version this panel can show legibly, in
-// which case nothing is drawn -- a code too dense to read is worse than no
-// code, because it looks like it should work.
+// `eye` indexes the panels the same way `eye[]` in main.cpp does: 0 is
+// Frank's right, which is the viewer's left.  Both perspectives are in use
+// here -- the CS pin names and the diagnostics are the viewer's, anything
+// telling somebody which eye to look at is Frank's -- so callers of this say
+// whose side they mean rather than leaving it to be worked out.
+//
+// Returns false if the payload will not fit in a version this panel can show
+// legibly, in which case nothing is drawn: a code too dense to read is worse
+// than no code, because it looks like it should work.
 bool qrShow(uint8_t eye, const char *text);
 
 // The largest payload qrShow() will accept, in bytes.  Exposed so callers can

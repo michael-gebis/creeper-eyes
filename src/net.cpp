@@ -244,9 +244,9 @@ void setupNetwork(void) {
 #endif
 
 #if QR_CODES
-  // The join code, on the viewer's right panel.  A phone camera reads it,
-  // joins the network without anyone typing anything, and the captive portal
-  // opens the page by itself.
+  // The join code, on Frank's left panel.  A phone camera reads it, joins the
+  // network without anyone typing anything, and the captive portal opens the
+  // page by itself.
   //
   // WIFI:T:...;S:...;P:...;; is the format every phone camera understands.
   // nopass rather than WPA when there is no password, because an empty P
@@ -294,8 +294,8 @@ void setupNetwork(void) {
       char secs[8];
       snprintf(secs, sizeof(secs), "%ds", (int)remain);
 #if PORTAL_PASSWORD
-      // The password as text on the left, for anyone who cannot point a
-      // camera at an eye.  Left only: a broadcast would wipe the code.
+      // The password as text on Frank's right, for anyone who cannot point a
+      // camera at an eye.  One panel only: a broadcast would wipe the code.
       showMessageOn(haveCode ? 0 : -1, "JOIN", WIFI_AP_NAME, apPass, secs);
 #else
       showMessageOn(haveCode ? 0 : -1, "JOIN", WIFI_AP_NAME, NULL, secs);
@@ -553,10 +553,10 @@ void netDrawPanel(uint8_t e) {
 // reason that build exists, and it is far too long to draw as a code
 // anyway -- 39 characters needs version 4, which docs/QR.md rules out.
 #if QR_CODES && !IPV6
-  // The viewer's right card becomes a code that opens the control page, which
-  // is the one thing anybody standing in front of the head actually wants from
-  // it.  An address is a dozen characters to copy off a panel by eye and then
-  // type correctly into a phone; a code is a tap.
+  // Frank's left card becomes a code that opens the control page, which is the
+  // one thing anybody standing in front of the head actually wants from it.
+  // An address is a dozen characters to copy off a panel by eye and then type
+  // correctly into a phone; a code is a tap.
   //
   // An address rather than the name, for the same reason the setup code uses
   // one: frank.local needs mDNS, which Windows lacks without Bonjour and older
