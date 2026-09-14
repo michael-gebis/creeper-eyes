@@ -1,6 +1,7 @@
 # Wiring the eyes
 
-Two 1.5" 128×128 OLED panels onto an ESP32 DevKit V1. Eight signals, fourteen
+Two 1.5" 128×128 OLED panels onto an ESP32 DevKit V1. Seven signals per
+panel, fourteen
 wires, one shared SPI bus.
 
 This is the same for **both** panel types — the Waveshare 1.5inch RGB OLED
@@ -9,7 +10,7 @@ the build differs: `esp32dev` for colour, `gray` for grayscale.
 
 ## Connections
 
-Six of the eight signals are shared by both panels. Only chip select differs —
+Six of the seven are shared by both panels. Only chip select differs —
 that is the whole trick to driving two panels off one bus.
 
 Left and right are **Frank's own**, the way anatomy is always described: facing
@@ -26,8 +27,9 @@ him, his right eye is the one on your left.
 | CS | `D15` | CS | — | Selects Frank's right panel only |
 | CS | `D4` | — | CS | Selects Frank's left panel only |
 
-There is **no MISO connection**. The panels never talk back, so GPIO19 — which
-the code reserves for it — stays empty and is free for anything else.
+There is **no MISO connection**. The panels never talk back, so GPIO19 takes
+no wire. It is not free for anything else, though: `SPI.begin()` hands it to
+the SPI peripheral as MISO regardless — see the pin table below.
 
 Suggested jumper colours, so the harness stays readable once it is buried in a
 head: red VCC, black GND, yellow DIN, blue CLK, green DC, violet RST, and two
@@ -136,17 +138,22 @@ Flash the build that matches your panels — `esp32dev` for SSD1351 colour,
 1. Each panel names itself for five seconds: `FRANK'S RIGHT` over `YOUR LEFT`,
    or the reverse.
 2. Both panels animate: irises drifting and rescaling, occasional blinks.
-3. The blue on-board LED blinks at 1 Hz.
+3. The blue on-board LED toggles once a second.
 
 **If the labels are swapped** relative to the face, the panels are on the
 opposite chip selects from what the code assumes. That is a two-line fix in
-`showSplash()`, far easier than rewiring.
+the `swap` setting, far easier than rewiring: `swap on` then `save`, or
+the **swap panels** button on the control page. That is a real swap, not
+a relabelling — the eyelid mirroring moves with it.
 
 ### The frame rate will not change
 
-The serial heartbeat reports around `fps=20` on colour panels and `fps=40` on
-grayscale — and it reports the same with **nothing connected at all**. The SPI
-peripheral clocks the same bytes out whether a panel is listening or not.
+The serial heartbeat reports roughly `fps=20` on colour panels and `fps=30` to
+`fps=40` on grayscale — the range depends on what else the build is doing,
+since the web server is polled from the same loop, which is why the figures in
+[HTTP_LATENCY.md](HTTP_LATENCY.md) are lower. And it reports the same with
+**nothing connected at all**. The SPI peripheral clocks the same bytes out
+whether a panel is listening or not.
 
 So an unchanged frame rate tells you *nothing* about whether the panels are
 wired correctly. Trust your eyes, not the number.

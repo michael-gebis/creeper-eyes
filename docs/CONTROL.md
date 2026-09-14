@@ -11,8 +11,8 @@ If you are not sure which you want: open `http://frank.local/` in a browser.
 ![The control page](images/webui.png)
 
 **http://frank.local/** — a control page for everything the console can do:
-eye design, gaze, dilation, pupil, panel swap, clock and hand colours,
-timezone, Wi-Fi, and the address details. It polls the device once a second,
+eye design, gaze, dilation, pupil, panel swap, clock and hand colours, the
+time and its sources, sleep, passwords, Wi-Fi, and the address details. It polls the device once a second,
 so two browsers looking at it stay in step with each other and with anything
 you type over serial.
 
@@ -22,7 +22,7 @@ anyone asks of a control they have just moved.
 
 The page is static: [`data/index.html`](../data/index.html), gzipped into the
 firmware at build time by [`tools/gen_page.py`](../tools/gen_page.py) and served
-straight out of flash. 26 KB becomes 9, which took the page load from 554 ms
+straight out of flash. 36 KB becomes 12, which took the page load from 554 ms
 to under 100 — the board sends roughly one TCP segment per rendered frame, so
 the only thing that really helps is sending fewer of them. Its tab icon is an inline SVG `data:` URI from
 [`src/favicon.h`](../src/favicon.h) rather than a `/favicon.ico` route — no
@@ -72,7 +72,7 @@ Open `pio device monitor` and type `help`. Commands are line-based at 115200.
 | `clock color [hour\|min\|sec] RRGGBB` | Hand colours |
 | `blink` | Blink both eyes now |
 | `swap [on\|off]` | Swap which physical panel is which eye |
-| `save` | Remember the eye design and swap across reboots |
+| `save` | Persist every setting tagged persistent — see [Configuring](CONFIG.md#remembering-settings) |
 | `forget` | Clear saved settings |
 | `net [quiet]` | Address info, on the panels too |
 | `net off` | Dismiss the address cards early |
@@ -87,7 +87,11 @@ Open `pio device monitor` and type `help`. Commands are line-based at 115200.
 | `tz [zone]` | Timezone by name or POSIX string |
 | `splash` | Re-show the panel name cards |
 | `status` | Current eye, gaze, dilation, heap, uptime, frame rate |
-| `help` | The list above |
+| `sleep` | What the sleep window is set to, and what it is doing |
+| `sleep on\|off` | Enable or disable it |
+| `sleep HH:MM HH:MM` | The window: when to sleep, then when to wake |
+| `sleep level <0-100>` | `0` switches the panels off; above that, dims them |
+| `help` | The list above. `?` does the same |
 
 The **BOOT button** toggles the eye artwork, which is handy on the bench but
 unreachable once the head is assembled — hence the console.
@@ -120,6 +124,8 @@ CORS open so a page served from anywhere can drive the device.
 | `GET` `PUT` | `/api/v1/tz` | `{"tz":"pacific"}` or any POSIX string |
 | `POST` | `/api/v1/action` | `{"action":"blink"}` — also `startle`, `splash`, `netinfo` |
 | `POST` | `/api/v1/settings` | `{"op":"save"}` or `{"op":"forget"}` |
+| `GET` `PUT` | `/api/v1/sleep` | `enabled`, `start`, `stop`, `level` — needs `SLEEP` |
+| `GET` `PUT` | `/api/v1/credentials` | Which credentials are set, and changing them — see below |
 
 ```sh
 # A body must be sent as JSON -- curl defaults to form encoding, which the
@@ -141,7 +147,11 @@ afterwards to find out what happened. Failures carry a reason:
 ```
 
 `400` for a bad body or an out-of-range value, `404` for an eye design this
-build does not contain, `405` for the wrong verb on a real path.
+build does not contain or an RTC it does not have, `405` for the wrong verb on
+a real path, `409` where NTP and a hand-set time would conflict, and `500` if
+storage fails. With authentication compiled in, `401` for a missing or wrong
+credential and `403` for a `Host` that is not this device — or for changing a
+credential without presenting the current one.
 
 Every write to `/wifi` answers first and then reboots the board, so the reply
 arrives but the connection it arrived over does not survive. `GET /wifi`
@@ -151,9 +161,11 @@ Gaze runs `0`–`1023` on each axis with **`y=1023` at the top**, the way a
 joystick reads rather than the way a screen does. `512 512` is centre. The
 control page flips it so that dragging up looks up.
 
-There is no authentication. Anything that can reach the board can drive it,
-which is the right trade for a prop on a home network and the wrong one for
-anywhere else.
+Authentication is off by default, and optional at build time: with the
+switches off none of it is compiled in, and anything that can reach the board
+can drive it. That is the right trade for a prop on a home network and the
+wrong one anywhere else — see [Locking it down](SECURITY.md) for the three
+mechanisms and how to turn them on.
 
 ## The `/cmd` escape hatch
 

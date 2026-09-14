@@ -133,7 +133,9 @@ libraries — downloads automatically on the first build.
 | `probe1327` | Raw SSD1327 init, no library | Identifying an unknown panel |
 | `esp32dev_rtc` / `gray_rtc_open` | Eyes plus a battery-backed clock | With a [DS3231 fitted](docs/WIRING_RTC.md) |
 | `gray_rtc` | The same, with authentication on | A head left on a network. Needs credentials in `secrets.h` |
-| `esp32dev_ota` / `gray_ota` | Same firmware, flashed over WiFi | Updating a sealed head |
+| `esp32dev_local` / `gray_local` | Eyes only, no networking | A head with no WiFi — 679 KB smaller |
+| `gray_rtc_ota` / `esp32dev_rtc_ota` | The RTC builds, flashed over WiFi | **Use these** to update an RTC or authenticated head |
+| `esp32dev_ota` / `gray_ota` | The plain builds, flashed over WiFi | Updating a sealed head. Using one on an RTC board flashes the RTC and auth away |
 | `rtc_probe` | Raw I²C scan and DS3231 read | Bringing up an RTC module |
 
 `gray_rtc` is the only environment that requires anything of you before it

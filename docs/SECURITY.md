@@ -55,8 +55,11 @@ device. That is the defence against **DNS rebinding**, which authentication
 alone does not stop: a page you visit can make your own browser call
 `192.168.x.x`, and a browser holding cached credentials will attach them.
 
-Turning any of them on with no password defined **fails the build** rather
-than producing a device that looks protected and is not.
+Turning on `AUTH_HTTP` without `AUTH_USER`/`AUTH_PASS`, or `AUTH_TOKEN`
+without `AUTH_TOKEN_VALUE`, **fails the build** rather than producing a device
+that looks protected and is not. `AUTH_HOST_CHECK` needs no secret and builds
+on its own. Any of the three with `NETWORK=0` also fails, there being nothing
+to authenticate.
 
 ## Changing the passwords
 
@@ -108,9 +111,29 @@ It has to be a long press *while running*, not a hold at power-on, because
 a reset puts the ESP32 into its serial bootloader instead of running this
 firmware at all.
 
-This is the only way back into a sealed head whose password has been
-forgotten, which is why it needs physical access and cannot be triggered over
-the network.
+### `forget` does this too, and it is reachable over the network
+
+The credentials live in the same NVS namespace as every other setting, so the
+ordinary **forget** — the button on the Settings card, `forget` at the
+console, or `POST /api/v1/settings {"op":"forget"}` — clears them along with
+the eye design and the timezone. At the next boot the board is back on the
+credentials its firmware was built with.
+
+That is deliberate: a factory reset that left a password behind would not be
+one, and on a sealed head the reset is the only way back in. But it has a
+consequence worth stating plainly, because nothing else on this page implies
+it: **anyone who can already authenticate can put the credentials back to the
+built-in ones**, remotely, in one request. They cannot read the current
+password — no endpoint reveals it — but they can replace the whole set.
+
+If that matters for where your head lives, the defence is that the built-in
+credentials are themselves a secret: they come from `include/secrets.h`, which
+is gitignored, so a reset returns the board to *your* password rather than to
+a published default or to no password at all.
+
+The BOOT gesture remains the way back in when nobody can authenticate, which
+is the case it exists for, and it is the only one of the two that works from
+outside a locked-out board.
 
 ## Why there is no HTTPS
 

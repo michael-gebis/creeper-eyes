@@ -3,8 +3,9 @@
 Two kinds of setting, and it matters which is which.
 
 **Build options** are compile-time: they decide what is in the firmware at
-all, and changing one means a rebuild. Everything is `#ifndef`-guarded, so any
-of them can be overridden from `platformio.ini` without editing a header.
+all, and changing one means a rebuild. Every switch is `#ifndef`-guarded, so
+it can be overridden from `platformio.ini` without editing a header — with the
+exception of the pin numbers, noted below.
 
 **Saved settings** are runtime: the eye design, the timezone, the clock
 colours. They live in flash, survive a reboot, and are changed from the
@@ -18,11 +19,19 @@ rendering code they belong to. Either way each is `#ifndef`-guarded, so any of
 them can be overridden from `build_flags` in `platformio.ini` without editing
 a source file — which is how the `gray` environment sets `USE_SSD1327`.
 
+Two groups are **not** guarded and cannot be overridden this way. Three
+derived values — `CONTROLLABLE`, `FAVICON_FRANK` and `FAVICON_EYES` — are
+computed from the others. And the **pin numbers** in
+[`src/main.cpp`](../src/main.cpp) (`DISPLAY_DC`, `DISPLAY_RESET`,
+`SELECT_L_PIN`, `SELECT_R_PIN`, `MOSI_PIN`, `MISO_PIN`, `SCLK_PIN`,
+`UART_RX_PIN`) are plain `#define`s: `-DDISPLAY_DC=…` is a macro
+redefinition, not an override, so those are edited in place.
+
 | Option | Default | Effect |
 | :----- | :------ | :----- |
 | `USE_SSD1327` | `0` | Selects the grayscale panel driver. Set by the `gray` environment via `build_flags`, not edited by hand. |
 | `COMMANDS` | `1` | Serial console and BOOT-button toggle. `0` compiles both out; the REST API still works, so a network build stays fully controllable. |
-| `DEBUG` | `1` | Serial diagnostics and the 1 Hz LED heartbeat. `0` saves ~2 KB. |
+| `DEBUG` | `1` | Serial diagnostics and the LED heartbeat, which toggles once a second. `0` saves ~2 KB. |
 | `DEBUG_BAUD` | `115200` | Console speed. **Must match `monitor_speed`** in `platformio.ini`. |
 | `DEBUG_LED_PIN` | `2` | On-board LED used for the heartbeat. |
 | `STARTUP_SPLASH` | `1` | Panel name cards at boot. `0` boots straight into the eyes. |
@@ -35,11 +44,12 @@ a source file — which is how the `gray` environment sets `USE_SSD1327`.
 | `CLOCK_*_COLOR` | `0x000000` | Starting hand colours, changeable at runtime with `clock color`. |
 | `CLOCK_NOON` | `128` | Where twelve sits, in the polar table's 0–511 angle. |
 | `PUPIL_OFF_SCALE` | `64` | Iris scale used when the pupil is off. At or below 64 the pupil vanishes. |
-| `NETWORK` | `1` | WiFi, NTP, web server and OTA. `0` compiles all of it out, saving ~669 KB. |
+| `NETWORK` | `1` | WiFi, NTP, web server and OTA. `0` compiles all of it out. With `CLOCK=0` too that is 679 KB, taking a `gray` build from 69% of the partition to 33%. |
 | `RTC` | `0` | A DS3231 battery-backed clock. `1` fits one; costs ~26 KB. See [docs/WIRING_RTC.md](WIRING_RTC.md). |
 | `RTC_SDA_PIN` / `RTC_SCL_PIN` | `21` / `22` | I²C pins for it. Both otherwise unused. |
 | `RTC_ADDR` | `0x68` | The DS3231's fixed address. |
 | `FAVICON` | `FAVICON_FRANK` | Tab icon. `FAVICON_EYES` is a generic alternative for a build that is not going into a Frankenstein. |
+| `OTA_REBOOT_DELAY_MS` | `1500` | How long after a successful update the board waits before rebooting into it, so the sender hears that it worked. `0` restores the library's behaviour. |
 | `OTA_TIMEOUT_MS` | `10000` | How long the board waits for the next block of an over-the-air update. The core's 1000 is shorter than the sender's patience. |
 | `AUTH_HTTP` | `0` | Digest authentication on the page, the API and `/cmd`. |
 | `AUTH_TOKEN` | `0` | A bearer token as an alternative credential, for scripts. |
@@ -105,6 +115,8 @@ ok saved eye=dragon swap=on
 | Pupil on/off | Dilation (`dilate`) |
 | Clock on/off, rate, second hand, hand colours | |
 | Timezone | |
+| Time server on or off (`ntp on` / `ntp off`) | |
+| Sleep: enabled, window, brightness | |
 
 Wi-Fi credentials are the exception to all of this: they are stored by the
 radio in its own part of NVS, not by `save`, and `forget` does not clear
@@ -119,6 +131,9 @@ back wrong by exactly the interval the device was off, and the plan is to
 take the time from NTP, which makes a stored one pointless as well as
 misleading. Its display preferences are saved; only the time is not, so
 `clock set` is the one clock command that does not mark settings unsaved.
+
+**`forget` also clears any stored credentials**, since they share this
+namespace — see [Locking it down](SECURITY.md#forget-does-this-too-and-it-is-reachable-over-the-network).
 
 `status` marks unsaved changes with `(unsaved)`. `forget` clears the stored
 settings and the build defaults apply again at the next boot.

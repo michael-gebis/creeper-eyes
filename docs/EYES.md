@@ -10,7 +10,7 @@ the firmware uses. Pick what you like, then enable it in
 [`include/eyes_config.h`](../include/eyes_config.h).
 
 Each design costs about **158 KB of flash**, so roughly four fit alongside
-everything else on the default partition. The switch name is `EYE_` plus the
+everything else. The switch name is `EYE_` plus the
 design name in capitals, e.g. `EYE_DRAGON`.
 
 ```ini
@@ -61,7 +61,7 @@ and greyscale.
 25 designs ship with the project: two from Adafruit's original Uncanny Eyes,
 and 23 converted from [TeensyEyes](https://github.com/chrismiller/TeensyEyes).
 Each costs roughly **158 KB of flash**, so about four fit alongside everything
-else on the default partition — they are chosen at build time rather than all
+else — they are chosen at build time rather than all
 compiled in.
 
 Edit `include/eyes_config.h`:
@@ -120,8 +120,12 @@ Dimensions must match what is already built in: **SCLERA 200×200, IRIS_MAP
 pointers whose row width is fixed at compile time, so designs of different
 sizes cannot coexist in one build.
 
-Budget roughly four designs on the default 1.25 MB app partition;
-`board_build.partitions = min_spiffs.csv` buys 1.9 MB while keeping OTA.
+Budget against the real figure rather than the ESP32 default: this project
+sets `board_build.partitions = min_spiffs.csv` for every environment, giving a
+**1.9 MB** app partition. A `gray_rtc` build — network, RTC, authentication,
+two designs — uses 1.39 MB of that, about 71%, so roughly three more designs
+fit. The 1.25 MB default never applies here, and could not: the firmware is
+already larger than it.
 
 ## If the panels are wired the wrong way round
 

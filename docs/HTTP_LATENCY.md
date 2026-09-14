@@ -70,8 +70,9 @@ change "obviously" helps.
   no client reads. 3,943 bytes became 2,558, and the p90 went from **3617 ms**
   to 86. That tail was retransmission timeouts on a reply that spanned several
   segments; making it fit in fewer removed them.
-- **Not polling a hidden tab.** A page left open in a background tab was
-  spending a kilobyte and a slice of the render loop every second, forever.
+- **Polling a hidden tab fifteen times less often.** A page left open in a
+  background tab was spending a kilobyte and a slice of the render loop every
+  second, forever; it drops to once every fifteen.
 
 The pattern: the wins came from sending less, not from working faster.
 
@@ -129,8 +130,8 @@ flag for anything the renderer reads mid-frame is the shape of it.
 ### The alternative
 
 `ESPAsyncWebServer` is event-driven and runs in the TCP task, which achieves
-the same decoupling without a task of our own. It would mean rewriting all 17
-routes, and it brings its own reputation for lifetime and memory bugs. It
+the same decoupling without a task of our own. It would mean rewriting every
+route, and it brings its own reputation for lifetime and memory bugs. It
 would also make the same thread-safety demands of `state.h`, so it does not
 avoid the hard part — only the scheduling part.
 
@@ -302,7 +303,9 @@ established, zero in 180 happens about two times in five by chance.
 
 ## The open questions, answered
 
-Three questions stood at the end of the work above. A raw-socket
+Three questions stood at the end of the work above — where `webPoll()` sits
+in the frame, what the remaining outliers were, and whether keep-alive was
+worth it. A raw-socket
 decomposition -- `tools/test_api.py --decompose N` -- and a plain ping
 answered all three, and in the end they had the same answer.
 
@@ -361,12 +364,13 @@ The loss is not on the measuring side. This machine is on Ethernet, and loses
 same access point lost 37 of 60, but a sleeping phone looks like that too, so
 take it as nothing more than a hint that the air is busy.)
 
-That also retires the `GET /rtc` at 663 ms from the earlier table. It was not
+That also retires the occasional `GET /rtc` at 663 ms. It was not
 the I2C read.
 
 ### Keep-alive
 
-Worth more than the 10 ms guessed above, for a reason the guess missed. The
+Worth more than the ten milliseconds it looks like, for a reason easy to
+miss. The
 handshake is 25 ms of median, not 10 -- but the larger cost is that closing
 every connection makes each request carry more packets, on a link that drops
 6% of them.

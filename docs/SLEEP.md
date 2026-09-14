@@ -85,14 +85,14 @@ Both are an evening with a multimeter. Worth doing before committing to a
 
 ### One API change is needed
 
-`SSD1327::cmd()` and `cmd1()` are **private** (`src/SSD1327.h:124`), so the
+`SSD1327::cmd()` and `cmd1()` are **private** in `src/ssd1327.h`, so the
 grey panel cannot be told anything from outside today. It needs two public
 methods — `setPower(bool)` and `setContrast(uint8_t)` — rather than exposing
 the raw command interface, which would invite writing arbitrary registers from
 anywhere.
 
 The colour side needs nothing: `main.cpp` already calls
-`eye[e].display.writeCommand(...)` directly (`src/main.cpp:928`).
+`eye[e].display.writeCommand(...)` directly, in `drawEye()`.
 
 ## Where the time comes from
 
@@ -140,15 +140,16 @@ failure.
 and sleep joins the bottom of it:
 
 ```
-src/main.cpp
-  2041  webPoll()                  <- everything above the returns keeps running
-  2094  fps accounting
-  2286  if (webRebootPending())    return;   an update is about to reboot
-  2290  if (netShowUntil)          return;   address cards
-  2298  if (splashPoll())          return;   startup cards
-        ---> sleep goes here <---
-  2305  frames++
-  2307  drawEye(...)
+frame(), in src/main.cpp, in order:
+
+  webPoll()                   <- everything above the returns keeps running
+  fps accounting
+  if (webRebootPending())     return;   an update is about to reboot
+  if (netShowUntil)           return;   address cards
+  if (splashPoll())           return;   startup cards
+  if (sleepPoll())            return;   <- sleep went here
+  frames++
+  drawEye(...)
 ```
 
 Below the address cards and the splash deliberately: someone who presses
@@ -220,7 +221,7 @@ start, stop, level.
 
 ```json
 {"enabled": true, "start": "22:00", "stop": "07:00",
- "level": 0, "asleep": false, "reason": "the time is not known yet"}
+ "level": 0, "asleep": false, "reason": "waiting for the time"}
 ```
 
 `start`/`stop` as `"HH:MM"` strings rather than minute counts — the page needs
