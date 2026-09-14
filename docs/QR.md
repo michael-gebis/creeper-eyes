@@ -51,6 +51,19 @@ code on screen found `0xF0` — the fastest available — steady.
 had presumably always refreshed that slowly; nobody had noticed because nobody
 had pointed a camera at them.
 
+It took two goes. The commit that announced this fix added `setFrontClock()`
+and `setPhaseLength()` — the accessors the sweep needs — and never touched the
+value `begin()` sends. The sweep worked, `0xF0` was confirmed on hardware, this
+page said it was fixed, and the eyes went on scanning at `0x00` for another
+ten commits. What caught it was reading the diff before a merge and noticing
+that the comment on `setFrontClock()` still described `begin()` as sending
+`0x00` — which it did.
+
+Worth the warning: a fix verified through a diagnostic path is verified for the
+diagnostic path. The sweep proved the *value*, which was the hard part and the
+part that felt like the work; it could not prove the value had been written
+down anywhere that runs.
+
 ## Where the codes are
 
 Both of them are on Frank's left eye, because both are things you point a
