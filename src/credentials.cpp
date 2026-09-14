@@ -61,9 +61,21 @@ void credBegin(void) {
   Preferences prefs;
   prefs.begin(CRED_NAMESPACE, true); // read-only
   for (int i = 0; i < CRED_COUNT; i++) {
-    String s = prefs.getString(KEYS[i], "");
-    stored[i] = s.length() > 0;
-    live[i] = stored[i] ? s : String(builtIn((CredKind)i));
+    // isKey() first, rather than getString() with a default.  A missing key
+    // is the ordinary case -- a board that has never had a password set has
+    // all four missing -- but Preferences::getString logs it at error level,
+    // so an ordinary boot printed four alarming NOT_FOUND lines in a row.
+    // isKey() asks the same question without the commentary.
+    stored[i] = prefs.isKey(KEYS[i]);
+    live[i] = stored[i] ? prefs.getString(KEYS[i], "")
+                        : String(builtIn((CredKind)i));
+    // A key that exists but holds nothing counts as absent: credSet refuses
+    // to write one, so it could only come from something else, and honouring
+    // it would mean an empty password in force.
+    if (stored[i] && !live[i].length()) {
+      stored[i] = false;
+      live[i] = String(builtIn((CredKind)i));
+    }
   }
   prefs.end();
 
