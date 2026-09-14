@@ -711,8 +711,14 @@ def test_credentials(res: Result, api: Api, info: Json, args) -> None:
         res.skip("the refusal cases", "pass --password to include them")
         return
 
+    # An empty body means something different depending on the build.  With
+    # AUTH_HTTP the "current" check comes first -- deliberately, so that a page
+    # you merely visited cannot change a password using credentials the browser
+    # attaches on its own -- and an absent "current" fails it, 403.  Without
+    # AUTH_HTTP there is no such check to fail, so the body falls through to
+    # "nothing to change", 400.  Both are right; only one is true at a time.
     expect(res, api, "rejects an empty change", "/credentials", "PUT", {},
-           status=400)
+           status=403 if c.get("http", {}).get("required") else 400)
     if c.get("http", {}).get("required"):
         expect(res, api, "rejects a wrong current password", "/credentials",
                "PUT", {"current": "definitely-not-it", "password": "xyzzy123"},
