@@ -215,4 +215,4 @@ time. A head with no network, no RTC and nothing typed in shows eyes without
 a clock rather than a clock showing 10:10.
 
 `clock` and the control page both report which one is in charge, and so does
-`GET /api/v1/state` as `clock.source`.
+`GET /api/v1/state` as `time.source`.
