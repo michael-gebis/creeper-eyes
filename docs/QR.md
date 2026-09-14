@@ -66,11 +66,16 @@ down anywhere that runs.
 
 ## Where the codes are
 
-Both of them are on Frank's left eye, because both are things you point a
-phone at and his right eye is busy saying the same thing in words for
-anyone who cannot.
+Both codes are on **Frank's left eye** — the one on your right as you face
+him — because both are things you point a phone at, and his other eye is busy
+saying the same thing in words for anyone who cannot.
 
-| when | left eye | right eye |
+Sides are given from Frank's point of view throughout, which is the convention
+the rest of the documentation uses. The source says so too, though not
+everywhere: the chip-select pin names came from upstream and are the viewer's,
+and `src/main.cpp` flags the discrepancy where it defines them.
+
+| when | Frank's left (your right) | Frank's right (your left) |
 | :-- | :-- | :-- |
 | the setup portal is open | code that joins `frank-setup` | network name, password, seconds left |
 | `net`, or the button on the control page | code that opens `http://<address>/` | MAC, IPv4, signal |

@@ -47,9 +47,10 @@ pair of eyes.
 A head with no network it recognises opens its own, called `frank-setup`,
 and shows you how to get on it:
 
-- **His left eye** shows a code. Point a phone camera at it and the phone
-  joins the network — you do not type the name or the password — and the
-  setup page opens by itself. Pick your WiFi, put in its password, done.
+- **His left eye** — the one on your right, as you face him — shows a code.
+  Point a phone camera at it and the phone joins the network, without you
+  typing the name or the password, and the setup page opens by itself. Pick
+  your WiFi, put in its password, done.
 - **His right eye** shows the same thing as text: the network name, the
   password, and how long is left. That is the way in for anyone whose phone
   will not scan, and it is why the password avoids `O`/`0` and `I`/`1`/`L`.
