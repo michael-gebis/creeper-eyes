@@ -22,3 +22,8 @@ hardware/**/fp-info-cache
 hardware/**/3DxService.log
 hardware/*/gerbers/*
 !hardware/*/gerbers/*-gerbers.zip
+
+# NVS backups: the WiFi password in clear text.  The raw partition image
+# carries it whether or not the decoded view shows it.
+/backups/
+*-nvs-*.json
