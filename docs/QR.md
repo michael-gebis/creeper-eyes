@@ -79,7 +79,7 @@ Neither is a separate mode to find. The setup code appears whenever a head
 has no network it recognises, which is the moment it is needed; the address
 code appears on the address cards, which already existed.
 
-The console says which payload it drew:
+Each says on the console what it drew:
 
 ```
 > net
@@ -87,9 +87,21 @@ ok showing address cards for 12s -- `net off` to dismiss
 [net] address code: http://192.168.123.166/
 ```
 
-That line is worth its space. A panel that drew nothing and a panel that
-drew the wrong thing look identical from across a room, and telling them
-apart otherwise means pointing a phone at an eye and guessing.
+```
+[net] no network; opening setup portal 'frank-setup'
+*wm:StartAP with SSID:  frank-setup
+[net] join code: WIFI:T:WPA;S:frank-setup;P:Y7DTFVY3;;
+```
+
+Those lines are worth their space. A panel that drew nothing and a panel that
+drew the wrong thing look identical from across a room, and telling them apart
+otherwise means pointing a phone at an eye and guessing. For the portal it
+matters more: the board is not on a network while the portal is up — that is
+what the portal is for — so serial is the only channel there is.
+
+The portal line carries the password, which is deliberate. It is random per
+session and already on a panel for anyone in the room to read; whoever is
+watching the console has a cable in the board, which is nearer than that.
 
 ## Why the address code carries an address
 
