@@ -31,7 +31,7 @@ void pushCanvas(uint8_t e, GFXcanvas1 &canvas);
 void showMessage(const char *l1, const char *l2, const char *l3,
                  const char *l4);
 
-// The same, on one panel only.  `eye` of -1 means all of them.  The setup
+// The same, on one panel only.  `which` of -1 means all of them.  The setup
 // portal uses this to caption a QR code on the other eye without wiping it.
 void showMessageOn(int8_t which, const char *l1, const char *l2,
                    const char *l3, const char *l4);

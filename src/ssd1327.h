@@ -66,7 +66,11 @@ public:
     cmd(0xA4);        // normal (not all-on / all-off / inverse)
     cmd1(0xA8, 0x7F); // multiplex ratio = 128
     cmd1(0xB1, 0xF1); // phase length
-    cmd1(0xB3, 0x00); // front clock divider
+    // Fastest oscillator, no division.  0x00 -- the slowest the controller
+    // has -- is what this sent for as long as there was an SSD1327 driver
+    // here, and it scans slowly enough to beat against a camera's rolling
+    // shutter.  See setFrontClock() and docs/QR.md.
+    cmd1(0xB3, 0xF0); // front clock divider / oscillator frequency
     cmd1(0xAB, 0x01); // function select A: internal VDD regulator
     cmd1(0xB6, 0x0F); // second precharge period
     cmd1(0xBE, 0x0F); // VCOMH
@@ -136,10 +140,12 @@ public:
   //
   // Low nibble is the DCLK divide ratio, high nibble the oscillator
   // frequency, and together with the phase lengths and the multiplex ratio
-  // they set how often the panel scans itself.  begin() uses 0x00 -- slowest
-  // oscillator, no division -- which is fine to look at and beats visibly
-  // with a camera's rolling shutter.  Raising it raises the panel's frame
-  // rate, which is what a camera pointed at it wants.
+  // they set how often the panel scans itself.  begin() uses 0xF0 -- fastest
+  // oscillator, no division -- because 0x00, which it sent until the codes
+  // were photographed, scans slowly enough to beat visibly against a
+  // camera's rolling shutter.  Exposed so the sweep in src/diag/qr_test.cpp
+  // can step through the range with one fixed image on screen, which is how
+  // 0xF0 was chosen.
   void setFrontClock(SPISettings cfg, uint8_t value) {
     SPI.beginTransaction(cfg);
     digitalWrite(_cs, LOW);

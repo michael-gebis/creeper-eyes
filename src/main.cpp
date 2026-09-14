@@ -646,7 +646,7 @@ HardwareSerial SerialIn(1);
 // portal, and OTA progress.  Not behind STARTUP_SPLASH -- the boot cards are
 // optional, this is not.
 // Four centred lines, drawn once and pushed to whichever panels the caller
-// wants.  `eye` of -1 means all of them, which is the usual case; the setup
+// wants.  `which` of -1 means all of them, which is the usual case; the setup
 // portal passes a single index because the other eye is showing a QR code and
 // would be wiped by a broadcast.
 void showMessageOn(int8_t which, const char *l1, const char *l2,
