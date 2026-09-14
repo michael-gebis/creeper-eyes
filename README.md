@@ -18,6 +18,8 @@ plugged in but power. Everything past that is optional.
   can aim the gaze or fire a startle effect without opening the head
 - **Tells the time**, with an analogue clock drawn in the iris
 - **Sleeps at night**, so it is not staring at 3am
+- **Sets itself up from a code on the eye** — point a phone at it and it
+  joins the head's network and opens the setup page, with nothing typed
 - **Updates over WiFi**, so a sealed head never needs opening again
 - **Runs on a generic ESP32** and either colour or greyscale panels
 
@@ -177,6 +179,7 @@ This page gets you a working head. Everything else has a page of its own.
 | [The eyes](docs/EYES.md) | The gallery, choosing designs, the pupil, the startup cards |
 | [Driving it](docs/CONTROL.md) | Web page, serial console, REST API |
 | [Networking](docs/NETWORK.md) | Joining WiFi, changing it later, updating over the air |
+| [Codes on the eyes](docs/QR.md) | Setup and address codes, and what a phone can really read off a panel |
 | [Keeping time](docs/TIME.md) | Time servers, the clock face, running without a network |
 | [Sleep mode](docs/SLEEP.md) | Dark panels overnight |
 | [Configuring](docs/CONFIG.md) | Every build option, and what gets saved |

@@ -51,6 +51,33 @@ code on screen found `0xF0` — the fastest available — steady.
 had presumably always refreshed that slowly; nobody had noticed because nobody
 had pointed a camera at them.
 
+## Where the codes are
+
+Both of them are on Frank's left eye, because both are things you point a
+phone at and his right eye is busy saying the same thing in words for
+anyone who cannot.
+
+| when | left eye | right eye |
+| :-- | :-- | :-- |
+| the setup portal is open | code that joins `frank-setup` | network name, password, seconds left |
+| `net`, or the button on the control page | code that opens `http://<address>/` | MAC, IPv4, signal |
+
+Neither is a separate mode to find. The setup code appears whenever a head
+has no network it recognises, which is the moment it is needed; the address
+code appears on the address cards, which already existed.
+
+The console says which payload it drew:
+
+```
+> net
+ok showing address cards for 12s -- `net off` to dismiss
+[net] address code: http://192.168.123.166/
+```
+
+That line is worth its space. A panel that drew nothing and a panel that
+drew the wrong thing look identical from across a room, and telling them
+apart otherwise means pointing a phone at an eye and guessing.
+
 ## Why the address code carries an address
 
 `http://192.168.123.166/`, not `http://frank.local/`.
@@ -94,9 +121,15 @@ Guarded with `getConfigPortalActive()`.
 
 ## What the test does not tell us
 
-- **Anything about other phones.** One camera, one decoder.
-- **Whether the captive portal opens reliably** once joined. That is
-  WiFiManager's DNS hijack, which already exists and is not exercised here.
+- **Anything about other phones.** One camera, one decoder, one pair of
+  panels. Version 3 had margin at every distance tried, which is the reason
+  to expect it travels, but that is an expectation and not a measurement.
+- **Anything about lighting.** Everything here was read off a self-lit panel
+  indoors. A head in direct sun, or behind the tinted lens a finished prop
+  might have, is untested.
+- **How well it survives the socket.** The panels were in their real
+  positions, but a deeper socket narrows the angle a camera can read from,
+  and nothing here says how much.
 
 ## A trap worth remembering
 

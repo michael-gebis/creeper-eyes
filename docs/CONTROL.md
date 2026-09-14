@@ -74,7 +74,7 @@ Open `pio device monitor` and type `help`. Commands are line-based at 115200.
 | `swap [on\|off]` | Swap which physical panel is which eye |
 | `save` | Persist every setting tagged persistent — see [Configuring](CONFIG.md#remembering-settings) |
 | `forget` | Clear saved settings |
-| `net [quiet]` | Address info, on the panels too |
+| `net [quiet]` | Address info, on the panels too — one eye shows a code that opens this page |
 | `net off` | Dismiss the address cards early |
 | `wifi` | The network, and how to change it |
 | `wifi join <ssid> [pass]` | Store a network and reboot into it |

@@ -135,6 +135,32 @@ The BOOT gesture remains the way back in when nobody can authenticate, which
 is the case it exists for, and it is the only one of the two that works from
 outside a locked-out board.
 
+## The setup portal has a password now
+
+It is easy to miss that the portal is a security surface at all. It is not the
+control page, it holds no settings, and it is up for sixty seconds. But it is
+the page you type *your home WiFi password* into, and it is served over a
+network the head itself creates — so for as long as it was open, that password
+went in over a network anyone in range could join.
+
+`frank-setup` now has a password, random per session, and the head shows it:
+as text on his right eye, and inside the code on his left that a phone camera
+turns into a one-tap join. That is the only reason a password is reasonable
+here — an unattended prop cannot be asked for a secret nobody has been given.
+
+It is random rather than derived from the board, which was the first idea and
+a bad one: the obvious thing to derive it from is the MAC address, and the MAC
+is broadcast in every beacon frame. A MAC-derived password is one that anyone
+close enough to see the network can compute.
+
+`PORTAL_PASSWORD=0` restores the open portal. `QR_CODES=0` sets it to `0` on
+its own, deliberately: a password the panels cannot show is one nobody can
+get past.
+
+The portal opens when the head has no network it recognises — which includes
+after the BOOT reset above, since that clears the stored network along with
+everything else.
+
 ## Why there is no HTTPS
 
 Not for want of a certificate — a real one can be had for a private address

@@ -23,10 +23,10 @@ cp include/secrets.h.example include/secrets.h
 #define WIFI_PASS "YourPassword"
 ```
 
-It is optional. A build without it still compiles, and an unconfigured board
-opens a **setup portal** instead: join the `frank-setup` network from a phone
-and pick your WiFi. The panels display the network name while the portal is
-up, so a head sitting there is not a mystery.
+It is optional, and skipping it is the easier route. A build without
+`secrets.h` still compiles, and an unconfigured board opens a **setup
+portal** — [which you set up from the eye](#setting-up-from-the-eye),
+with a phone, without editing anything.
 
 Three sources are tried in order of how deliberate they are: whatever the
 portal last stored, then the build-time defaults, then the portal. Stored
@@ -41,6 +41,37 @@ pair of eyes.
 > is silently truncated there — no error, just a shorter string and a board
 > that will not associate. Doubling the `$` does not help. The preprocessor
 > reads a header directly, so only ordinary C string escaping applies.
+
+## Setting up from the eye
+
+A head with no network it recognises opens its own, called `frank-setup`,
+and shows you how to get on it:
+
+- **His left eye** shows a code. Point a phone camera at it and the phone
+  joins the network — you do not type the name or the password — and the
+  setup page opens by itself. Pick your WiFi, put in its password, done.
+- **His right eye** shows the same thing as text: the network name, the
+  password, and how long is left. That is the way in for anyone whose phone
+  will not scan, and it is why the password avoids `O`/`0` and `I`/`1`/`L`.
+
+The password is new every time the portal opens, and random — not derived
+from the MAC, which is broadcast in every beacon frame and so would be a
+password anyone in range could work out. Having one at all matters more
+than it looks: the page you type *your* WiFi password into is served over
+that network, and until there was a password on it, that network was open
+to anyone nearby.
+
+The portal gives up after `WIFI_PORTAL_S` seconds and the head carries on
+offline — but the clock restarts for as long as somebody is connected to
+it, so it will not close while you are still typing.
+
+What a phone can genuinely read off a 128×128 panel sunk into an eye socket
+was measured rather than assumed. [Codes on the eyes](QR.md) has the
+numbers, including the version that did not work and why more error
+correction made it worse.
+
+`QR_CODES=0` leaves the text card alone, and takes the portal password with
+it — a password nobody can read is worse than none.
 
 ## Changing networks later
 
@@ -74,10 +105,21 @@ hatch all reach the same operations underneath — see
 ## Address info on the panels
 
 `net` reports over serial and paints both panels for twelve seconds — Frank's
-right shows MAC, IPv4 and signal, his left the mDNS name and which network he
-is on. Anything longer than the 21 characters a panel holds is wrapped rather
-than truncated, since half an address is worse than none. With `IPV6` turned
-on, his left shows the IPv6 address instead.
+right shows MAC, IPv4 and signal, and his left a code that opens the control
+page, so nobody has to read an address off an eye and type it correctly into
+a phone.
+
+The code carries `http://192.168.1.50/` rather than `http://frank.local/`,
+for the reason [OTA gives](#over-the-air-updates) for not relying on the
+name: mDNS is missing on Windows without Bonjour and unreliable on older
+Android. A dotted quad works anywhere on the subnet, and because the code is
+drawn fresh each time it is always current.
+
+Without `QR_CODES`, his left shows the mDNS name and which network he is on
+instead. Anything longer than the 21 characters a panel holds is wrapped
+rather than truncated, since half an address is worse than none. With `IPV6`
+turned on his left shows the IPv6 address, code or no code — showing that
+address is the whole reason to build with `IPV6` at all.
 
 Twelve seconds is a long time to stare at a MAC address, so the cards can be
 dismissed: `net off` over serial, the same button on the control page, or

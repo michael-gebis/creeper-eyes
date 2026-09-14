@@ -66,6 +66,8 @@ redefinition, not an override, so those are edited in place.
 | `WEB_CMD_ENDPOINT` | `1` | The `/cmd` escape hatch. `0` leaves only the REST API. Needs `COMMANDS`, since it is a passthrough to the console. |
 | `WIFI_HOSTNAME` | `frank` | DHCP and mDNS name. |
 | `WIFI_AP_NAME` | `frank-setup` | The setup portal's own network name. |
+| `QR_CODES` | `NETWORK` | Codes on the panels: one that joins the setup network, one that opens the control page. `0` leaves plain text — see [Codes on the eyes](QR.md). |
+| `PORTAL_PASSWORD` | `QR_CODES` | A random password on the setup network, which is only reasonable because the panels can show it. Follows `QR_CODES`, and `0` leaves the portal open. |
 | `NTP_SERVER_1` / `NTP_SERVER_2` | `pool.ntp.org`, `time.nist.gov` | Time servers. A server on your own LAN works here. |
 | `NET_SHOW_MS` | `12000` | How long `net` leaves the address cards up. |
 | `NET_COLS` | `21` | Characters a 128 px panel fits, for wrapping those cards. |
