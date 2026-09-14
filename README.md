@@ -1,7 +1,7 @@
 # Frankenstein Head with Animated Eyes
 
-Twin animated eyes for the 3D printed [Frankenstein head with animated
-eyes](https://www.printables.com/model/620191-frankenstein-head-with-animated-eyes),
+Twin animated eyes for Jose Aveleira's 3D-printed
+[Frankenstein head with animated eyes](https://www.printables.com/model/620191-frankenstein-head-with-animated-eyes),
 driven by an ESP32 and two 1.5" OLED panels.
 
 The eyes wander, blink and dilate on their own, and keep doing it with nothing
@@ -198,7 +198,11 @@ deliberately slow 2 MHz, which separates wiring faults from rendering faults.
 
 ## Credits
 
-Lineage, oldest first:
+**The head itself is [Jose Aveleira's](https://www.printables.com/@JoseAveleira_1373378)**
+— [Frankenstein head with animated eyes](https://www.printables.com/model/620191-frankenstein-head-with-animated-eyes)
+on Printables. None of this has anywhere to live without it.
+
+Firmware lineage, oldest first:
 
 - **[Adafruit Uncanny Eyes](https://learn.adafruit.com/animated-electronic-eyes)** — Phil Burgess / Paint Your Dragon, for Adafruit Industries. The rendering engine and the eye artwork. SPI FIFO insight from Paul Stoffregen's `ILI9341_t3`; concept inspired by David Boccabella (Marcwolf).
 - **Laurent Moll**, 2018 — [Uncanny Eyes costume](https://www.hackster.io/projects/376a13/), dual-display ESP32 work.
