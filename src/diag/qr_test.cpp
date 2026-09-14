@@ -100,17 +100,66 @@ static void sharedReset(void) {
   delay(20);
 }
 
-// The smallest version that holds the payload.  The library will not choose
-// for us, and the version is the whole point of this test -- it decides how
-// many modules land in 128 pixels.
+// Byte-mode capacity in bytes, versions 1-6 by ECC level, from ISO/IEC 18004
+// table 7.  Column order matches the library's ECC_LOW/MEDIUM/QUARTILE/HIGH,
+// which are 0-3.
+static const uint8_t QR_CAPACITY[MAX_VERSION][4] = {
+    {17, 14, 11, 7},     // version 1
+    {32, 26, 20, 14},    // version 2
+    {53, 42, 32, 24},    // version 3
+    {78, 62, 46, 34},    // version 4
+    {106, 84, 60, 44},   // version 5
+    {134, 106, 74, 58},  // version 6
+};
+
+// The smallest version that holds the payload.
+//
+// The capacity check has to happen here because the library does not do it:
+// qrcode.c carries "@TODO: Return error if data is too big" directly above
+// qrcode_initBytes(), and true to the comment it returns success for any
+// length.  Asking it to encode forty-one bytes as a version-1 code produced a
+// perfectly well-formed twenty-one module grid containing nothing readable,
+// and reported version 1 while doing it -- which is exactly the kind of test
+// result that looks like a scanning problem and is not.
 static bool fit(const char *text, uint8_t ecc, uint8_t &versionOut) {
+  size_t len = strlen(text);
   for (uint8_t v = 1; v <= MAX_VERSION; v++) {
-    if (qrcode_initText(&qrcode, qrBuffer, v, ecc, text) == 0) {
-      versionOut = v;
-      return true;
-    }
+    if (len > QR_CAPACITY[v - 1][ecc])
+      continue;
+    if (qrcode_initText(&qrcode, qrBuffer, v, ecc, text) != 0)
+      continue;
+    versionOut = v;
+    return true;
   }
   return false;
+}
+
+// The same code as text, two characters per module.
+//
+// Two reasons.  It lets this test be checked without a panel at all -- scan
+// it off the terminal, and if that works while the panel does not, the
+// encoding is fine and the problem is optics.  And it makes a malformed code
+// obvious to a person: three finder squares in the corners, a timing line
+// between them.  The version-1 nonsense above looked wrong at a glance.
+static void dumpAscii(void) {
+  const uint8_t quiet = 2; // narrower than the spec's 4, to fit a terminal
+  for (uint8_t i = 0; i < quiet; i++) {
+    for (uint16_t x = 0; x < (uint16_t)(qrcode.size + 2 * quiet); x++)
+      Serial.print("  ");
+    Serial.println();
+  }
+  for (uint8_t y = 0; y < qrcode.size; y++) {
+    for (uint8_t i = 0; i < quiet; i++)
+      Serial.print("  ");
+    for (uint8_t x = 0; x < qrcode.size; x++)
+      Serial.print(qrcode_getModule(&qrcode, x, y) ? "##" : "  ");
+    Serial.println();
+  }
+  for (uint8_t i = 0; i < quiet; i++) {
+    for (uint16_t x = 0; x < (uint16_t)(qrcode.size + 2 * quiet); x++)
+      Serial.print("  ");
+    Serial.println();
+  }
 }
 
 static void pushBoth(void) {
@@ -182,7 +231,10 @@ static void phase(const char *what, const char *text, uint8_t ecc,
                 (unsigned)PANEL_W);
   if (scale < 3)
     Serial.printf("  NOTE: under 3 px per module is optimistic for a phone\n");
-  Serial.printf("  scan it now -- ten seconds\n");
+  Serial.printf("  scan it now -- ten seconds.  The same code in text, as a\n"
+                "  control: if this scans off the screen and the panel does\n"
+                "  not, the encoding is right and the panel is the problem.\n\n");
+  dumpAscii();
 }
 
 void setup(void) {
