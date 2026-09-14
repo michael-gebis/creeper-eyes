@@ -17,7 +17,11 @@
 // left to send the next update to.  Flash it over USB, which you want anyway,
 // since the measurements come back over serial.
 //
-// Three phases, ten seconds each, narrated over serial.  Every one of them
+// Part one steps the panel's own scan rate, because a camera pointed at an
+// OLED running slowly sees it beat.  The codes here are drawn once and left
+// alone, so any flicker is the panel refreshing itself, not this sketch.
+//
+// Part two is the legibility test.  Three phases, narrated over serial.  Every one of them
 // ends up at three pixels per module, because 128 divided by anything in this
 // range is three; what changes is how much of the panel gets used:
 //
@@ -26,7 +30,8 @@
 //      correction of M, and nearly the whole panel.  Worth trying because a
 //      code photographed at an angle, in an eye socket, is exactly the case
 //      error correction exists for.
-//   3. The address, http://frank.local/ -- version 2, 25x25, 99 of 128 px.
+//   3. The address, http://192.168.123.166/ -- version 2, 25x25, 99 of 128
+//      px.  An address rather than frank.local: see ADDRESS_URL below.
 //      The sparsest of the three.  If this one fails, the idea is dead.
 //
 // ECC L is deliberately absent: at 41 bytes it produces the same version 3 as
@@ -60,6 +65,14 @@
 
 // The AP name the real portal uses, so the payload length is honest.
 #define AP_NAME "frank-setup"
+
+// An address, not a name.  frank.local needs mDNS, which Windows does not
+// have without Bonjour and Android only resolves reliably from 12 onward;
+// a dotted quad works anywhere on the subnet.  There is no networking in
+// this build to ask, so it is fixed -- but it is the real address, and at
+// fifteen characters it is also as long as IPv4 gets, so the payload is the
+// worst case rather than a flattering one.
+#define ADDRESS_URL "http://192.168.123.166/"
 
 #if USE_SSD1327
 #include "../ssd1327.h"
@@ -162,10 +175,15 @@ static void dumpAscii(void) {
   }
 }
 
-static void pushBoth(void) {
+// Which panel a draw goes to.  The names are the viewer's, matching the other
+// diagnostics: LEFT is CS_LEFT, the panel on your left as you look at the
+// head, which is Frank's right eye.
+enum Panel { LEFT, RIGHT };
+
+static void pushTo(Panel which) {
 #if USE_SSD1327
   // 1 bit in, 4 bits out, two pixels to a byte -- the same packing the eyes
-  // use.  White modules go to full brightness so the contrast is maximal.
+  // use.  Set pixels go to full brightness so the contrast is maximal.
   static uint8_t packed[SSD1327_FRAME_BYTES];
   uint16_t o = 0;
   for (int16_t y = 0; y < PANEL_H; y++)
@@ -173,14 +191,46 @@ static void pushBoth(void) {
       packed[o] = (uint8_t)((canvas.getPixel(x, y) ? 0xF0 : 0x00) |
                             (canvas.getPixel(x + 1, y) ? 0x0F : 0x00));
   SPI.beginTransaction(panelSPI);
-  leftEye.pushFrame(packed);
-  rightEye.pushFrame(packed);
+  if (which == LEFT)
+    leftEye.pushFrame(packed);
+  else
+    rightEye.pushFrame(packed);
   SPI.endTransaction();
 #else
-  leftEye.drawBitmap(0, 0, canvas.getBuffer(), PANEL_W, PANEL_H, 0xFFFF, 0x0000);
-  rightEye.drawBitmap(0, 0, canvas.getBuffer(), PANEL_W, PANEL_H, 0xFFFF,
-                      0x0000);
+  if (which == LEFT)
+    leftEye.drawBitmap(0, 0, canvas.getBuffer(), PANEL_W, PANEL_H, 0xFFFF,
+                       0x0000);
+  else
+    rightEye.drawBitmap(0, 0, canvas.getBuffer(), PANEL_W, PANEL_H, 0xFFFF,
+                        0x0000);
 #endif
+}
+
+// A caption for the left eye: three lines, the middle one large.
+//
+// Dark ground rather than light, unlike the QR.  A second lit panel beside
+// the code would drag the camera's exposure down and make the thing it is
+// trying to read worse.
+static void caption(const char *top, const char *big, const char *bottom) {
+  canvas.fillScreen(0);
+  canvas.setTextColor(1);
+
+  canvas.setTextSize(2);
+  int16_t w = (int16_t)strlen(top) * 12;
+  canvas.setCursor((PANEL_W - w) / 2, 18);
+  canvas.print(top);
+
+  canvas.setTextSize(4);
+  w = (int16_t)strlen(big) * 24;
+  canvas.setCursor((PANEL_W - w) / 2, 50);
+  canvas.print(big);
+
+  canvas.setTextSize(2);
+  w = (int16_t)strlen(bottom) * 12;
+  canvas.setCursor((PANEL_W - w) / 2, 96);
+  canvas.print(bottom);
+
+  pushTo(LEFT);
 }
 
 // Draw the code currently in `qrcode`, as large as it will go.
@@ -203,7 +253,7 @@ static uint8_t drawQR(void) {
       if (qrcode_getModule(&qrcode, x, y))
         canvas.fillRect(off + (quiet + x) * scale, off + (quiet + y) * scale,
                         scale, scale, 0);
-  pushBoth();
+  pushTo(RIGHT);
   return scale;
 }
 
@@ -216,6 +266,14 @@ static void phase(const char *what, const char *text, uint8_t ecc,
     return;
   }
   uint8_t scale = drawQR();
+  {
+    char v[6], m[12];
+    snprintf(v, sizeof(v), "v%u", (unsigned)version);
+    snprintf(m, sizeof(m), "%ux%u", (unsigned)qrcode.size,
+             (unsigned)qrcode.size);
+    caption(eccName[0] == 'M' ? "ECC M" : eccName[0] == 'Q' ? "ECC Q" : "ECC L",
+            v, m);
+  }
   const uint8_t quiet = 4;
   Serial.printf("\n%s\n", what);
   Serial.printf("  payload   %s\n", text);
@@ -263,26 +321,82 @@ void setup(void) {
 #endif
 }
 
-void loop(void) {
+// The panel's frame rate, stepped from the value begin() uses to the fastest
+// the controller offers.  Low nibble is the DCLK divide ratio, high nibble the
+// oscillator frequency; both raise the scan rate as they rise.
+static const struct {
+  uint8_t value;
+  const char *note;
+} CLOCKS[] = {
+    {0x00, "as shipped -- slowest oscillator, no division"},
+    {0x50, "mid oscillator"},
+    {0x91, "high oscillator, divide by 2 -- a common vendor default"},
+    {0xC0, "higher oscillator, no division"},
+    {0xF0, "fastest the controller offers"},
+};
+#define CLOCK_COUNT (sizeof(CLOCKS) / sizeof(CLOCKS[0]))
+
+static void buildWifiPayload(char *out, size_t n) {
   // The password the real feature would derive from the MAC: six bytes as
   // twelve hex characters, so the payload length here is exactly what it
   // would be in the field rather than a guess.
   uint8_t mac[6];
   esp_read_mac(mac, ESP_MAC_WIFI_STA);
-  char wifiPayload[96];
-  snprintf(wifiPayload, sizeof(wifiPayload),
-           "WIFI:T:WPA;S:%s;P:%02X%02X%02X%02X%02X%02X;;", AP_NAME, mac[0],
-           mac[1], mac[2], mac[3], mac[4], mac[5]);
+  snprintf(out, n, "WIFI:T:WPA;S:%s;P:%02X%02X%02X%02X%02X%02X;;", AP_NAME,
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
 
+void loop(void) {
+  char wifiPayload[96];
+  buildWifiPayload(wifiPayload, sizeof(wifiPayload));
+
+#if USE_SSD1327
+  // Part one: find a panel frame rate the camera can live with.
+  //
+  // Nothing about the legibility question can be answered while the image is
+  // beating with the shutter, and the test draws each code exactly once --
+  // the flicker is the panel scanning itself, not us redrawing.  So step the
+  // scan rate with one fixed code on screen and watch through the camera.
+  Serial.printf("\n\n==== part one: flicker ====\n");
+  Serial.printf("One code, held still, while the panel's own frame rate\n"
+                "changes.  Watch through the camera and note which settings\n"
+                "are steady.  Eight seconds each.\n");
+  uint8_t v = 0;
+  if (!fit(ADDRESS_URL, ECC_MEDIUM, v)) {
+    Serial.printf("could not build the test code\n");
+    delay(5000);
+    return;
+  }
+  drawQR();
+  for (size_t i = 0; i < CLOCK_COUNT; i++) {
+    leftEye.setFrontClock(panelSPI, CLOCKS[i].value);
+    rightEye.setFrontClock(panelSPI, CLOCKS[i].value);
+    char hex[6], idx[12];
+    snprintf(hex, sizeof(hex), "%02X", CLOCKS[i].value);
+    snprintf(idx, sizeof(idx), "%u of %u", (unsigned)(i + 1),
+             (unsigned)CLOCK_COUNT);
+    caption("0xB3", hex, idx);
+    Serial.printf("\n  0xB3 = 0x%02X   %s\n", CLOCKS[i].value,
+                  CLOCKS[i].note);
+    Serial.printf("  steady, or still flickering?\n");
+    delay(8000);
+  }
+  // Leave it at the fastest for part two; if that is wrong you will see it.
+  leftEye.setFrontClock(panelSPI, 0xF0);
+  rightEye.setFrontClock(panelSPI, 0xF0);
+  Serial.printf("\n  (holding 0xF0 for the legibility phases below)\n");
+#endif
+
+  Serial.printf("\n\n==== part two: legibility ====\n");
   phase("1. WiFi join, ECC M -- the candidate", wifiPayload, ECC_MEDIUM,
         "M (15% recovery)");
-  delay(10000);
+  delay(15000);
 
   phase("2. WiFi join, ECC Q -- denser, twice the error correction",
         wifiPayload, ECC_QUARTILE, "Q (25% recovery)");
-  delay(10000);
+  delay(15000);
 
-  phase("3. Address, ECC M -- the easy one", "http://frank.local/", ECC_MEDIUM,
+  phase("3. Address, ECC M -- the easy one", ADDRESS_URL, ECC_MEDIUM,
         "M (15% recovery)");
-  delay(10000);
+  delay(15000);
 }

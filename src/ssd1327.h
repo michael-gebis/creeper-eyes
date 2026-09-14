@@ -132,6 +132,32 @@ public:
     SPI.endTransaction();
   }
 
+  // Front clock divider and oscillator frequency, register 0xB3.
+  //
+  // Low nibble is the DCLK divide ratio, high nibble the oscillator
+  // frequency, and together with the phase lengths and the multiplex ratio
+  // they set how often the panel scans itself.  begin() uses 0x00 -- slowest
+  // oscillator, no division -- which is fine to look at and beats visibly
+  // with a camera's rolling shutter.  Raising it raises the panel's frame
+  // rate, which is what a camera pointed at it wants.
+  void setFrontClock(SPISettings cfg, uint8_t value) {
+    SPI.beginTransaction(cfg);
+    digitalWrite(_cs, LOW);
+    cmd1(0xB3, value);
+    digitalWrite(_cs, HIGH);
+    SPI.endTransaction();
+  }
+
+  // Phase 1 and phase 2 lengths, register 0xB1: the other term in the frame
+  // frequency.  begin() uses 0xF1, a long phase 2.
+  void setPhaseLength(SPISettings cfg, uint8_t value) {
+    SPI.beginTransaction(cfg);
+    digitalWrite(_cs, LOW);
+    cmd1(0xB1, value);
+    digitalWrite(_cs, HIGH);
+    SPI.endTransaction();
+  }
+
   // 0 is very dark but not off; 0x80 is what begin() sets.
   void setContrast(SPISettings cfg, uint8_t level) {
     SPI.beginTransaction(cfg);
