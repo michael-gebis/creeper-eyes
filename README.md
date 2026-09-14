@@ -114,14 +114,25 @@ for five boards.
 
 ## Build and flash
 
-This is a [PlatformIO](https://platformio.org/) project. No Arduino IDE needed.
+This is a [PlatformIO](https://platformio.org/) project. No Arduino IDE needed,
+and nothing to install by hand beyond PlatformIO itself — the Xtensa toolchain,
+the ESP32 Arduino core and the Adafruit libraries all download on the first
+build.
+
+**New to PlatformIO?** Install the
+[PlatformIO IDE extension for VS Code](https://docs.platformio.org/en/latest/integration/ide/vscode.html).
+It is the same two steps on Windows, macOS and Linux — install VS Code, then
+install the extension — and its Quick Start walks you through building a
+blinking LED before you come back here. The extension includes the command
+line this page uses, so nothing below is closed off by starting there.
+
+**Happier in a terminal?** Install PlatformIO Core on its own. The
+[installation methods](https://docs.platformio.org/en/latest/core/installation/methods/index.html)
+page covers all three systems; the short version is:
 
 ```sh
 pipx install platformio          # or: pip install --user platformio
 ```
-
-Everything else — the Xtensa toolchain, the ESP32 Arduino core, the Adafruit
-libraries — downloads automatically on the first build.
 
 ### Environments
 
