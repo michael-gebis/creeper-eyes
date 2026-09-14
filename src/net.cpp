@@ -258,7 +258,14 @@ void setupNetwork(void) {
   snprintf(join, sizeof(join), "WIFI:T:nopass;S:%s;;", WIFI_AP_NAME);
 #endif
   bool haveCode = displayCount() > 1 && qrShow(1, join);
-  if (!haveCode)
+  // Over USB this is the only way to see what the panel is showing, and while
+  // the portal is up it is the only channel there is -- the board is not on a
+  // network yet, by definition.  The password is in here because it is random
+  // per session and shown openly on a panel anyway: anyone reading this has a
+  // cable in the board, which is closer than anyone reading the eye.
+  if (haveCode)
+    DEBUG_PRINTF("[net] join code: %s" "\n", join);
+  else
     DEBUG_PRINTF("[net] join code too long to draw legibly; text only" "\n");
 #else
   // No code to caption, so the text card goes to both panels as it
