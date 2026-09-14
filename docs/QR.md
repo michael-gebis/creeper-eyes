@@ -12,7 +12,8 @@ the answer, measured rather than assumed.
 ## The short version
 
 **It works, at version 3 or below.** The join code scans reliably from a range
-of distances. The feature is viable.
+of distances, with the panels mounted in their real positions in the head
+rather than held conveniently on a bench. The feature is viable.
 
 | | payload | version | modules | drawn | panel margin | result |
 | :-- | :-- | :-- | :-- | :-- | :-- | :-- |
@@ -66,9 +67,6 @@ address gets, so that is the worst case rather than a flattering one.
 
 ## What the test does not tell us
 
-- **Whether a sealed head is harder than an open one.** Measured with the
-  panels accessible. A deeply recessed socket cuts the viewing angle and could
-  change the answer.
 - **Anything about other phones.** One camera, one decoder.
 - **Whether the captive portal opens reliably** once joined. That is
   WiFiManager's DNS hijack, which already exists and is not exercised here.

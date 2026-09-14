@@ -310,6 +310,35 @@
 #define FACTORY_RESET_MS 10000
 #endif
 
+// QR CODES ------------------------------------------------------------------
+// A code on the eye that joins the setup network, and another that opens the
+// control page -- see docs/QR.md, which records what a phone can actually
+// read off a 128x128 panel in an eye socket.
+//
+// Needs NETWORK: both codes are about getting on or reaching a network.
+
+#ifndef QR_CODES
+#define QR_CODES NETWORK
+#endif
+
+// A password on the setup access point.
+//
+// Normally this is a usability disaster -- the person setting the head up
+// would have to know a password to get to the page where they set passwords.
+// A QR code makes it free: the phone reads it and joins silently, and nobody
+// types anything.  That turns the portal from an open network, over which the
+// home WiFi password is sent in the clear to anyone in range, into one that
+// has to be seen to be joined.
+//
+// The password is random per session rather than derived from anything.  A
+// MAC-derived password would be no password at all: the MAC is broadcast in
+// every beacon frame, so anyone scanning could compute it.
+//
+// 0 leaves the portal open, which is what it always was.
+#ifndef PORTAL_PASSWORD
+#define PORTAL_PASSWORD QR_CODES
+#endif
+
 // SLEEP MODE ----------------------------------------------------------------
 // Dark panels between two times -- see docs/SLEEP.md.
 //
