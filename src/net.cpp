@@ -532,8 +532,9 @@ void netReport(Print &out) {
 }
 
 // Paints one address card.  Frank's right takes the numbers -- MAC, IPv4,
-// signal -- and his left the names, because a 128 px panel holds 21
-// characters of the default font and none of this fits on one.
+// signal -- because a 128 px panel holds 21 characters of the default font
+// and none of this fits on one.  His left takes the code that opens the
+// control page, or, in builds without QR codes, the names.
 void netDrawPanel(uint8_t e) {
   GFXcanvas1 c(PANEL_W, PANEL_H);
   c.fillScreen(0);
@@ -547,6 +548,34 @@ void netDrawPanel(uint8_t e) {
     pushCanvas(e, c);
     return;
   }
+
+// An IPv6 build keeps its text card: showing that address is the whole
+// reason that build exists, and it is far too long to draw as a code
+// anyway -- 39 characters needs version 4, which docs/QR.md rules out.
+#if QR_CODES && !IPV6
+  // The viewer's right card becomes a code that opens the control page, which
+  // is the one thing anybody standing in front of the head actually wants from
+  // it.  An address is a dozen characters to copy off a panel by eye and then
+  // type correctly into a phone; a code is a tap.
+  //
+  // An address rather than the name, for the same reason the setup code uses
+  // one: frank.local needs mDNS, which Windows lacks without Bonjour and older
+  // Android does not resolve.  Drawn live, so it is current by construction --
+  // which is what a printed label on the back of a prop could never be.
+  if (e == 1) {
+    char url[32];
+    snprintf(url, sizeof(url), "http://%s/", WiFi.localIP().toString().c_str());
+    if (qrShow(e, url)) {
+      // Worth a line: it is the only way to tell a panel that drew nothing
+      // from one that drew the wrong thing without pointing a phone at it.
+      DEBUG_PRINTF("[net] address code: %s" "\n", url);
+      return;
+    }
+    // Too long to draw legibly, which an IPv4 address never is -- fall through
+    // to the text card rather than leave a panel blank.
+    DEBUG_PRINTF("[net] %s will not draw legibly; showing names" "\n", url);
+  }
+#endif
 
   int16_t y = 34;
   if (e == 0) {
