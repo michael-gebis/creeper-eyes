@@ -1,8 +1,9 @@
 # TODO
 
-Things worth doing, not yet started. Nothing on this page exists in the
-firmware; it is a plan, and the measurements in it are the ones that shaped
-the plan rather than results from a working feature.
+Things worth doing, not yet started: features that do not exist and bugs
+that have not been fixed. Nothing here has been acted on. Where a section
+carries measurements, they are the ones that shaped the entry rather than
+results from working code.
 
 ## Online firmware updates
 
@@ -136,3 +137,34 @@ algorithm and which implementation is an open question, not a decision.
 - Whether an update should be refused while the clock says it is near or
   inside the sleep window, on the grounds that nobody is watching to see it
   fail.
+
+## The sleep card contradicts itself
+
+Observed on 2026-09-14: the head was asleep and the card read
+
+> asleep — sleeps in 2h 4m
+
+It cannot be both. Either the state is wrong or the countdown is, and the
+card shows them side by side without noticing.
+
+Not diagnosed yet. What is known:
+
+- [`data/index.html`](data/index.html) builds that string from two
+  independent fields — the word comes from `s.reason`, and `sleeps`/`wakes`
+  comes from `s.changesToAsleep`. Nothing checks that they agree.
+- Those fields have different provenance. `reason` and `asleep` are cached
+  in `sleepPoll()` from `decide()`; `changesToAsleep` is recomputed live by
+  `sleepNextChange()` in [`src/sleepmode.cpp`](src/sleepmode.cpp) from
+  `inWindow()`. Two answers to the same question, and the page renders both.
+- `sleepNextChange()` read in isolation looks right, including across
+  midnight: at 04:56 with a 22:00–07:00 window it returns 124 minutes and
+  `toAsleep = false`, which is "wakes in 2h 4m". So 2h 4m may well be the
+  correct *interval* wearing the wrong verb.
+
+Worth capturing the whole of `GET /api/v1/sleep` next time it happens,
+rather than the rendered string — `reason`, `asleep`, `changesInMinutes`,
+`changesToAsleep`, `start`, `stop` and the clock, together, will say which
+of the two is lying.
+
+Likely the fix is that the card should derive both halves from one source
+instead of asking twice. The API may be fine.
