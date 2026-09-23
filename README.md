@@ -176,7 +176,7 @@ This page gets you a working head. Everything else has a page of its own.
 | | |
 | :-- | :-- |
 | [Wiring](docs/WIRING.md) | Every wire, in order, with what goes wrong |
-| [The eyes](docs/EYES.md) | The gallery, choosing designs, the pupil, the startup cards |
+| [The eyes](docs/EYES.md) | The gallery, choosing designs, the pupil, the startup cards, a panel fitted the wrong way |
 | [Driving it](docs/CONTROL.md) | Web page, serial console, REST API |
 | [Networking](docs/NETWORK.md) | Joining WiFi, changing it later, updating over the air |
 | [Codes on the eyes](docs/QR.md) | Setup and address codes, and what a phone can really read off a panel |

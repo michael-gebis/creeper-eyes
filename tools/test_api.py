@@ -236,7 +236,8 @@ def test_state(res: Result, api: Api) -> Json:
     for path in ("eye.index", "eye.name", "eye.count",
                  "gaze.mode", "gaze.x", "gaze.y",
                  "dilate.mode", "dilate.percent",
-                 "pupil.on", "swap.on", "startle.active",
+                 "pupil.on", "swap.on", "flip.left", "flip.right",
+                 "startle.active",
                  "clock.on", "clock.seconds", "clock.time", "clock.rate",
                  "clock.colors.hour", "clock.colors.minute",
                  "clock.colors.second", "clock.suppressed",
@@ -247,7 +248,7 @@ def test_state(res: Result, api: Api) -> Json:
                  "system.settingsDirty"):
         field(res, s, path, "state has %s" % path)
     if s:
-        res.ok("all %d documented fields present" % 31)
+        res.ok("all %d documented fields present" % 33)
     return s
 
 
@@ -365,7 +366,7 @@ def test_dilate(res: Result, api: Api) -> None:
 
 
 def test_toggles(res: Result, api: Api, start: Json) -> None:
-    res.heading("pupil and panel swap")
+    res.heading("pupil, panel swap and flip")
     for name in ("pupil", "swap"):
         was: Any = field(res, start, "%s.on" % name, name)
         r: Json = expect(res, api, "PUT /%s flips it" % name,
@@ -377,6 +378,21 @@ def test_toggles(res: Result, api: Api, start: Json) -> None:
         same(res, "%s restored" % name, r.get("on"), was)
         expect(res, api, "/%s rejects a missing body" % name, "/" + name,
                "PUT", {}, status=400)
+
+    # Flip is per side, and the sides are independent.
+    flip: Json = start.get("flip", {})
+    was_l, was_r = flip.get("left", False), flip.get("right", False)
+    r = expect(res, api, "PUT /flip left", "/flip", "PUT", {"left": not was_l})
+    same(res, "left flipped", r.get("left"), not was_l)
+    same(res, "right untouched", r.get("right"), was_r)
+    r = expect(res, api, "PUT /flip both back", "/flip", "PUT",
+               {"left": was_l, "right": was_r})
+    same(res, "left restored", r.get("left"), was_l)
+    same(res, "right restored", r.get("right"), was_r)
+    expect(res, api, "/flip rejects a missing body", "/flip", "PUT", {},
+           status=400)
+    expect(res, api, "/flip rejects a non-bool", "/flip", "PUT",
+           {"left": "yes"}, status=400)
 
 
 def test_clock(res: Result, api: Api, start: Json, info: Json) -> None:
@@ -952,6 +968,9 @@ def restore(api: Api, start: Json) -> None:
             else {"percent": start["dilate"]["percent"]})
     api.raw("/pupil", "PUT", {"on": start.get("pupil", {}).get("on", True)})
     api.raw("/swap", "PUT", {"on": start.get("swap", {}).get("on", False)})
+    flip: Any = start.get("flip", {})
+    api.raw("/flip", "PUT", {"left": flip.get("left", False),
+                             "right": flip.get("right", False)})
     clock: Any = start.get("clock", {})
     if clock:
         api.raw("/clock", "PUT", {"on": clock.get("on", False),
@@ -1380,7 +1399,7 @@ def main(argv: list[str]) -> int:
 
     print("\n== putting the board back ==")
     restore(api, start)
-    res.ok("restored", "eye, gaze, width, pupil, swap, clock")
+    res.ok("restored", "eye, gaze, width, pupil, swap, flip, clock")
 
     elapsed: float = time.time() - started
     print()

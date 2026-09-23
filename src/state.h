@@ -40,6 +40,7 @@ struct DeviceState {
   bool pupilOn;
 
   bool swapped;
+  bool flipped[2]; // per eye as displayed: 0 is on your left, 1 your right
   bool startleActive;
 
   bool clockOn;
@@ -87,6 +88,12 @@ void stateSetPupil(bool on);
 // Exchanges the two panels' chip selects, for a pair wired the wrong way
 // round.  Takes effect between frames.
 void stateSetSwap(bool swapped);
+
+// Turns one panel's image through 180 degrees, for a panel mounted upside
+// down.  `eye` is the eye as displayed -- 0 on your left, 1 on your right --
+// but the setting attaches to the panel that eye is on and stays with it
+// through a later swap.  False if there is no such eye.  Between frames.
+bool stateSetFlip(uint8_t eye, bool flipped);
 
 // ---------------------------------------------------------------- one-shots --
 

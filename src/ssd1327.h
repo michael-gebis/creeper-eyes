@@ -21,6 +21,23 @@
 #define SSD1327_COLS (SSD1327_WIDTH / 2)
 #define SSD1327_FRAME_BYTES (SSD1327_COLS * SSD1327_HEIGHT)
 
+// Register 0xA0, "remap".  Bit 0 reverses the column order, bit 1 swaps the
+// two nibbles within a byte, bit 4 reverses the COM scan and bit 6 enables
+// the odd/even COM split.  The way up the panel was mounted is settled by
+// the first three, and every pixel ever sent goes through them, so a panel
+// fitted upside down is put right by changing this one byte rather than by
+// touching any frame.
+//
+// 0x51 is the orientation every driver for this module ships with.  0x42
+// undoes both reversals -- and because reversing the column order also
+// reverses which nibble is the left-hand pixel, the nibble bit has to flip
+// with it.  The pair is the flip0/flip1 sequence u8g2 uses for the same
+// controller, and 0x42 is confirmed on this panel: the image comes up
+// rotated, not mirrored, with no pixel pairs swapped.  See docs/EYES.md,
+// "If a panel is upside down".
+#define SSD1327_REMAP_NORMAL 0x51
+#define SSD1327_REMAP_FLIPPED 0x42
+
 class SSD1327 {
 public:
   SSD1327(int8_t csPin, int8_t dcPin) : _cs(csPin), _dc(dcPin) {}
@@ -60,7 +77,7 @@ public:
     cmdN(0x15, 0x00, SSD1327_COLS - 1);  // column address range
     cmdN(0x75, 0x00, SSD1327_HEIGHT - 1); // row address range
     cmd1(0x81, 0x80); // contrast
-    cmd1(0xA0, 0x51); // remap: horizontal increment, nibble order
+    cmd1(0xA0, SSD1327_REMAP_NORMAL); // remap: see the defines above
     cmd1(0xA1, 0x00); // display start line
     cmd1(0xA2, 0x00); // display offset
     cmd(0xA4);        // normal (not all-on / all-off / inverse)
@@ -121,6 +138,17 @@ public:
     for (uint16_t i = 0; i < SSD1327_FRAME_BYTES; i++)
       SPI.transfer(b);
 
+    digitalWrite(_cs, HIGH);
+    SPI.endTransaction();
+  }
+
+  // The right way up, or rotated by 180 degrees, for a panel that was
+  // mounted upside down.  A single command; the next frame lands the other
+  // way, and so does the one already showing.
+  void setFlip(SPISettings cfg, bool flipped) {
+    SPI.beginTransaction(cfg);
+    digitalWrite(_cs, LOW);
+    cmd1(0xA0, flipped ? SSD1327_REMAP_FLIPPED : SSD1327_REMAP_NORMAL);
     digitalWrite(_cs, HIGH);
     SPI.endTransaction();
   }

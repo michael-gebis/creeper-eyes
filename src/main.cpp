@@ -232,6 +232,16 @@ static bool pupilOn = true;
 static bool eyesSwapped = false;
 static bool swapPending = false;
 
+// Which panels were mounted upside down.  Indexed by chip-select slot --
+// 0 for SELECT_L_PIN, 1 for SELECT_R_PIN -- and NOT by eye, because it is
+// the panel that is the wrong way up, and it stays that way whichever eye
+// is drawn on it.  A later `swap` moves the eyes and leaves these where
+// they are, which is the only arrangement in which the two settings do
+// not fight.  The rotation itself is done in the panel controller, see
+// applyFlips(); nothing in the frame path knows about it.
+static bool panelFlip[2] = {false, false};
+static bool flipPending = false;
+
 #if CLOCK
 
 static bool clockOn = false;
@@ -329,6 +339,7 @@ static bool settingsDirty = false;
 #define PREFS_NAMESPACE "creeper"
 #define PREFS_KEY_EYE "eye"
 #define PREFS_KEY_SWAP "swap"
+#define PREFS_KEY_FLIP "flip" // bit 0: SELECT_L_PIN's panel, bit 1: SELECT_R_PIN's
 #define PREFS_KEY_PUPIL "pupil"
 #define PREFS_KEY_TZ "tz"
 #define PREFS_KEY_NTP "ntp"
@@ -352,6 +363,8 @@ static void saveSettings(void) {
   prefs.begin(PREFS_NAMESPACE, false);
   prefs.putString(PREFS_KEY_EYE, eyeDesigns[eyeDesign].name);
   prefs.putBool(PREFS_KEY_SWAP, eyesSwapped);
+  prefs.putUChar(PREFS_KEY_FLIP,
+                 (uint8_t)((panelFlip[0] ? 1 : 0) | (panelFlip[1] ? 2 : 0)));
   prefs.putBool(PREFS_KEY_PUPIL, pupilOn);
   prefs.putString(PREFS_KEY_TZ, tzString);
 #if NETWORK
@@ -531,6 +544,29 @@ static void applySwap(void) {
   eye[1].cs = a;
   eye[0].display.setCS((int8_t)b);
   eye[1].display.setCS((int8_t)a);
+}
+
+// Which panelFlip[] entry belongs to a chip select.
+static uint8_t flipSlot(uint8_t cs) { return cs == SELECT_R_PIN ? 1 : 0; }
+
+// Send each panel its orientation.  Between frames only, like applySwap():
+// it is one command per panel, but it opens its own SPI transaction, and
+// after a swap it must run second so each eye's display object already
+// has the chip select it is going to keep.
+//
+// Done in the controller's remap register rather than by reversing the
+// frame, so the eyes, the clock hands, the splash, the address cards and
+// the QR code are all covered without any of them knowing.  On the
+// SSD1351 the library's own setRotation() sends the same register.
+static void applyFlips(void) {
+  for (uint8_t e = 0; e < NUM_EYES; e++) {
+    const bool f = panelFlip[flipSlot(eye[e].cs)];
+#if USE_SSD1327
+    eye[e].display.setFlip(graySPI, f);
+#else
+    eye[e].display.setRotation(f ? 2 : 0);
+#endif
+  }
 }
 
 // SHARED TEXT RENDERING ----------------------------------------------------
@@ -1086,6 +1122,7 @@ static void loadSettings(void) {
   prefs.begin(PREFS_NAMESPACE, true); // read-only
   String saved = prefs.getString(PREFS_KEY_EYE, "");
   bool sw = prefs.getBool(PREFS_KEY_SWAP, false);
+  uint8_t flip = prefs.getUChar(PREFS_KEY_FLIP, 0);
   pupilOn = prefs.getBool(PREFS_KEY_PUPIL, pupilOn);
   String tz = prefs.getString(PREFS_KEY_TZ, tzString);
   strncpy(tzString, tz.c_str(), sizeof(tzString) - 1);
@@ -1125,6 +1162,9 @@ static void loadSettings(void) {
     eyesSwapped = true;
     applySwap();
   }
+  panelFlip[0] = flip & 1;
+  panelFlip[1] = flip & 2;
+  applyFlips(); // after the swap, so each command reaches its own panel
   if (saved.length()) {
     uint8_t idx = eyeDesignByName(saved.c_str());
     if (idx < NUM_EYE_DESIGNS) {
@@ -1139,8 +1179,9 @@ static void loadSettings(void) {
   // modified since the store was read, so start clean.
   settingsDirty = false;
 
-  DEBUG_PRINTF("[creeper-eyes] settings: eye=%s swap=%s pupil=%s\n",
+  DEBUG_PRINTF("[creeper-eyes] settings: eye=%s swap=%s flip=%s%s pupil=%s\n",
                eyeDesigns[eyeDesign].name, eyesSwapped ? "yes" : "no",
+               panelFlip[0] ? "L" : "-", panelFlip[1] ? "R" : "-",
                pupilOn ? "on" : "off");
 #if CLOCK
   DEBUG_PRINTF("[creeper-eyes] clock: %s rate=%ux seconds=%s (time not restored)\n",
@@ -1325,6 +1366,9 @@ void stateGet(DeviceState &o) {
   o.pupilOn = pupilOn;
 
   o.swapped = eyesSwapped;
+  // Reported per eye as displayed, which is what a person can point at.
+  for (uint8_t e = 0; e < 2; e++)
+    o.flipped[e] = e < NUM_EYES && panelFlip[flipSlot(eye[e].cs)];
 #if CLOCK
   o.startleActive = (startleState != STARTLE_OFF);
   o.clockOn = clockOn;
@@ -1431,6 +1475,21 @@ void stateSetSwap(bool sw) {
   eyesSwapped = sw;
   swapPending = true; // applied between frames
   settingsDirty = true;
+}
+
+bool stateSetFlip(uint8_t e, bool flipped) {
+  LOCKED;
+  if (e >= NUM_EYES)
+    return false;
+  // Resolved to the panel now, not at apply time: a swap queued in the same
+  // gap moves the eye, and the setting must not follow it.
+  bool &slot = panelFlip[flipSlot(eye[e].cs)];
+  if (slot == flipped)
+    return true;
+  slot = flipped;
+  flipPending = true; // applied between frames
+  settingsDirty = true;
+  return true;
 }
 
 void stateBlink(void) {
@@ -1605,6 +1664,8 @@ static void cmdHelp(Print &out) {
                  "  pupil [on|off]            pupil, or a full iris disc\n"
                  "  swap [on|off]             swap which panel is which "
                  "eye\n"
+                 "  flip left|right [on|off]  turn a panel mounted upside "
+                 "down\n"
                  "  save                      remember settings across "
                  "reboots\n"
                  "  forget                    clear saved settings\n"
@@ -1629,7 +1690,10 @@ void cmdStatus(Print &out) {
     out.print(startleState == STARTLE_WINDUP ? " startle=windup"
                                                 : " startle=hold");
   out.printf(" pupil=%s", pupilOn ? "on" : "off");
-  out.printf(" swap=%s%s", eyesSwapped ? "on" : "off",
+  out.printf(" swap=%s flip=%s%s%s", eyesSwapped ? "on" : "off",
+                panelFlip[flipSlot(eye[0].cs)] ? "L" : "-",
+                NUM_EYES > 1 && panelFlip[flipSlot(eye[NUM_EYES - 1].cs)]
+                    ? "R" : "-",
                 settingsDirty ? " (unsaved)" : "");
   out.printf(" panel=%s heap=%u up=%us",
                 USE_SSD1327 ? "ssd1327" : "ssd1351",
@@ -2035,6 +2099,38 @@ void handleCommand(char *line, Print &out) {
     }
     stateSetSwap(want);
     out.printf("ok swap=%s\n", eyesSwapped ? "on" : "off");
+  } else if (!strcmp(cmd, "flip")) {
+    // Left and right are YOURS, facing the head -- the "YOUR LEFT" line of
+    // the splash -- because that is the side you can see is upside down.
+    char *side = strtok(NULL, " \t");
+    char *arg = strtok(NULL, " \t");
+    uint8_t e;
+    if (side && !strcmp(side, "left"))
+      e = 0;
+    else if (side && !strcmp(side, "right"))
+      e = 1;
+    else {
+      out.println(F("usage: flip left|right [on|off]"));
+      return;
+    }
+    DeviceState s;
+    stateGet(s);
+    bool want = !s.flipped[e];
+    if (arg) {
+      if (!strcmp(arg, "on"))
+        want = true;
+      else if (!strcmp(arg, "off"))
+        want = false;
+      else {
+        out.println(F("usage: flip left|right [on|off]"));
+        return;
+      }
+    }
+    if (!stateSetFlip(e, want)) {
+      out.println(F("no such panel in this build"));
+      return;
+    }
+    out.printf("ok flip %s=%s\n", side, want ? "on" : "off");
   } else if (!strcmp(cmd, "save")) {
     stateSave();
     out.printf("ok saved eye=%s swap=%s\n",
@@ -2203,6 +2299,10 @@ void frame(            // Process motion for a single frame of left or right eye
   if (swapPending) { // between frames, never mid-transaction
     swapPending = false;
     applySwap();
+  }
+  if (flipPending) { // after the swap: see applyFlips()
+    flipPending = false;
+    applyFlips();
   }
 
   pollStartle();

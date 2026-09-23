@@ -62,7 +62,7 @@ third of a typical request, and every outlier was a retransmission timer. If
 the board feels slow, run this before changing any code — see
 [docs/HTTP_LATENCY.md](HTTP_LATENCY.md).
 
-Around 117 checks across every endpoint: round trips, range limits, the 400 /
+Around 135 checks across every endpoint: round trips, range limits, the 400 /
 404 / 405 boundaries, malformed bodies, CORS preflight, credentials, and a
 burst of gaze updates of the kind dragging the aim pad produces — which
 checks both that the last position is the one that sticks and that the eyes

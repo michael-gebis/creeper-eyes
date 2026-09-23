@@ -113,7 +113,7 @@ ok saved eye=dragon swap=on
 | Saved | Not saved |
 | :---- | :-------- |
 | Eye design | The clock's time |
-| Panel swap | Gaze (`look`) |
+| Panel swap and flip | Gaze (`look`) |
 | Pupil on/off | Dilation (`dilate`) |
 | Clock on/off, rate, second hand, hand colours | |
 | Timezone | |

@@ -144,6 +144,41 @@ with it, including its mirrored eyelids and its splash label. Verify with
 The swap is applied between frames, never mid-transaction, so it cannot leave
 a chip select asserted on the wrong panel.
 
+## If a panel is upside down
+
+A panel can go into the head rotated 180° from the other, and once the head
+is sealed nobody wants to open it to turn it. `flip` rotates the image
+instead. The sides are yours, facing the head — the `YOUR LEFT` line of the
+splash — because that is the side you can see is wrong:
+
+```
+> flip left
+ok flip left=on
+> save
+```
+
+Or the **flip left** / **flip right** buttons on the control page, or
+`PUT /api/v1/flip {"left":true}`.
+
+The rotation is done in the panel's own controller, by one byte in its remap
+register, rather than by turning the frame round in software. That is why it
+costs nothing per frame and why everything is covered at once — the eyes, the
+clock hands, the splash, the address cards and the QR code — without any of
+them knowing. On the SSD1351 it is the library's `setRotation(2)`; on the
+SSD1327 it is `0x42` in place of the usual `0x51`, the pair u8g2 uses for the
+same controller. Reversing the column order on that part also reverses which
+nibble of a byte is the left-hand pixel, so the nibble bit flips along with
+the column and scan bits — one value, not one bit. Confirmed on the
+greyscale panel: the image comes up rotated, not mirrored, with no pixel
+pairs swapped.
+
+The setting belongs to the *panel*, not the eye. It is stored against the
+chip select, so `swap` moves the eyes and leaves it where it is — the panel
+that was upside down still is, whichever eye it is now showing. Setting one
+and then the other in the wrong order therefore never fights: fix the wiring
+with `swap` first if the splash labels are on the wrong sides, then `flip`
+whichever panel is still the wrong way up.
+
 ## Pupil
 
 `pupil off` removes the pupil entirely, leaving a full iris disc:

@@ -80,6 +80,11 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
       <button id=pupil>pupil</button>
       <button id=swap>swap panels</button>
     </div>
+    <div class=row>
+      <button id=flipL>flip left</button>
+      <button id=flipR>flip right</button>
+      <span class=dim>for a panel fitted upside down; your left and right</span>
+    </div>
     <h2 style="margin-top:4px">Action <span class=tag>momentary</span></h2>
     <div class=row>
       <button data-act=blink>blink</button>
@@ -370,6 +375,8 @@ function render(s) {
   $('#eye').value = s.eye.index;
   $('#pupil').classList.toggle('on', s.pupil.on);
   $('#swap').classList.toggle('on', s.swap.on);
+  $('#flipL').classList.toggle('on', s.flip.left);
+  $('#flipR').classList.toggle('on', s.flip.right);
 
   const g = s.gaze;
   // Left where it is during a drag: the pointer is the truth then, and a reply
@@ -500,6 +507,8 @@ $('#eye').onchange = e => act(() => api('/eye', 'PUT', {index: +e.target.value})
 $('#eyeNext').onclick = () => act(() => api('/eye', 'PUT', {next: true}));
 $('#pupil').onclick = () => act(() => api('/pupil', 'PUT', {on: !st.pupil.on}));
 $('#swap').onclick = () => act(() => api('/swap', 'PUT', {on: !st.swap.on}));
+$('#flipL').onclick = () => act(() => api('/flip', 'PUT', {left: !st.flip.left}));
+$('#flipR').onclick = () => act(() => api('/flip', 'PUT', {right: !st.flip.right}));
 
 // --- gaze and width ---------------------------------------------------------
 // The device puts y=1023 at the top of the gaze range, the way a joystick

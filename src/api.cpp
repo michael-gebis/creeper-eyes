@@ -237,6 +237,11 @@ static void fillTime(JsonObject o) {
 #endif
 }
 
+static void fillFlip(JsonObject o, const DeviceState &s) {
+  o["left"] = s.flipped[0];
+  o["right"] = s.flipped[1];
+}
+
 static void getState(void) {
   DeviceState s;
   stateGet(s);
@@ -246,6 +251,7 @@ static void getState(void) {
   fillDilate(d["dilate"].to<JsonObject>(), s);
   d["pupil"]["on"] = s.pupilOn;
   d["swap"]["on"] = s.swapped;
+  fillFlip(d["flip"].to<JsonObject>(), s);
   d["startle"]["active"] = s.startleActive;
   fillClock(d["clock"].to<JsonObject>(), s);
   fillNet(d["net"].to<JsonObject>());
@@ -401,6 +407,39 @@ static void getSwap(void) {
   JsonDocument d;
   d["on"] = s.swapped;
   sendJson(200, d);
+}
+
+static void getFlip(void) {
+  DeviceState s;
+  stateGet(s);
+  JsonDocument d;
+  fillFlip(d.to<JsonObject>(), s);
+  sendJson(200, d);
+}
+
+// Either side, or both.  The names are the viewer's, like the "YOUR LEFT"
+// line of the splash, since the viewer is who can see which one is upside
+// down.
+static void putFlip(void) {
+  JsonDocument b;
+  if (!readBody(b))
+    return;
+  bool any = false;
+  static const char *const sides[2] = {"left", "right"};
+  for (uint8_t e = 0; e < 2; e++) {
+    if (!b[sides[e]].is<bool>())
+      continue;
+    if (!stateSetFlip(e, b[sides[e]])) {
+      sendError(400, "no such panel in this build");
+      return;
+    }
+    any = true;
+  }
+  if (!any) {
+    sendError(400, "expected left and/or right: true or false");
+    return;
+  }
+  getFlip();
 }
 
 static void putSwap(void) {
@@ -1062,6 +1101,10 @@ void apiRegister(WebServer &s) {
   s.on(API "/swap", HTTP_PUT, guarded<putSwap>);
   s.on(API "/swap", HTTP_OPTIONS, handleOptions);
   s.on(API "/swap", HTTP_ANY, notAllowed);
+  s.on(API "/flip", HTTP_GET, guarded<getFlip>);
+  s.on(API "/flip", HTTP_PUT, guarded<putFlip>);
+  s.on(API "/flip", HTTP_OPTIONS, handleOptions);
+  s.on(API "/flip", HTTP_ANY, notAllowed);
 
   s.on(API "/clock", HTTP_GET, guarded<getClock>);
   s.on(API "/clock", HTTP_PUT, guarded<putClock>);

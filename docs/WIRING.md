@@ -146,6 +146,10 @@ the `swap` setting, far easier than rewiring: `swap on` then `save`, or
 the **swap panels** button on the control page. That is a real swap, not
 a relabelling — the eyelid mirroring moves with it.
 
+**If a label is upside down**, that panel went in rotated. `flip left` or
+`flip right` — your left and right, as the label says — turns its image
+round, and `save` keeps it. See [Eyes](EYES.md#if-a-panel-is-upside-down).
+
 ### The frame rate will not change
 
 The serial heartbeat reports roughly `fps=20` on colour panels and `fps=30` to
