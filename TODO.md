@@ -3,9 +3,21 @@
 Things worth doing, not yet started: features that do not exist and bugs
 that have not been fixed. Nothing here has been acted on. Where a section
 carries measurements, they are the ones that shaped the entry rather than
-results from working code.
+results from working code. An entry may record a decision taken about it
+— including a decision not to build it, and why — without any of it
+having been written.
 
 ## Online firmware updates
+
+**Not being built, as of 2026-09-22.** A judgement call rather than a blocked
+one: the head works, `tools/ota.py` updates it from the author's machine in
+under two minutes, and everything below is a large amount of new surface — a
+second way into the device, credentials that have to move before it can be
+used at all, and a failure mode whose worst case is a brick in a sealed head
+— in exchange for convenience the one person currently updating a head does
+not need. The reasoning below is kept because it is the expensive part and it
+does not spoil: picking this up again is a decision, not a fresh
+investigation.
 
 A head that can update itself, rather than one that waits for somebody with a
 checkout of this repository and a working PlatformIO install.
@@ -57,6 +69,20 @@ which features are compiled in — so it can ask for a named variant. But it
 means publishing roughly ten binaries per release, and it means the naming
 scheme becomes an interface that cannot casually change.
 
+*Decided, 2026-09-22: publish two.* `gray_rtc` — greyscale panels, an RTC,
+`AUTH_HTTP` / `AUTH_TOKEN` / `AUTH_HOST_CHECK`, which is what the author's
+head runs — and the same build with colour panels, which does not exist as an
+environment yet: `esp32dev_rtc` is colour with an RTC but carries none of the
+auth flags, so the twin is either that environment with the three flags added
+or a new one beside it. One `-DUSE_SSD1327` apart, and the device already
+knows which of the two it is, so variant matching stops being a problem worth
+designing for. Everything else — no RTC, no authentication, the `_open`
+builds, the diagnostics — is built from source by whoever wants it and is not
+published at all.
+
+The cost of that choice is that the published pair cannot be the binaries the
+author builds today, for the reason that follows.
+
 **Credentials are compiled in.** `gray_rtc` requires `AUTH_USER`, `AUTH_PASS`
 and `AUTH_TOKEN_VALUE` in `include/secrets.h` and refuses to build without
 them. A published binary cannot contain anybody's secrets, so a generic
@@ -71,11 +97,19 @@ updates need, first:
 - an `AUTH_HTTP=1` build that tolerates having no built-ins, refusing access
   rather than allowing it when NVS is also empty.
 
-`WIFI_SSID` and `WIFI_PASS` have the same shape, with a better safety net: a
-head that comes up on a generic binary with no network now opens the setup
-portal and shows a join code, so it can be recovered without being opened.
-That lowers the risk of this whole feature considerably and is worth stating
-as one of the reasons it is now worth attempting.
+So the two published variants are `gray_rtc` and its colour twin *built
+without credentials*, which is a slightly different firmware from the one the
+author runs — and on the author's own head the order matters. The credentials
+have to reach NVS **before** the first credential-less binary is flashed onto
+it, or that head comes up with no way in: no built-ins, an empty store, and
+`PUT /api/v1/credentials` sitting behind the very authentication that now has
+nothing to check against. Once they are stored the published binary and the
+private one behave identically, and the author is then running the thing
+everybody else downloads, which is the best test it can get.
+
+`WIFI_SSID` / `WIFI_PASS` need the same move and are the safe case: a head
+with no stored network opens the setup portal and shows a join code, so it can
+be recovered without being opened.
 
 ### The plan, in the order the steps are worth doing
 
@@ -131,40 +165,40 @@ algorithm and which implementation is an open question, not a decision.
 
 ### Open questions
 
-- Which variants are worth publishing, and what are they called.
+- ~~Which variants are worth publishing~~ — two, above. What they are *called*
+  is still open, and it is the half that becomes an interface: a name
+  published once has to keep meaning the same thing.
 - Whether step 3 is wanted at all, or whether step 2 is where this should
   stop.
 - Whether an update should be refused while the clock says it is near or
   inside the sleep window, on the grounds that nobody is watching to see it
   fail.
 
-## The sleep card contradicts itself
+## Three pictures
 
-Observed on 2026-09-14: the head was asleep and the card read
+The only photograph in the repository is a screenshot, and it is out of
+date. Each of these has a place already waiting for it; none is written
+yet.
 
-> asleep — sleeps in 2h 4m
+- **`docs/images/webui.png`, retaken.** The control page as it was on
+  2026-09-10, before the **flip left** / **flip right** buttons joined the
+  Eye card. It is the first thing the README shows and the first thing in
+  [Driving it](docs/CONTROL.md), so it is the picture most people will
+  compare against what they see. Same file name, same two places; nothing
+  else references it.
 
-It cannot be both. Either the state is wrong or the countdown is, and the
-card shows them side by side without noticing.
+- **Frank in action.** A photo of the head with the eyes running, for the
+  top of the README. Today the README opens with the control page, which
+  shows what the project *does to* the eyes rather than what they look
+  like; the head itself is what anyone landing on the page wants to see
+  first, and the screenshot can move down to the "Takes direction" line it
+  illustrates. Dim room, eyes lit, ideally mid-glance so the gaze reads as
+  a gaze and not a stare.
 
-Not diagnosed yet. What is known:
-
-- [`data/index.html`](data/index.html) builds that string from two
-  independent fields — the word comes from `s.reason`, and `sleeps`/`wakes`
-  comes from `s.changesToAsleep`. Nothing checks that they agree.
-- Those fields have different provenance. `reason` and `asleep` are cached
-  in `sleepPoll()` from `decide()`; `changesToAsleep` is recomputed live by
-  `sleepNextChange()` in [`src/sleepmode.cpp`](src/sleepmode.cpp) from
-  `inWindow()`. Two answers to the same question, and the page renders both.
-- `sleepNextChange()` read in isolation looks right, including across
-  midnight: at 04:56 with a 22:00–07:00 window it returns 124 minutes and
-  `toAsleep = false`, which is "wakes in 2h 4m". So 2h 4m may well be the
-  correct *interval* wearing the wrong verb.
-
-Worth capturing the whole of `GET /api/v1/sleep` next time it happens,
-rather than the rendered string — `reason`, `asleep`, `changesInMinutes`,
-`changesToAsleep`, `start`, `stop` and the clock, together, will say which
-of the two is lying.
-
-Likely the fix is that the card should derive both halves from one source
-instead of asking twice. The API may be fine.
+- **The ESP32 on a breadboard, wired to both panels.** For
+  [Wiring](docs/WIRING.md), somewhere between "Connections" and "Order of
+  assembly". The table there is complete and the prose is careful, but
+  fourteen wires is the point at which a photo says in one look what the
+  table says in fourteen rows — which side of the module the panels sit,
+  where the rails are used, how the shared lines are daisy-chained. Taken
+  from above, in enough light to follow a wire from pin to pin.
