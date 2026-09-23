@@ -320,3 +320,20 @@ the next frame after the card's deadline passes.
 That is why sleep sits *below* the card checks in `frame()` rather than above
 them: the cards return before `sleepPoll()` is ever reached, so the two never
 argue over the same frame.
+
+### The card that said "asleep — sleeps in 2h 4m"
+
+Seen on 2026-09-14, and it cannot be both. The API was fine; the page had
+two sources. `/state`, polled once a second, carried whether the board was
+asleep and why; the countdown came from `/sleep`, which the page fetches
+once at load and after a change. The card merged the two, so a tab left
+open across 22:00 showed a live "asleep" beside a countdown frozen at
+whatever it was when the tab was opened. In the awake case the same
+countdown simply never ticked, which nobody had noticed.
+
+Fixed by giving `/state` the countdown as well — `changesInMinutes` and
+`changesToAsleep`, the same fields `/sleep` reports — and having the card
+render from that alone. Two halves of one sentence cannot disagree if they
+came from the same reply; `/sleep` is now fetched for the settings fields
+only. [`tools/test_api.py`](../tools/test_api.py) checks that the two
+endpoints report the same countdown.

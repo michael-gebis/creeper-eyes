@@ -424,7 +424,11 @@ function render(s) {
     ? 'Stored in the battery-backed clock, so it survives a power cut.'
     : 'Kept until the power goes off. Fit an RTC and it is kept for good.';
 
-  if (s.sleep) sleepRender(Object.assign({}, sleepInfo || {}, s.sleep));
+  // Rendered from /state alone.  It was once merged with the last /sleep
+  // reply, which is fetched at load and after a change; the countdown in
+  // that reply then sat frozen under a live reason, and the card could say
+  // "asleep -- sleeps in 2h 4m".
+  if (s.sleep) sleepRender(s.sleep);
 
   $('#wifiTxt').textContent = s.net.state === 'up'
     ? `on ${s.net.ssid}, ${s.net.rssi} dBm — ${signalWord(s.net.rssi)}`
@@ -614,8 +618,9 @@ $('#cSave').onclick = async () => {
 // ------------------------------------------------------------------ sleep --
 //
 // The window is stored on the board; this only shows it and sets it.  Note
-// that refresh() renders the status from /state, which carries a compact
-// copy, so the once-a-second poll does not need a second request.
+// that refresh() renders the status line from /state, which carries the
+// state and the countdown, so the once-a-second poll does not need a second
+// request.  /sleep is fetched for the settings fields only.
 let sleepInfo = null;
 
 const hhmm = m => String(m / 60 | 0).padStart(2, '0') + ':' +

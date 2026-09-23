@@ -266,12 +266,24 @@ static void getState(void) {
 #endif
   sys["panels"] = displayCount();
 #if SLEEP
-  // Compact, because /state is polled once a second: whether it is dark and
-  // why, with the settings left to GET /sleep.
+  // Compact, because /state is polled once a second: whether it is dark, why,
+  // and how long until that changes, with the settings left to GET /sleep.
+  //
+  // The countdown lives here and not only in /sleep because the page renders
+  // the card from this once a second.  It used to merge a live `reason` from
+  // here with a countdown fetched from /sleep at page load, and a tab left
+  // open across 22:00 read "asleep -- sleeps in 2h 4m".  One source, one
+  // moment: the two halves cannot disagree if they came from the same call.
   JsonObject slp = d["sleep"].to<JsonObject>();
   slp["enabled"] = sleepEnabled();
   slp["asleep"] = sleepIsAsleep();
   slp["reason"] = sleepReason();
+  uint16_t mins;
+  bool toAsleep;
+  if (sleepNextChange(mins, toAsleep)) {
+    slp["changesInMinutes"] = mins;
+    slp["changesToAsleep"] = toAsleep;
+  }
 #endif
   sys["fps"] = s.fps;
   sys["freeHeap"] = s.freeHeap;

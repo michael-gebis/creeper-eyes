@@ -855,6 +855,27 @@ def test_sleep(res: Result, api: Api) -> None:
                   "level": 100})
     same(res, "inside the window it sleeps", r.get("asleep"), True)
 
+    # The countdown, and that /state carries the same one.  The page renders
+    # its card from /state once a second, and a countdown only /sleep knew
+    # once sat frozen under a live reason: "asleep -- sleeps in 2h 4m".
+    # 59 is allowed: the clock may have ticked over since "now" was read.
+    if (r.get("changesInMinutes") in (59, 60)
+            and r.get("changesToAsleep") is False):
+        res.ok("counts down to the end of the window",
+               "wakes in %dm" % r["changesInMinutes"])
+    else:
+        res.fail("the countdown", "changesInMinutes=%r changesToAsleep=%r"
+                 % (r.get("changesInMinutes"), r.get("changesToAsleep")))
+    st: Json = api.json("/state").get("sleep", {})
+    if (st.get("changesInMinutes") == r.get("changesInMinutes")
+            and st.get("changesToAsleep") == r.get("changesToAsleep")):
+        res.ok("/state carries the same countdown")
+    else:
+        res.fail("/state carries the same countdown",
+                 "state says %r/%r, sleep says %r/%r"
+                 % (st.get("changesInMinutes"), st.get("changesToAsleep"),
+                    r.get("changesInMinutes"), r.get("changesToAsleep")))
+
     # Now one that ended an hour ago.
     r = api.json("/sleep", "PUT", {"start": at(-120), "stop": at(-60)})
     same(res, "outside the window it wakes", r.get("asleep"), False)
