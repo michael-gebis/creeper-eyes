@@ -38,16 +38,18 @@ and none of them blocks on the one after it.
 
 ### What the hardware already gives us
 
-`min_spiffs.csv` has two app slots and an `otadata` partition:
+`partitions.csv` has two app slots and an `otadata` partition (and, since
+[eye files](docs/EYE_FILES.md), an eye slot beside them):
 
 | partition | offset | size |
 | :-- | :-- | :-- |
 | `otadata` | `0xE000` | 8 KB |
-| `app0` | `0x10000` | 1.9 MB |
-| `app1` | `0x1F0000` | 1.9 MB |
+| `app0` | `0x10000` | 1.81 MB |
+| `app1` | `0x1E0000` | 1.81 MB |
 
-`gray_rtc` builds to about 1.4 MB, so there is roughly 500 KB of headroom in a
-slot — enough for TLS if it comes to that, but not a lot.
+`gray_rtc` builds to about 1.25 MB now that it carries one eye design, so
+there is roughly 600 KB of headroom in a slot — enough for TLS if it comes to
+that, but not a lot.
 
 Rollback is compiled into the core the project already builds against:
 `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` and `CONFIG_APP_ROLLBACK_ENABLE=y`.

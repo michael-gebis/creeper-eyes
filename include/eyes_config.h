@@ -1,8 +1,9 @@
 // Which eye designs are compiled into the firmware.
 //
-// Each design costs roughly 158 KB of flash, so the default 1.25 MB app
-// partition fits about four alongside everything else.  Enable only what you
-// want on the head; the console switches between whatever is built in.
+// Each design costs roughly 158 KB of flash.  Only `default` is built in
+// unless you say otherwise: any other design can be loaded from a file into
+// the board's eye slot without a rebuild -- see docs/EYE_FILES.md.  Build one
+// in only if it should be there without that step.
 //
 // Two ways to configure:
 //
@@ -38,8 +39,12 @@
 #define EYE_DEFAULT 1 // Standard human-ish hazel eye
 #endif
 
+// Adafruit's, like the default -- off by default -------------------------
+//
+// Built in until eye files arrived.  `tools/make_eye.py newt` turns it into
+// one, which costs no app space at all.
 #ifndef EYE_NEWT
-#define EYE_NEWT 1 // Eye of newt
+#define EYE_NEWT 0 // Eye of newt
 #endif
 
 // From the TeensyEyes project (MIT) -- off by default ---------------------

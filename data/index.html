@@ -29,6 +29,7 @@ button,select,input[type=text],input[type=password],input[type=time],
 input[type=number]{font:inherit;background:#2a2f38;color:var(--ink);
      border:1px solid #363c47;border-radius:6px;padding:6px 10px}
 button,select{cursor:pointer}
+input[type=file]{font:inherit;font-size:12px;color:var(--dim);min-width:0}
 button:hover{background:#333944}
 button.on{background:var(--accent);border-color:var(--accent);color:#0d1117}
 button.danger:hover{background:#4a2b28;border-color:#7a4038}
@@ -85,6 +86,12 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
       <button id=flipR>flip right</button>
       <span class=dim>for a panel fitted upside down; your left and right</span>
     </div>
+    <div class=row id=slotRow>
+      <input type=file id=slotFile accept=".bin" class=grow>
+      <button id=slotLoad>load</button>
+      <button id=slotRemove class=danger>remove</button>
+    </div>
+    <p class=note id=slotNote></p>
     <h2 style="margin-top:4px">Action <span class=tag>momentary</span></h2>
     <div class=row>
       <button data-act=blink>blink</button>
@@ -274,7 +281,10 @@ let st = null, busy = false, halted = false;
 
 async function api(path, method, body) {
   const o = {method: method || 'GET'};
-  if (body !== undefined) {
+  if (body instanceof Blob) { // a file, sent as it is: the eye slot
+    o.headers = {'Content-Type': 'application/octet-stream'};
+    o.body = body;
+  } else if (body !== undefined) {
     o.headers = {'Content-Type': 'application/json'};
     o.body = JSON.stringify(body);
   }
@@ -340,10 +350,31 @@ async function fillInfo() {
       .replace('https://', '')}</a>`;
 }
 
-async function fillLists() {
+// The design list, which is fixed except for the eye slot: loading or
+// removing a file changes it, and this runs again when that happens.  Built
+// with Option() rather than markup, since one of these names came from a
+// file -- the board only accepts a-z0-9, but the page should not rely on it.
+async function fillEyes() {
   const eyes = await api('/eyes');
-  $('#eye').innerHTML = eyes.designs
-    .map(x => `<option value="${x.index}">${x.name}</option>`).join('');
+  $('#eye').replaceChildren(...eyes.designs.map(x =>
+    new Option(x.loaded ? x.name + ' (from file)' : x.name, x.index)));
+  if (st) $('#eye').value = st.eye.index;
+  slotRender(eyes.slot);
+}
+
+function slotRender(slot) {
+  $('#slotRow').hidden = !slot.available;
+  $('#slotRemove').hidden = !slot.loaded;
+  $('#slotNote').textContent = !slot.available
+    ? 'This board has no eye slot: its partition table predates it. ' +
+      'One USB flash adds it — see docs/EYE_FILES.md.'
+    : slot.loaded
+    ? `${slot.name} is loaded from a file. Loading another replaces it.`
+    : 'Load an eye file (.bin) to add one more design to the list.';
+}
+
+async function fillLists() {
+  await fillEyes();
 
   const tz = await api('/tz');
   // Grouped by region: sixty options in one flat list is a wall.
@@ -513,6 +544,23 @@ $('#pupil').onclick = () => act(() => api('/pupil', 'PUT', {on: !st.pupil.on}));
 $('#swap').onclick = () => act(() => api('/swap', 'PUT', {on: !st.swap.on}));
 $('#flipL').onclick = () => act(() => api('/flip', 'PUT', {left: !st.flip.left}));
 $('#flipR').onclick = () => act(() => api('/flip', 'PUT', {right: !st.flip.right}));
+
+// The eyes stop for the few seconds the board spends writing flash, and the
+// panels say so; the page says so too, since the request takes as long.
+$('#slotLoad').onclick = () => {
+  const f = $('#slotFile').files[0];
+  if (!f) { $('#err').textContent = 'choose an eye file first'; return; }
+  act(async () => {
+    $('#slotNote').textContent = `loading ${f.name}…`;
+    try { await api('/eyes/slot', 'PUT', f); }
+    finally { await fillEyes(); } // a refused file may still have emptied it
+    $('#slotFile').value = '';
+  });
+};
+$('#slotRemove').onclick = () => act(async () => {
+  await api('/eyes/slot', 'DELETE');
+  await fillEyes();
+});
 
 // --- gaze and width ---------------------------------------------------------
 // The device puts y=1023 at the top of the gaze range, the way a joystick

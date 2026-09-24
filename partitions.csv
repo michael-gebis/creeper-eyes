@@ -1,0 +1,12 @@
+# min_spiffs.csv with its unused SPIFFS partition turned into an eye slot.
+# See docs/EYE_FILES.md.  Both app slots give up 64 KB to make it 256 KB;
+# nvs and otadata are where they always were, so a board flashed with this
+# over USB keeps its settings, credentials and WiFi.
+#
+# Name,   Type, SubType, Offset,   Size,     Flags
+nvs,      data, nvs,     0x9000,   0x5000,
+otadata,  data, ota,     0xe000,   0x2000,
+app0,     app,  ota_0,   0x10000,  0x1D0000,
+app1,     app,  ota_1,   0x1E0000, 0x1D0000,
+eyes,     data, 0x40,    0x3B0000, 0x40000,
+coredump, data, coredump,0x3F0000, 0x10000,

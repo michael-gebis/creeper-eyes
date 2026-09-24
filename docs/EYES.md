@@ -6,7 +6,9 @@ behave.
 ## Gallery
 
 Every design that ships with this project, rendered with the same arithmetic
-the firmware uses. Pick what you like, then enable it in
+the firmware uses. Only `default` is built in. Any other can be loaded as an
+[eye file](EYE_FILES.md) from the control page, one at a time, without a
+rebuild. To build one in instead, enable it in
 [`include/eyes_config.h`](../include/eyes_config.h).
 
 Each design costs about **158 KB of flash**, so roughly four fit alongside
@@ -121,11 +123,12 @@ pointers whose row width is fixed at compile time, so designs of different
 sizes cannot coexist in one build.
 
 Budget against the real figure rather than the ESP32 default: this project
-sets `board_build.partitions = min_spiffs.csv` for every environment, giving a
-**1.9 MB** app partition. A `gray_rtc` build — network, RTC, authentication,
-two designs — uses 1.39 MB of that, about 71%, so roughly three more designs
-fit. The 1.25 MB default never applies here, and could not: the firmware is
-already larger than it.
+sets `board_build.partitions = partitions.csv` for every environment, giving a
+**1.81 MB** app partition (see [Eye files](EYE_FILES.md#where-the-room-came-from)
+for why not the 1.9 MB of `min_spiffs.csv`). A `gray_rtc` build — network,
+RTC, authentication, one design — uses 1.25 MB of that, about 66%, so roughly
+three more designs fit. The 1.25 MB default never applies here, and could not:
+the firmware is already that large.
 
 ## If the panels are wired the wrong way round
 

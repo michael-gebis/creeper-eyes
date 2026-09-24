@@ -21,7 +21,10 @@
 #ifndef STATE_H
 #define STATE_H
 
+#include <stddef.h>
 #include <stdint.h>
+
+#include "eyestore.h" // EyeLoadResult
 
 // ---------------------------------------------------------------- snapshot --
 
@@ -66,6 +69,32 @@ const char *stateEyeName(uint8_t index); // NULL if out of range
 bool stateSetEyeIndex(uint8_t index);
 bool stateSetEyeName(const char *name);
 void stateNextEye(void);
+
+// ------------------------------------------------------------- the eye slot --
+// One design beyond the built-in ones, loaded from a file into flash of its
+// own.  See eyestore.h and docs/EYE_FILES.md.
+
+struct EyeSlotState {
+  bool available;    // the board's partition table has a slot at all
+  bool loaded;       // and it holds a design
+  const char *name;  // NULL while empty
+  uint8_t index;     // where the design sits in the list while loaded
+  uint32_t capacity; // bytes
+};
+
+void stateEyeSlot(EyeSlotState &out);
+
+// An upload, streamed: Begin with the request's declared length, Chunk the
+// body in as it arrives, End for the verdict -- or Abort if the connection
+// goes.  On success the new design is selected.  From the web server only.
+void stateEyeLoadBegin(uint32_t contentLength);
+void stateEyeLoadChunk(const uint8_t *data, size_t n);
+EyeLoadResult stateEyeLoadEnd(void);
+void stateEyeLoadAbort(void);
+
+// Empties the slot, moving the eyes to design 0 first if they were showing
+// it.  False if the board has no slot, or the erase failed.
+bool stateEyeUnload(void);
 
 // -------------------------------------------------------------------- gaze --
 

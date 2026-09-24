@@ -11,7 +11,8 @@ plugged in but power. Everything past that is optional.
 
 ## What it does
 
-- **Twenty-five eye designs**, chosen at build time — [see them all](docs/EYES.md)
+- **Twenty-five eye designs** — [see them all](docs/EYES.md). One is built in; any other can be
+  loaded from a file on the control page, [no rebuild needed](docs/EYE_FILES.md)
 - **Watches the room on its own**: wandering gaze, autonomous blinking, pupils
   that dilate
 - **Takes direction** from a web page, a serial console or a REST API, so you
@@ -177,6 +178,7 @@ This page gets you a working head. Everything else has a page of its own.
 | :-- | :-- |
 | [Wiring](docs/WIRING.md) | Every wire, in order, with what goes wrong |
 | [The eyes](docs/EYES.md) | The gallery, choosing designs, the pupil, the startup cards, a panel fitted the wrong way |
+| [Eye files](docs/EYE_FILES.md) | One more design, loaded from the control page without a rebuild |
 | [Driving it](docs/CONTROL.md) | Web page, serial console, REST API |
 | [Networking](docs/NETWORK.md) | Joining WiFi, changing it later, updating over the air |
 | [Codes on the eyes](docs/QR.md) | Setup and address codes, and what a phone can really read off a panel |

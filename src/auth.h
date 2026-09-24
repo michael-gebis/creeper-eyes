@@ -32,6 +32,13 @@ class WebServer;
 // answered it -- 401 with a challenge, or 403 -- so the caller returns.
 bool authCheck(WebServer &s);
 
+// The same judgement, without answering.  For the one place a request has
+// to be judged before its handler runs: an upload body is streamed to its
+// callback during parsing, and a write to flash cannot wait until afterwards
+// to find out whether it was allowed.  The handler still calls authCheck()
+// to deliver the refusal.
+bool authPermits(WebServer &s);
+
 // Whether any credential is required at all.  Compile-time, but exposed as a
 // function so /api/v1/info can report it without the caller knowing which
 // switches exist.

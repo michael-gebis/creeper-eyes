@@ -26,6 +26,7 @@
 #include "credentials.h"
 #include "rtc.h"
 #include "timekeeping.h"
+#include "eyestore.h"
 
 #include <Adafruit_GFX.h>   // Core graphics lib for Adafruit displays
 #include <HardwareSerial.h> // Needed for 2nd serial port on ESP32
@@ -217,7 +218,50 @@ static const EyeDesign eyeDesigns[] = {
 #endif
 };
 
-#define NUM_EYE_DESIGNS (sizeof(eyeDesigns) / sizeof(eyeDesigns[0]))
+#define NUM_BUILTIN_DESIGNS (sizeof(eyeDesigns) / sizeof(eyeDesigns[0]))
+
+// The design in the eye slot, loaded from a file rather than compiled in --
+// see eyestore.h.  Always listed after the built-ins, at this index, so
+// loading or removing it never renumbers them.
+#define LOADED_DESIGN NUM_BUILTIN_DESIGNS
+static EyeDesign loadedDesign;
+static bool loadedPresent = false;
+
+// The file format fixes the table sizes; the renderer takes them from the
+// headers.  A disagreement would have every loaded design read with the
+// wrong row width, so it is made a build failure instead.
+static_assert(SCLERA_WIDTH * SCLERA_HEIGHT * 2 == EYE_FILE_SCLERA_BYTES,
+              "eye file sclera size");
+static_assert(IRIS_MAP_WIDTH * IRIS_MAP_HEIGHT * 2 == EYE_FILE_IRIS_BYTES,
+              "eye file iris size");
+static_assert(SCREEN_WIDTH * SCREEN_HEIGHT == EYE_FILE_UPPER_BYTES &&
+                  SCREEN_WIDTH * SCREEN_HEIGHT == EYE_FILE_LOWER_BYTES,
+              "eye file eyelid size");
+static_assert(IRIS_WIDTH * IRIS_HEIGHT * 2 == EYE_FILE_POLAR_BYTES,
+              "eye file polar size");
+
+static uint8_t designCount(void) {
+  return NUM_BUILTIN_DESIGNS + (loadedPresent ? 1 : 0);
+}
+
+// Callers bound the index by designCount() first.
+static const EyeDesign &designAt(uint8_t i) {
+  return i < NUM_BUILTIN_DESIGNS ? eyeDesigns[i] : loadedDesign;
+}
+
+// Lists whatever the slot holds.  At boot, and after an upload succeeds.
+static void adoptLoadedDesign(void) {
+  EyeArt a;
+  loadedPresent = eyeStoreArt(a);
+  if (!loadedPresent)
+    return;
+  loadedDesign.name = eyeStoreName();
+  loadedDesign.sclera = (const uint16_t(*)[SCLERA_WIDTH])a.sclera;
+  loadedDesign.upper = (const uint8_t(*)[SCREEN_WIDTH])a.upper;
+  loadedDesign.lower = (const uint8_t(*)[SCREEN_WIDTH])a.lower;
+  loadedDesign.polar = (const uint16_t(*)[80])a.polar;
+  loadedDesign.iris = (const uint16_t(*)[IRIS_MAP_WIDTH])a.iris;
+}
 
 static uint8_t eyeDesign = 0;
 
@@ -361,7 +405,7 @@ static bool settingsDirty = false;
 
 static void saveSettings(void) {
   prefs.begin(PREFS_NAMESPACE, false);
-  prefs.putString(PREFS_KEY_EYE, eyeDesigns[eyeDesign].name);
+  prefs.putString(PREFS_KEY_EYE, designAt(eyeDesign).name);
   prefs.putBool(PREFS_KEY_SWAP, eyesSwapped);
   prefs.putUChar(PREFS_KEY_FLIP,
                  (uint8_t)((panelFlip[0] ? 1 : 0) | (panelFlip[1] ? 2 : 0)));
@@ -402,11 +446,12 @@ static void forgetSettings(void) {
 // it would tear a frame.  Out-of-range falls back to the first design.
 // Swaps five pointers that drawEye() dereferences per pixel, so this must
 // run between frames.  Reached through pendingEyeDesign, never directly from
-// an operation.
+// an operation -- except dropLoadedDesign(), which explains why it cannot
+// wait.
 static void setEyeDesign(uint8_t idx) {
-  if (idx >= NUM_EYE_DESIGNS)
+  if (idx >= designCount())
     idx = 0;
-  const EyeDesign *d = &eyeDesigns[idx];
+  const EyeDesign *d = &designAt(idx);
   sclera = d->sclera;
   upper = d->upper;
   lower = d->lower;
@@ -883,6 +928,10 @@ void setup(void) {
 
   timeApplyTz(); // the built-in default, until settings say otherwise
 
+#if CONTROLLABLE
+  eyeStoreBegin(); // before loadSettings(), which may name the loaded design
+  adoptLoadedDesign();
+#endif
 #if COMMANDS
   loadSettings(); // before the splash, so its labels are correct
 #endif
@@ -1109,12 +1158,12 @@ uint32_t timeOfLastBlink = 0L, timeToNextBlink = 0L;
 // eye can be swapped at runtime -- which is exactly what the note above
 // them describes.  Swap between frames, never mid-render: drawEye() reads
 // all five as it scans, so changing them under it would tear one frame.
-// Returns NUM_EYE_DESIGNS if there is no match.
+// Returns designCount() if there is no match.
 static uint8_t eyeDesignByName(const char *name) {
-  for (uint8_t i = 0; i < NUM_EYE_DESIGNS; i++)
-    if (!strcmp(name, eyeDesigns[i].name))
+  for (uint8_t i = 0; i < designCount(); i++)
+    if (!strcmp(name, designAt(i).name))
       return i;
-  return NUM_EYE_DESIGNS;
+  return designCount();
 }
 
 // Runs before the splash, so the labels reflect a restored swap.
@@ -1167,12 +1216,12 @@ static void loadSettings(void) {
   applyFlips(); // after the swap, so each command reaches its own panel
   if (saved.length()) {
     uint8_t idx = eyeDesignByName(saved.c_str());
-    if (idx < NUM_EYE_DESIGNS) {
+    if (idx < designCount()) {
       setEyeDesign(idx);
     } else {
       DEBUG_PRINTF("[creeper-eyes] saved eye '%s' is not in this build, "
                    "using %s\n",
-                   saved.c_str(), eyeDesigns[0].name);
+                   saved.c_str(), designAt(0).name);
     }
   }
   // setEyeDesign() during setup() flags a change; nothing has actually been
@@ -1180,7 +1229,7 @@ static void loadSettings(void) {
   settingsDirty = false;
 
   DEBUG_PRINTF("[creeper-eyes] settings: eye=%s swap=%s flip=%s%s pupil=%s\n",
-               eyeDesigns[eyeDesign].name, eyesSwapped ? "yes" : "no",
+               designAt(eyeDesign).name, eyesSwapped ? "yes" : "no",
                panelFlip[0] ? "L" : "-", panelFlip[1] ? "R" : "-",
                pupilOn ? "on" : "off");
 #if CLOCK
@@ -1193,9 +1242,14 @@ static void loadSettings(void) {
 // Numbered listing with the current design marked, so `eye <index>` has
 // something to refer to.
 static void listEyeDesigns(Print &out) {
-  for (uint8_t i = 0; i < NUM_EYE_DESIGNS; i++)
-    out.printf("  %u  %-10s%s\n", (unsigned)i, eyeDesigns[i].name,
-                  i == eyeDesign ? "  <- current" : "");
+  for (uint8_t i = 0; i < designCount(); i++)
+    out.printf("  %u  %-10s%s%s\n", (unsigned)i, designAt(i).name,
+                  i == eyeDesign ? "  <- current" : "",
+                  i == LOADED_DESIGN ? "  (loaded from a file)" : "");
+  if (!eyeStoreAvailable())
+    out.println(F("  no eye slot on this board; one USB flash adds it"));
+  else if (!loadedPresent)
+    out.println(F("  eye slot empty; load a file from the control page"));
 }
 
 // Gaze override.  Consumed in frame(), which sets the vestigial serEyeCtrl
@@ -1354,8 +1408,8 @@ void stateGet(DeviceState &o) {
   // most a frame, and a client that just set one should be told what it set.
   uint8_t shown = pendingEyeDesign >= 0 ? (uint8_t)pendingEyeDesign : eyeDesign;
   o.eyeIndex = shown;
-  o.eyeCount = NUM_EYE_DESIGNS;
-  o.eyeName = eyeDesigns[shown].name;
+  o.eyeCount = designCount();
+  o.eyeName = designAt(shown).name;
 
   o.gazeManual = gazeCmdActive;
   o.gazeX = gazeCmdX;
@@ -1392,10 +1446,10 @@ void stateGet(DeviceState &o) {
   o.uptimeSec = millis() / 1000UL;
 }
 
-uint8_t stateEyeCount(void) { return NUM_EYE_DESIGNS; }
+uint8_t stateEyeCount(void) { return designCount(); }
 
 const char *stateEyeName(uint8_t i) {
-  return i < NUM_EYE_DESIGNS ? eyeDesigns[i].name : NULL;
+  return i < designCount() ? designAt(i).name : NULL;
 }
 
 // Queued rather than applied: see the note in state.h.  eyeDesign itself is
@@ -1405,7 +1459,7 @@ const char *stateEyeName(uint8_t i) {
 // from there.
 bool stateSetEyeIndex(uint8_t i) {
   LOCKED;
-  if (i >= NUM_EYE_DESIGNS)
+  if (i >= designCount())
     return false;
   pendingEyeDesign = (int16_t)i;
   return true;
@@ -1414,7 +1468,7 @@ bool stateSetEyeIndex(uint8_t i) {
 bool stateSetEyeName(const char *name) {
   LOCKED;
   uint8_t i = eyeDesignByName(name);
-  if (i >= NUM_EYE_DESIGNS)
+  if (i >= designCount())
     return false;
   pendingEyeDesign = (int16_t)i;
   return true;
@@ -1425,7 +1479,81 @@ void stateNextEye(void) {
   // From whichever is the latest intention, so two presses in one frame move
   // two designs rather than fighting over one.
   uint8_t from = pendingEyeDesign >= 0 ? (uint8_t)pendingEyeDesign : eyeDesign;
-  pendingEyeDesign = (int16_t)((from + 1) % NUM_EYE_DESIGNS);
+  pendingEyeDesign = (int16_t)((from + 1) % designCount());
+}
+
+// Takes the loaded design out of the list, moving the renderer off it first.
+//
+// The one design change applied at once rather than queued for the next
+// frame: the memory it names is about to be erased or unmapped, and a queued
+// change would leave the renderer's pointers aimed at it until then.  Safe
+// to apply here because every caller runs in the render task between frames
+// -- the web server and the console are both served from frame(), before it
+// draws.
+static void dropLoadedDesign(void) {
+  LOCKED;
+  if (!loadedPresent)
+    return;
+  if (pendingEyeDesign == (int16_t)LOADED_DESIGN)
+    pendingEyeDesign = 0;
+  if (eyeDesign == LOADED_DESIGN)
+    setEyeDesign(0);
+  loadedPresent = false;
+}
+
+// Consulted by eyestore once an upload's header has passed its own checks.
+// Refuses a name a built-in design already has -- `save` stores designs by
+// name, so two with one name would be one too many -- or one the console's
+// `eye` command would read as a keyword.  Otherwise clears the way for the
+// erase.
+static EyeLoadResult eyeUploadGate(const char *name) {
+  static const char *const keywords[] = {"list", "next", "toggle", "unload"};
+  for (const char *k : keywords)
+    if (!strcmp(name, k))
+      return EYE_LOAD_NAME_TAKEN;
+  for (uint8_t i = 0; i < NUM_BUILTIN_DESIGNS; i++)
+    if (!strcmp(name, eyeDesigns[i].name))
+      return EYE_LOAD_NAME_TAKEN;
+  dropLoadedDesign();
+  // The next few seconds are spent erasing and writing flash from inside
+  // the render loop, so the eyes stop; say why rather than freeze.
+  showMessage("EYE", "LOADING", name, NULL);
+  return EYE_LOAD_OK;
+}
+
+void stateEyeSlot(EyeSlotState &o) {
+  LOCKED;
+  o.available = eyeStoreAvailable();
+  o.loaded = loadedPresent;
+  o.name = loadedPresent ? loadedDesign.name : NULL;
+  o.index = LOADED_DESIGN;
+  o.capacity = eyeStoreCapacity();
+}
+
+void stateEyeLoadBegin(uint32_t contentLength) {
+  eyeStoreWriteBegin(contentLength, eyeUploadGate);
+}
+
+void stateEyeLoadChunk(const uint8_t *data, size_t n) {
+  eyeStoreWrite(data, n);
+}
+
+EyeLoadResult stateEyeLoadEnd(void) {
+  EyeLoadResult r = eyeStoreWriteEnd();
+  if (r == EYE_LOAD_OK) {
+    LOCKED;
+    adoptLoadedDesign();
+    // Selected, because seeing it is why anybody uploads one.
+    pendingEyeDesign = (int16_t)LOADED_DESIGN;
+  }
+  return r;
+}
+
+void stateEyeLoadAbort(void) { eyeStoreWriteAbort(); }
+
+bool stateEyeUnload(void) {
+  dropLoadedDesign();
+  return eyeStoreErase();
 }
 
 bool stateSetGaze(int16_t x, int16_t y) {
@@ -1628,8 +1756,9 @@ void stateForget(void) {
 // Kept in flash with F() -- the string is longer than it looks.
 static void cmdHelp(Print &out) {
   out.print(F("\ncommands:\n"
-                 "  eye                       list the designs built in\n"
+                 "  eye                       list the designs, and the slot\n"
                  "  eye <name>|<index>|next   select an eye design\n"
+                 "  eye unload                empty the eye slot\n"
                  "  look <x> <y>              aim gaze, 0-1023 each "
                  "(512 512 = centre)\n"
                  "  look auto                 return to autonomous motion\n"
@@ -1679,7 +1808,7 @@ static void cmdHelp(Print &out) {
 // live settings differ from the stored ones.
 void cmdStatus(Print &out) {
   out.printf("eye=%u/%u %s gaze=%s", (unsigned)eyeDesign,
-                (unsigned)NUM_EYE_DESIGNS, eyeDesigns[eyeDesign].name,
+                (unsigned)designCount(), designAt(eyeDesign).name,
                 gazeCmdActive ? "commanded" : "auto");
   if (gazeCmdActive)
     out.printf("(%d,%d)", gazeCmdX, gazeCmdY);
@@ -1737,6 +1866,15 @@ void handleCommand(char *line, Print &out) {
       listEyeDesigns(out);
       return;
     }
+    if (!strcmp(arg, "unload")) {
+      if (!stateEyeUnload()) {
+        out.println(F("err: no eye slot on this board, or erasing it failed"));
+        return;
+      }
+      out.printf("ok slot empty; eye=%u %s\n", (unsigned)eyeDesign,
+                 designAt(eyeDesign).name);
+      return;
+    }
     if (!strcmp(arg, "next") || !strcmp(arg, "toggle")) {
       stateNextEye();
     } else if (arg[0] >= '0' && arg[0] <= '9') { // by index
@@ -1752,7 +1890,7 @@ void handleCommand(char *line, Print &out) {
       return;
     }
     out.printf("ok eye=%u %s\n", (unsigned)eyeDesign,
-                  eyeDesigns[eyeDesign].name);
+                  designAt(eyeDesign).name);
   } else if (!strcmp(cmd, "look")) {
     char *a1 = strtok(NULL, " \t");
     if (!a1) {
@@ -2134,7 +2272,7 @@ void handleCommand(char *line, Print &out) {
   } else if (!strcmp(cmd, "save")) {
     stateSave();
     out.printf("ok saved eye=%s swap=%s\n",
-                  eyeDesigns[eyeDesign].name, eyesSwapped ? "on" : "off");
+                  designAt(eyeDesign).name, eyesSwapped ? "on" : "off");
   } else if (!strcmp(cmd, "forget")) {
     stateForget();
     out.println(F("ok settings cleared; build defaults apply at next boot"));
@@ -2213,7 +2351,7 @@ static void pollBootButton(void) {
 #endif
       stateNextEye();
       Serial.printf("ok eye=%u %s (button)\n", (unsigned)eyeDesign,
-                    eyeDesigns[eyeDesign].name);
+                    designAt(eyeDesign).name);
     }
   }
 

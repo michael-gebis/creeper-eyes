@@ -72,7 +72,11 @@ It adapts to the firmware it finds: `GET /api/v1/info` says which features are
 compiled in, so a build without an RTC or without authentication has those
 groups skipped rather than failed. It captures the board's state at the start
 and puts it back at the end. Nothing reboots the board or writes flash unless
-you pass `--wifi` or `--settings`.
+you pass `--wifi` or `--settings`. The same goes for `--eye-file
+dist/eyes/NAME.bin`, which fills the [eye slot](EYE_FILES.md), damages an
+upload on purpose, and removes it again. The uploads the board refuses
+*before* erasing anything are tested on every run, and checked to have left
+the slot alone.
 
 It also reports any request that took over a second, because on this board a
 slow request is a stalled render loop.

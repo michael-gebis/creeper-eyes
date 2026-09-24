@@ -73,7 +73,8 @@ template <void (*H)()> static void guarded(void) {
 static void corsHeaders(void) {
   if (!authRequired())
     S->sendHeader("Access-Control-Allow-Origin", "*");
-  S->sendHeader("Access-Control-Allow-Methods", "GET, PUT, POST, OPTIONS");
+  S->sendHeader("Access-Control-Allow-Methods",
+                "GET, PUT, POST, DELETE, OPTIONS");
   S->sendHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
@@ -292,9 +293,21 @@ static void getState(void) {
   sendJson(200, d);
 }
 
+static void fillEyeSlot(JsonObject o, const EyeSlotState &e) {
+  o["available"] = e.available;
+  o["loaded"] = e.loaded;
+  if (e.loaded) {
+    o["name"] = e.name;
+    o["index"] = e.index;
+  }
+  o["capacity"] = e.capacity;
+}
+
 static void getEyes(void) {
   DeviceState s;
   stateGet(s);
+  EyeSlotState slot;
+  stateEyeSlot(slot);
   JsonDocument d;
   JsonArray a = d["designs"].to<JsonArray>();
   for (uint8_t i = 0; i < stateEyeCount(); i++) {
@@ -302,8 +315,100 @@ static void getEyes(void) {
     o["index"] = i;
     o["name"] = stateEyeName(i);
     o["current"] = (i == s.eyeIndex);
+    o["loaded"] = (slot.loaded && i == slot.index);
   }
+  fillEyeSlot(d["slot"].to<JsonObject>(), slot);
   sendJson(200, d);
+}
+
+// ------------------------------------------------------------- eye slot --
+// One design loaded from a file; see docs/EYE_FILES.md.
+//
+// The upload is the one request whose body is neither JSON nor read by its
+// handler.  The web server streams it to eyeSlotBody() while it parses the
+// request -- before guarded<> has run -- so that callback makes the
+// credential check itself, silently, before a byte reaches flash.  The
+// handler that follows is guarded as usual; it delivers any refusal, and
+// otherwise reports what the stream came to.
+
+static void getEyeSlot(void) {
+  EyeSlotState e;
+  stateEyeSlot(e);
+  JsonDocument d;
+  fillEyeSlot(d.to<JsonObject>(), e);
+  sendJson(200, d);
+}
+
+// What the streamed body came to, for putEyeSlot() to report.  `streamed`
+// tells "not an eye file" apart from "no body reached us at all", which is
+// what a multipart form looks like: the server parses those itself and
+// never calls the raw callback.
+static bool slotStreamed = false;
+static bool slotAllowed = false;
+static EyeLoadResult slotResult = EYE_LOAD_INCOMPLETE;
+
+static void eyeSlotBody(void) {
+  HTTPRaw &r = S->raw();
+  switch (r.status) {
+  case RAW_START:
+    slotStreamed = true;
+    slotAllowed = authPermits(*S);
+    slotResult = EYE_LOAD_INCOMPLETE;
+    if (slotAllowed)
+      stateEyeLoadBegin(S->clientContentLength());
+    break;
+  case RAW_WRITE:
+    if (slotAllowed)
+      stateEyeLoadChunk(r.buf, r.currentSize);
+    break;
+  case RAW_END:
+    if (slotAllowed)
+      slotResult = stateEyeLoadEnd();
+    break;
+  case RAW_ABORTED:
+    if (slotAllowed)
+      stateEyeLoadAbort();
+    slotStreamed = false; // no handler follows an aborted request
+    break;
+  }
+}
+
+static void putEyeSlot(void) {
+  const bool streamed = slotStreamed;
+  slotStreamed = false; // consumed: the next request starts clean
+  if (!streamed) {
+    sendError(400, "expected the eye file as the request body, with "
+                   "Content-Type: application/octet-stream");
+    return;
+  }
+  switch (slotResult) {
+  case EYE_LOAD_OK:
+    getEyeSlot();
+    return;
+  case EYE_LOAD_NO_SLOT:
+  case EYE_LOAD_NAME_TAKEN:
+    sendError(409, eyeLoadResultText(slotResult));
+    return;
+  case EYE_LOAD_FLASH:
+    sendError(500, eyeLoadResultText(slotResult));
+    return;
+  default: // everything else is something wrong with the file
+    sendError(400, eyeLoadResultText(slotResult));
+    return;
+  }
+}
+
+static void deleteEyeSlot(void) {
+  if (!stateEyeUnload()) {
+    EyeSlotState e;
+    stateEyeSlot(e);
+    if (e.available)
+      sendError(500, "erasing the eye slot failed");
+    else
+      sendError(409, eyeLoadResultText(EYE_LOAD_NO_SLOT));
+    return;
+  }
+  getEyeSlot();
 }
 
 static void getEye(void) {
@@ -1086,6 +1191,14 @@ void apiRegister(WebServer &s) {
   s.on(API "/state", HTTP_ANY, notAllowed);
   s.on(API "/eyes", HTTP_GET, guarded<getEyes>);
   s.on(API "/eyes", HTTP_ANY, notAllowed);
+  s.on(API "/eyes/slot", HTTP_GET, guarded<getEyeSlot>);
+  // The fourth argument makes the body stream to eyeSlotBody() instead of
+  // being buffered -- 158 KB would not fit -- and it runs before the guard.
+  // eyeSlotBody() checks credentials itself for that reason.
+  s.on(API "/eyes/slot", HTTP_PUT, guarded<putEyeSlot>, eyeSlotBody);
+  s.on(API "/eyes/slot", HTTP_DELETE, guarded<deleteEyeSlot>);
+  s.on(API "/eyes/slot", HTTP_OPTIONS, handleOptions);
+  s.on(API "/eyes/slot", HTTP_ANY, notAllowed);
   s.on(API "/net", HTTP_GET, guarded<getNet>);
   s.on(API "/net", HTTP_ANY, notAllowed);
 

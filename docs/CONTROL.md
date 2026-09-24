@@ -11,7 +11,7 @@ If you are not sure which you want: open `http://frank.local/` in a browser.
 ![The control page](images/webui.png)
 
 **http://frank.local/** — a control page for everything the console can do:
-eye design, gaze, dilation, pupil, panel swap and flip, clock and hand colours, the
+eye design (and [eye files](EYE_FILES.md)), gaze, dilation, pupil, panel swap and flip, clock and hand colours, the
 time and its sources, sleep, passwords, Wi-Fi, and the address details. It polls the device once a second,
 so two browsers looking at it stay in step with each other and with anything
 you type over serial.
@@ -55,10 +55,11 @@ Open `pio device monitor` and type `help`. Commands are line-based at 115200.
 
 | Command | Effect |
 | :------ | :----- |
-| `eye` | List the eye designs built into this firmware |
-| `eye <name>` | Select a design by name, e.g. `eye newt` |
+| `eye` | List the eye designs, including one loaded from a file |
+| `eye <name>` | Select a design by name, e.g. `eye dragon` |
 | `eye <index>` | Select by number, e.g. `eye 1` |
 | `eye next` | Cycle to the next design |
+| `eye unload` | Empty the [eye slot](EYE_FILES.md); filling it takes the control page |
 | `look <x> <y>` | Aim the gaze; each 0–1023, `512 512` is centre |
 | `look auto` | Hand gaze back to autonomous motion |
 | `dilate <0-100>` | Pupil width; `100` is fully dilated |
@@ -109,7 +110,8 @@ CORS open so a page served from anywhere can drive the device.
 | Method | Path | What it does |
 | :----- | :--- | :----------- |
 | `GET` | `/api/v1/state` | Everything at once — what the page polls |
-| `GET` | `/api/v1/eyes` | The eye designs this firmware was built with |
+| `GET` | `/api/v1/eyes` | The eye designs, built in and loaded, and the state of the eye slot |
+| `GET` `PUT` `DELETE` | `/api/v1/eyes/slot` | The [eye file](EYE_FILES.md) slot. `PUT` takes the file itself as the body |
 | `GET` | `/api/v1/net` | MAC, addresses, signal, sync state |
 | `GET` | `/api/v1/info` | Version, commit, build date, project URL, whether a credential is needed |
 | `GET` `PUT` | `/api/v1/ntp` | Time-client status; `{"enabled":false}` stops it, `{"op":"sync"}` asks now |

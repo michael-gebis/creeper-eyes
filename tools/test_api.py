@@ -17,7 +17,9 @@ suite believes it.
 
 Nothing here reboots the board or writes to flash unless you ask: --wifi
 covers the credential endpoints, which reboot, and --settings covers save and
-forget, which write NVS.  Neither runs by default.
+forget, which write NVS.  Neither runs by default.  Nor does --eye-file,
+which fills the eye slot; the uploads the board refuses before erasing
+anything are tested every time.
 
 The board's own state is captured at the start and put back at the end, so a
 run leaves the eyes as it found them.
@@ -32,11 +34,14 @@ import re
 import socket
 import gzip
 import json
+import struct
 import sys
 import time
 import urllib.error
 import urllib.request
 from typing import Any, Optional
+
+import make_eye  # beside this file; builds the eye files the slot tests send
 
 Json = dict[str, Any]
 
@@ -116,15 +121,19 @@ class Api:
             self.opener = urllib.request.build_opener()
 
     def raw(self, path: str, method: str = "GET",
-            body: Optional[Json] = None,
+            body: Optional[Json | bytes] = None,
             headers: Optional[dict[str, str]] = None,
             full: bool = False) -> tuple[int, bytes]:
-        """One request.  Returns the status and body; never raises for HTTP."""
+        """One request.  Returns the status and body; never raises for HTTP.
+        A bytes body is sent as it is, the way an eye file is uploaded."""
         url: str = (self.root + path) if full else (self.base + path)
         req: urllib.request.Request = urllib.request.Request(
             url, method=method)
         data: Optional[bytes] = None
-        if body is not None:
+        if isinstance(body, bytes):
+            data = body
+            req.add_header("Content-Type", "application/octet-stream")
+        elif body is not None:
             data = json.dumps(body).encode()
             req.add_header("Content-Type", "application/json")
         if self.token:
@@ -176,7 +185,7 @@ class Api:
 # ---------------------------------------------------------------- assertions --
 
 def expect(res: Result, api: Api, label: str, path: str, method: str = "GET",
-           body: Optional[Json] = None, status: int = 200,
+           body: Optional[Json | bytes] = None, status: int = 200,
            headers: Optional[dict[str, str]] = None,
            full: bool = False) -> Json:
     """A request whose status is the thing under test."""
@@ -286,6 +295,84 @@ def test_eyes(res: Result, api: Api, start: Json) -> None:
     expect(res, api, "index past the end is 404", "/eye", "PUT",
            {"index": 999}, status=404)
     expect(res, api, "empty body is 400", "/eye", "PUT", {}, status=400)
+
+
+def blank_eye(name: str) -> bytes:
+    """A well-formed eye file of all-zero tables: right in every respect
+    the board checks, and never meant to be looked at."""
+    tables: dict[str, bytes] = {t: bytes(w * n) for t, w, n in make_eye.TABLES}
+    return make_eye.build(name, tables)
+
+
+def slot_unchanged(res: Result, api: Api, label: str, before: Json) -> None:
+    """A refused upload must leave the slot exactly as it was."""
+    after: Json = api.json("/eyes/slot")
+    same(res, label, (after.get("loaded"), after.get("name")),
+         (before.get("loaded"), before.get("name")))
+
+
+def test_eye_slot(res: Result, api: Api, eye_file: Optional[str]) -> None:
+    """The eye slot (docs/EYE_FILES.md).  Everything refused here is refused
+    before the board erases anything, which is checked, so it runs every
+    time.  A real upload writes flash and runs only with --eye-file."""
+    res.heading("eye slot")
+    slot: Json = expect(res, api, "GET /eyes/slot", "/eyes/slot")
+    for key in ("available", "loaded", "capacity"):
+        field(res, slot, key, "slot has %s" % key)
+    if not slot.get("available"):
+        expect(res, api, "upload without a slot is 409", "/eyes/slot", "PUT",
+               blank_eye("testeye"), status=409)
+        res.skip("the rest of the eye slot",
+                 "this board's partition table has no slot")
+        return
+
+    good: bytes = blank_eye("testeye")
+    expect(res, api, "a JSON body is not an eye file", "/eyes/slot", "PUT",
+           {"name": "dragon"}, status=400)
+    expect(res, api, "wrong magic is 400", "/eyes/slot", "PUT",
+           b"NOTANEYE" + good[8:], status=400)
+    newer: bytes = good[:8] + struct.pack("<H", 2) + good[10:]
+    expect(res, api, "a newer format is 400", "/eyes/slot", "PUT", newer,
+           status=400)
+    expect(res, api, "a header alone is 400", "/eyes/slot", "PUT",
+           good[:make_eye.HEADER_BYTES], status=400)
+    builtin: str = api.json("/eyes").get("designs", [{}])[0].get("name", "")
+    expect(res, api, "a built-in's name is 409", "/eyes/slot", "PUT",
+           blank_eye(builtin), status=409)
+    expect(res, api, "a console keyword is 409", "/eyes/slot", "PUT",
+           blank_eye("unload"), status=409)
+    slot_unchanged(res, api, "refusals left the slot alone", slot)
+
+    if not eye_file:
+        res.skip("uploading, damage and removal",
+                 "pass --eye-file dist/eyes/NAME.bin to include them")
+        return
+
+    with open(eye_file, "rb") as f:
+        data: bytes = f.read()
+    name: str = make_eye.check(data)
+    damaged: bytearray = bytearray(data)
+    damaged[-1] ^= 0xFF
+    expect(res, api, "a damaged file is 400", "/eyes/slot", "PUT",
+           bytes(damaged), status=400)
+    # Past the header, the old design has been erased to make room; damage
+    # found at the end leaves the slot empty rather than half-written.
+    same(res, "damage leaves it empty",
+         api.json("/eyes/slot").get("loaded"), False)
+
+    r: Json = expect(res, api, "PUT /eyes/slot", "/eyes/slot", "PUT", data)
+    same(res, "loaded", (r.get("loaded"), r.get("name")), (True, name))
+    same(res, "and selected", api.json("/eye").get("name"), name)
+    listed: list[Any] = [d for d in api.json("/eyes").get("designs", [])
+                         if d.get("loaded")]
+    same(res, "listed last, marked loaded",
+         [d.get("name") for d in listed], [name])
+
+    r = expect(res, api, "DELETE /eyes/slot", "/eyes/slot", "DELETE")
+    same(res, "removed", r.get("loaded"), False)
+    same(res, "the eyes moved off it", api.json("/eye").get("index"), 0)
+
+    expect(res, api, "PUT it back", "/eyes/slot", "PUT", data)
 
 
 def test_gaze(res: Result, api: Api) -> None:
@@ -1355,6 +1442,9 @@ def main(argv: list[str]) -> int:
                     help="also test save/forget, which write flash")
     ap.add_argument("--credentials", action="store_true",
                     help="also change a password and change it back")
+    ap.add_argument("--eye-file", metavar="FILE",
+                    help="also upload FILE to the eye slot, remove it and put "
+                         "it back; writes flash, and leaves FILE loaded")
     ap.add_argument("--wifi", action="store_true",
                     help="also test the wifi endpoints (read-only parts)")
     ap.add_argument("--latency", type=int, metavar="N",
@@ -1392,6 +1482,7 @@ def main(argv: list[str]) -> int:
 
     test_page(res, api)
     test_eyes(res, api, start)
+    test_eye_slot(res, api, args.eye_file)
     test_gaze(res, api)
     test_gaze_burst(res, api)
     test_dilate(res, api)

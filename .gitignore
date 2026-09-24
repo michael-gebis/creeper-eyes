@@ -27,3 +27,6 @@ hardware/*/gerbers/*
 # carries it whether or not the decoded view shows it.
 /backups/
 *-nvs-*.json
+
+# Eye files built by tools/make_eye.py
+/dist/

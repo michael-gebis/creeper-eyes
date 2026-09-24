@@ -72,38 +72,54 @@ void authBegin(WebServer &s) {
 #endif
 }
 
-bool authCheck(WebServer &s) {
+// What the checks make of a request, before anything is said about it.
+enum Verdict { ALLOW, WRONG_HOST, NEED_DIGEST, NEED_TOKEN };
+
+static Verdict judge(WebServer &s) {
 #if AUTH_HOST_CHECK
-  if (!hostIsOurs(s.hostHeader())) {
-    s.send(403, "text/plain",
-           "this request named a host that is not this device\n");
-    return false;
-  }
+  if (!hostIsOurs(s.hostHeader()))
+    return WRONG_HOST;
 #endif
 
 #if AUTH_TOKEN
   if (s.hasHeader("Authorization") && tokenMatches(s.header("Authorization")))
-    return true;
+    return ALLOW;
 #endif
 
 #if AUTH_HTTP
-  if (!s.authenticate(credGet(CRED_USER), credGet(CRED_PASS))) {
+  if (!s.authenticate(credGet(CRED_USER), credGet(CRED_PASS)))
+    return NEED_DIGEST;
+#endif
+
+#if AUTH_TOKEN && !AUTH_HTTP
+  return NEED_TOKEN; // token is the only credential, and it did not match
+#endif
+
+  (void)s;
+  return ALLOW;
+}
+
+bool authPermits(WebServer &s) { return judge(s) == ALLOW; }
+
+bool authCheck(WebServer &s) {
+  switch (judge(s)) {
+  case ALLOW:
+    return true;
+  case WRONG_HOST:
+    s.send(403, "text/plain",
+           "this request named a host that is not this device\n");
+    return false;
+  case NEED_DIGEST:
     // Digest, so the password itself never crosses the wire.  The browser
     // handles the challenge and asks the user once.
     s.requestAuthentication(DIGEST_AUTH, WIFI_HOSTNAME,
                             "authentication required\n");
     return false;
+  case NEED_TOKEN:
+    s.send(401, "text/plain", "a bearer token is required\n");
+    return false;
   }
-#endif
-
-#if AUTH_TOKEN && !AUTH_HTTP
-  // Token is the only credential, and it did not match.
-  s.send(401, "text/plain", "a bearer token is required\n");
   return false;
-#endif
-
-  (void)s;
-  return true;
 }
 
 #endif // NETWORK
