@@ -62,8 +62,15 @@ const char *tzLookup(const char *name);
 // the time from anywhere.
 void timeApplyTz(void);
 
-// Adopt a timezone by name or POSIX string.  False if it is too long to
-// store; the caller decides what to say about that.
+// Whether a string could be a POSIX TZ value: short enough to store, made
+// of the characters that grammar uses, starting with a zone name and
+// carrying an offset.  Plausible rather than parsed -- the C library does
+// the parsing, and falls back to UTC on what it cannot read -- but enough to
+// keep garbage, from a request or from flash, out of the environment.
+bool timeTzValid(const char *posix);
+
+// Adopt a timezone by name or POSIX string.  False if it is neither a known
+// name nor a plausible POSIX string; the caller decides what to say.
 bool timeSetTz(const char *nameOrPosix);
 
 // Hand the system clock a UTC epoch.  Later sources outrank earlier ones --

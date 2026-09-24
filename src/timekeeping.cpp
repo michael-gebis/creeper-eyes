@@ -3,6 +3,7 @@
 
 #include "timekeeping.h"
 
+#include <ctype.h>
 #include <string.h>
 #include <sys/time.h>
 
@@ -137,6 +138,26 @@ void timeApplyTz(void) {
   tzset();
 }
 
+bool timeTzValid(const char *s) {
+  if (!s)
+    return false;
+  size_t n = strnlen(s, TZ_MAX);
+  if (n == 0 || n >= TZ_MAX)
+    return false;
+  // A zone name is letters, or anything inside <...>.
+  if (!isalpha((unsigned char)s[0]) && s[0] != '<')
+    return false;
+  bool digit = false;
+  for (size_t i = 0; i < n; i++) {
+    char c = s[i];
+    if (isdigit((unsigned char)c))
+      digit = true;
+    else if (!isalpha((unsigned char)c) && !strchr("+-,./:<>", c))
+      return false;
+  }
+  return digit; // the offset is not optional
+}
+
 bool timeSetTz(const char *nameOrPosix) {
   if (!nameOrPosix || !*nameOrPosix)
     return false;
@@ -144,7 +165,7 @@ bool timeSetTz(const char *nameOrPosix) {
   // what lets somewhere not on the list still be set.
   const char *named = tzLookup(nameOrPosix);
   const char *want = named ? named : nameOrPosix;
-  if (strlen(want) >= TZ_MAX)
+  if (!timeTzValid(want))
     return false;
   strncpy(tzString, want, TZ_MAX - 1);
   tzString[TZ_MAX - 1] = '\0';

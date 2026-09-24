@@ -11,6 +11,7 @@
 #if RTC
 
 #include "timekeeping.h"
+#include "health.h"
 #include <Arduino.h>
 #include <Wire.h>
 
@@ -77,6 +78,31 @@ bool rtcValid(void) { return present && valid; }
 bool rtcRead(time_t &utc) {
   uint8_t r[7];
   if (!present || !readRegs(REG_SECONDS, r, sizeof(r)))
+    return false;
+
+  // Battery-backed registers hold whatever they hold.  A digit above 9 is
+  // not BCD, and a field outside its calendar range is not a date; either
+  // means the chip's contents are not a time, whatever the oscillator flag
+  // says, and nothing below should turn them into one.
+  //
+  // `bits` is every bit the chip can set in each register (the hour's mode
+  // bit and the month's century bit included); anything outside it is
+  // garbage.  `digits` is the BCD part of each.
+  static const uint8_t bits[7] = {0x7F, 0x7F, 0x7F, 0x07, 0x3F, 0x9F, 0xFF};
+  static const uint8_t digits[7] = {0x7F, 0x7F, 0x3F, 0x07, 0x3F, 0x1F, 0xFF};
+  for (uint8_t i = 0; i < 7; i++) {
+    if (r[i] & ~bits[i])
+      return false;
+    if (i != 2 && ((r[i] & digits[i] & 0x0F) > 9 || ((r[i] & digits[i]) >> 4) > 9))
+      return false; // the hour register is checked below, mode by mode
+  }
+  const uint8_t day = fromBcd(r[4] & 0x3F), mon = fromBcd(r[5] & 0x1F);
+  if (fromBcd(r[0] & 0x7F) > 59 || fromBcd(r[1] & 0x7F) > 59 || day < 1 ||
+      day > 31 || mon < 1 || mon > 12)
+    return false;
+  const uint8_t hourBits = (r[2] & 0x40) ? (r[2] & 0x1F) : (r[2] & 0x3F);
+  if ((hourBits & 0x0F) > 9 ||
+      fromBcd(hourBits) > ((r[2] & 0x40) ? 12 : 23))
     return false;
 
   struct tm t;
@@ -176,7 +202,11 @@ void rtcBegin(void) {
 
   time_t utc;
   if (!rtcRead(utc)) {
-    DEBUG_PRINTF("[rtc] found, but could not be read" "\n");
+    // Treated like a stopped oscillator: not a time to believe, and the
+    // next time that is set -- by NTP or `clock set` -- overwrites it.
+    valid = false;
+    healthNote("the RTC holds an impossible date; ignored until the time "
+               "is next set");
     return;
   }
   timeAccept(utc, TIME_RTC);

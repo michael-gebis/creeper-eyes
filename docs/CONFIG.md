@@ -146,8 +146,49 @@ every press.
 
 The design is stored **by name**, not by index. Indices shift whenever the set
 of `EYE_*` switches changes, so a saved index could silently select a
-different design after a rebuild. If a saved design is not in the current
-build, the console says so at boot and falls back to the first one.
+different design after a rebuild. If a saved design is not on the board,
+it falls back to the first one and says so, as below.
+
+### If stored settings are damaged
+
+Nothing read back from flash is trusted. NVS already checks a CRC on every
+entry, so a torn write or a flipped bit reads as a missing setting, and the
+built-in default applies. What it cannot catch is a value that is intact but
+wrong: saved by an older firmware, restored from another board's backup, or
+written by hand. So each setting is checked as it is loaded:
+
+- **The type.** A key saved as a string where a number belongs is not that
+  number.
+- **The range.** A clock rate must be 1–3600, a sleep time a real minute of
+  the day, a colour 24 bits, and so on. These are the same limits the console
+  and the API enforce when you set them.
+- **The length and the characters**, for strings. Each is read into a
+  fixed-size buffer and never anywhere larger. A timezone must look like a
+  POSIX TZ string, a password must pass the rules for setting one, and the OTA
+  hash must be 32 hex digits.
+
+A value that fails is **ignored**, the default is used, and the bad copy is
+**removed**, so the next boot starts clean. The WiFi network the radio keeps is
+checked too. One with control characters in it could never be joined, so it is
+forgotten, which sends the board to the setup portal where a good one replaces
+it. A damaged [eye file](EYE_FILES.md) in the slot is cleared. An RTC whose
+registers hold an impossible date is treated like one whose battery ran out:
+its time is ignored until the next time the clock is set, which overwrites it.
+
+Each of these is **reported**, not just handled. The control page shows a box
+above the cards listing what was found and what was done. The console has the
+same list under `warnings`, and `GET /api/v1/state` carries it as
+`system.warnings`. The list lasts until the next restart.
+
+```
+> warnings
+  stored clkRate is 0, outside 1-3600; reset to the default
+  the stored WiFi network was damaged and has been forgotten
+```
+
+A saved eye design that is simply not on the board is reported but *not*
+removed. It may be a loaded design whose file is gone, and loading that file
+again should bring the setting back.
 
 ## Versions
 

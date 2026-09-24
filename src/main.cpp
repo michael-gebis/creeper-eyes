@@ -27,6 +27,9 @@
 #include "rtc.h"
 #include "timekeeping.h"
 #include "eyestore.h"
+#include "health.h"
+#include "nvsread.h"
+#include "parse.h"
 
 #include <Adafruit_GFX.h>   // Core graphics lib for Adafruit displays
 #include <HardwareSerial.h> // Needed for 2nd serial port on ESP32
@@ -1167,34 +1170,50 @@ static uint8_t eyeDesignByName(const char *name) {
 }
 
 // Runs before the splash, so the labels reflect a restored swap.
+//
+// Nothing read here is trusted: each value goes through nvsread.h, which
+// checks its type and range, and a bad one is reported on the control page,
+// removed, and replaced by the built-in default.  Opened read-write for that
+// removal only -- nothing else is written.
 static void loadSettings(void) {
-  prefs.begin(PREFS_NAMESPACE, true); // read-only
-  String saved = prefs.getString(PREFS_KEY_EYE, "");
-  bool sw = prefs.getBool(PREFS_KEY_SWAP, false);
-  uint8_t flip = prefs.getUChar(PREFS_KEY_FLIP, 0);
-  pupilOn = prefs.getBool(PREFS_KEY_PUPIL, pupilOn);
-  String tz = prefs.getString(PREFS_KEY_TZ, tzString);
-  strncpy(tzString, tz.c_str(), sizeof(tzString) - 1);
-  tzString[sizeof(tzString) - 1] = '\0';
+  if (!prefs.begin(PREFS_NAMESPACE, false)) {
+    healthNote("settings storage could not be opened; using the defaults");
+    return;
+  }
+
+  char saved[EYE_FILE_NAME_MAX + 1];
+  nvsReadStr(prefs, PREFS_KEY_EYE, saved, sizeof(saved));
+  bool sw = nvsReadBool(prefs, PREFS_KEY_SWAP, false);
+  uint8_t flip = nvsReadU8(prefs, PREFS_KEY_FLIP, 0, 0, 3); // two bits
+  pupilOn = nvsReadBool(prefs, PREFS_KEY_PUPIL, pupilOn);
+
+  char tz[TZ_MAX];
+  if (nvsReadStr(prefs, PREFS_KEY_TZ, tz, sizeof(tz))) {
+    if (timeTzValid(tz))
+      memcpy(tzString, tz, sizeof(tzString));
+    else
+      nvsReject(prefs, PREFS_KEY_TZ, "is not a timezone");
+  }
   timeApplyTz(); // the restored zone, before anything reads a clock
+
 #if NETWORK
   // Restored before setupNetwork runs, so a board saved with it off never
   // asks a server in the first place.
-  netNtpSetEnabled(prefs.getBool(PREFS_KEY_NTP, true));
+  netNtpSetEnabled(nvsReadBool(prefs, PREFS_KEY_NTP, true));
 #endif
 #if CLOCK
-  clockOn = prefs.getBool(PREFS_KEY_CLK_ON, clockOn);
-  clockSeconds = prefs.getBool(PREFS_KEY_CLK_SEC, clockSeconds);
-  clockRate = prefs.getUShort(PREFS_KEY_CLK_RATE, clockRate);
-  uint32_t c0 = prefs.getULong(PREFS_KEY_CLK_C0, clockRGB[0]);
-  uint32_t c1 = prefs.getULong(PREFS_KEY_CLK_C1, clockRGB[1]);
-  uint32_t c2 = prefs.getULong(PREFS_KEY_CLK_C2, clockRGB[2]);
+  clockOn = nvsReadBool(prefs, PREFS_KEY_CLK_ON, clockOn);
+  clockSeconds = nvsReadBool(prefs, PREFS_KEY_CLK_SEC, clockSeconds);
+  clockRate = nvsReadU16(prefs, PREFS_KEY_CLK_RATE, clockRate, 1, 3600);
+  uint32_t c0 = nvsReadU32(prefs, PREFS_KEY_CLK_C0, clockRGB[0], 0, 0xFFFFFF);
+  uint32_t c1 = nvsReadU32(prefs, PREFS_KEY_CLK_C1, clockRGB[1], 0, 0xFFFFFF);
+  uint32_t c2 = nvsReadU32(prefs, PREFS_KEY_CLK_C2, clockRGB[2], 0, 0xFFFFFF);
 #endif
 #if SLEEP
-  sleepLoad(prefs.getBool(PREFS_KEY_SLP_ON, SLEEP_ENABLED),
-            prefs.getUShort(PREFS_KEY_SLP_A, SLEEP_START_MIN),
-            prefs.getUShort(PREFS_KEY_SLP_B, SLEEP_STOP_MIN),
-            prefs.getUChar(PREFS_KEY_SLP_LVL, SLEEP_LEVEL));
+  sleepLoad(nvsReadBool(prefs, PREFS_KEY_SLP_ON, SLEEP_ENABLED),
+            nvsReadU16(prefs, PREFS_KEY_SLP_A, SLEEP_START_MIN, 0, 1439),
+            nvsReadU16(prefs, PREFS_KEY_SLP_B, SLEEP_STOP_MIN, 0, 1439),
+            nvsReadU8(prefs, PREFS_KEY_SLP_LVL, SLEEP_LEVEL, 0, 100));
 #endif
   prefs.end();
 
@@ -1214,15 +1233,15 @@ static void loadSettings(void) {
   panelFlip[0] = flip & 1;
   panelFlip[1] = flip & 2;
   applyFlips(); // after the swap, so each command reaches its own panel
-  if (saved.length()) {
-    uint8_t idx = eyeDesignByName(saved.c_str());
-    if (idx < designCount()) {
+  if (saved[0]) {
+    uint8_t idx = eyeDesignByName(saved);
+    if (idx < designCount())
       setEyeDesign(idx);
-    } else {
-      DEBUG_PRINTF("[creeper-eyes] saved eye '%s' is not in this build, "
-                   "using %s\n",
-                   saved.c_str(), designAt(0).name);
-    }
+    else
+      // Not damage, so not removed: the design may be a loaded one whose
+      // file is gone, and loading it again should bring the setting back.
+      healthNote("saved eye '%s' is not on this board; showing %s", saved,
+                 designAt(0).name);
   }
   // setEyeDesign() during setup() flags a change; nothing has actually been
   // modified since the store was read, so start clean.
@@ -1457,9 +1476,9 @@ const char *stateEyeName(uint8_t i) {
 // back immediately sees the old value for at most one frame -- which is why
 // the API re-reads through stateGet after setting, and gets the pending value
 // from there.
-bool stateSetEyeIndex(uint8_t i) {
+bool stateSetEyeIndex(long i) {
   LOCKED;
-  if (i >= designCount())
+  if (i < 0 || i >= designCount())
     return false;
   pendingEyeDesign = (int16_t)i;
   return true;
@@ -1556,12 +1575,12 @@ bool stateEyeUnload(void) {
   return eyeStoreErase();
 }
 
-bool stateSetGaze(int16_t x, int16_t y) {
+bool stateSetGaze(long x, long y) {
   LOCKED;
   if (x < 0 || x > 1023 || y < 0 || y > 1023)
     return false;
-  gazeCmdX = x;
-  gazeCmdY = y;
+  gazeCmdX = (int16_t)x; // in range, so the narrowing is exact
+  gazeCmdY = (int16_t)y;
   gazeCmdActive = true;
   gazeCmdPending = true;
   return true;
@@ -1572,14 +1591,14 @@ void stateGazeAuto(void) {
   gazeCmdActive = false;
 }
 
-bool stateSetDilation(uint8_t pct) {
+bool stateSetDilation(long pct) {
   LOCKED;
-  if (pct > 100)
+  if (pct < 0 || pct > 100)
     return false;
 #if CLOCK
   startleCancel(); // an explicit width wins over a running effect
 #endif
-  setDilation(pct);
+  setDilation((uint8_t)pct); // in range, so exact
   return true;
 }
 
@@ -1657,13 +1676,13 @@ void stateClockSetSeconds(bool on) {
 #endif
 }
 
-bool stateClockSetRate(uint16_t rate) {
+bool stateClockSetRate(long rate) {
   LOCKED;
 #if CLOCK
   if (rate < 1 || rate > 3600)
     return false;
   clockSet(clockNow()); // rebase so the change is not retroactive
-  clockRate = rate;
+  clockRate = (uint16_t)rate;
   settingsDirty = true;
   return true;
 #else
@@ -1672,10 +1691,10 @@ bool stateClockSetRate(uint16_t rate) {
 #endif
 }
 
-bool stateClockSetTime(uint8_t h, uint8_t m, uint8_t sec) {
+bool stateClockSetTime(long h, long m, long sec) {
   LOCKED;
 #if CLOCK
-  if (h > 23 || m > 59 || sec > 59)
+  if (h < 0 || h > 23 || m < 0 || m > 59 || sec < 0 || sec > 59)
     return false;
   // Deliberately not marked dirty: the time is not persisted in NVS.  With an
   // RTC fitted it goes somewhere better instead.
@@ -1711,10 +1730,10 @@ bool stateClockSetTime(uint8_t h, uint8_t m, uint8_t sec) {
 #endif
 }
 
-bool stateClockSetColor(int8_t which, uint32_t rgb) {
+bool stateClockSetColor(long which, uint32_t rgb) {
   LOCKED;
 #if CLOCK
-  if (which >= 3)
+  if (which < -1 || which >= 3 || rgb > 0xFFFFFF)
     return false;
   if (which < 0)
     for (uint8_t i = 0; i < 3; i++)
@@ -1783,6 +1802,7 @@ static void cmdHelp(Print &out) {
                  "  wifi                      the network, and how to change "
                  "it\n"
                  "  version                   firmware version and commit\n"
+                 "  warnings                  problems found in stored settings\n"
 #if NETWORK
                  "  ntp [on|off|sync]         use a time server, or stop\n"
 #endif
@@ -1802,6 +1822,19 @@ static void cmdHelp(Print &out) {
                  "  splash                    re-show the panel name cards\n"
                  "  status                    report current state\n"
                  "  help                      this list\n"));
+}
+
+// What the board found wrong with its own stored data at boot, and what it
+// did about each -- see health.h.  The control page shows the same list.
+static void cmdWarnings(Print &out) {
+  if (!healthCount()) {
+    out.println(F("no warnings"));
+    return;
+  }
+  for (uint8_t i = 0; i < healthCount(); i++)
+    out.printf("  %s\n", healthLine(i));
+  if (healthDropped())
+    out.printf("  ...and %u more\n", (unsigned)healthDropped());
 }
 
 // One line of everything worth knowing, plus an (unsaved) marker when the
@@ -1857,6 +1890,8 @@ void handleCommand(char *line, Print &out) {
     out.println(F(PROJECT_URL));
   } else if (!strcmp(cmd, "status")) {
     cmdStatus(out);
+  } else if (!strcmp(cmd, "warnings")) {
+    cmdWarnings(out);
   } else if (!strcmp(cmd, "eye")) {
     char *arg = strtok(NULL, " \t");
     if (arg)
@@ -1878,9 +1913,9 @@ void handleCommand(char *line, Print &out) {
     if (!strcmp(arg, "next") || !strcmp(arg, "toggle")) {
       stateNextEye();
     } else if (arg[0] >= '0' && arg[0] <= '9') { // by index
-      long idx = atol(arg);
-      if (idx < 0 || !stateSetEyeIndex((uint8_t)idx)) {
-        out.printf("err: no design %ld -- %u built in\n", idx,
+      long idx;
+      if (!parseLong(arg, 0, 255, idx) || !stateSetEyeIndex(idx)) {
+        out.printf("err: no design %s -- there are %u\n", arg,
                    (unsigned)stateEyeCount());
         return;
       }
@@ -1907,8 +1942,9 @@ void handleCommand(char *line, Print &out) {
       out.println(F("usage: look <0-1023> <0-1023> | look auto"));
       return;
     }
-    long x = atol(a1), y = atol(a2);
-    if (!stateSetGaze((int16_t)x, (int16_t)y)) {
+    long x, y;
+    if (!parseLong(a1, 0, 1023, x) || !parseLong(a2, 0, 1023, y) ||
+        !stateSetGaze(x, y)) {
       out.println(F("err: both values must be 0-1023"));
       return;
     }
@@ -1933,8 +1969,8 @@ void handleCommand(char *line, Print &out) {
       out.printf("ok sleep=%s\n", sleepEnabled() ? "on" : "off");
     } else if (!strcmp(a, "level")) {
       char *v = strtok(NULL, " \t");
-      int pct = v ? atoi(v) : -1;
-      if (!v || pct < 0 || pct > 100) {
+      long pct;
+      if (!parseLong(v, 0, 100, pct)) {
         out.println(F("usage: sleep level <0-100>   (0 = panels off)"));
       } else {
         sleepSetLevel((uint8_t)pct);
@@ -1944,10 +1980,9 @@ void handleCommand(char *line, Print &out) {
     } else {
       // "sleep 22:00 07:00"
       char *b = strtok(NULL, " \t");
-      unsigned h1, m1, h2, m2;
-      if (!b || sscanf(a, "%u:%u", &h1, &m1) != 2 ||
-          sscanf(b, "%u:%u", &h2, &m2) != 2 || h1 > 23 || h2 > 23 ||
-          m1 > 59 || m2 > 59) {
+      uint8_t h1, m1, h2, m2, unused;
+      if (!parseTimeOfDay(a, false, h1, m1, unused) ||
+          !parseTimeOfDay(b, false, h2, m2, unused)) {
         out.println(F("usage: sleep HH:MM HH:MM   (start, then stop)"));
       } else {
         sleepSetWindow((uint16_t)(h1 * 60 + m1), (uint16_t)(h2 * 60 + m2));
@@ -1982,29 +2017,26 @@ void handleCommand(char *line, Print &out) {
       out.printf("ok clock=%s\n", clockOn ? "on" : "off");
     } else if (!strcmp(arg, "set")) {
       char *v = strtok(NULL, " \t");
-      unsigned h = 0, m = 0, sec = 0;
-      if (!v || sscanf(v, "%u:%u:%u", &h, &m, &sec) < 2) {
+      uint8_t h, m, sec;
+      if (!parseTimeOfDay(v, true, h, m, sec)) {
         out.println(F("usage: clock set HH:MM[:SS]"));
         return;
       }
       // Through the operations layer rather than clockSet() directly: that
       // is what carries the write-through to the RTC, and reaching around
       // it is exactly how the console and the API drift apart.
-      if (!stateClockSetTime((uint8_t)h, (uint8_t)m, (uint8_t)sec)) {
+      if (!stateClockSetTime(h, m, sec)) {
         out.println(F("err: out of range"));
         return;
       }
       out.printf("ok clock set %02u:%02u:%02u\n", h, m, sec);
     } else if (!strcmp(arg, "rate")) {
       char *v = strtok(NULL, " \t");
-      long r = v ? atol(v) : 0;
-      if (r < 1 || r > 3600) {
+      long r;
+      if (!parseLong(v, 1, 3600, r) || !stateClockSetRate(r)) {
         out.println(F("usage: clock rate <1-3600>"));
         return;
       }
-      clockSet(clockNow()); // rebase so the jump is not retroactive
-      clockRate = (uint16_t)r;
-      settingsDirty = true;
       out.printf("ok clock rate=%ldx\n", r);
     } else if (!strcmp(arg, "color") || !strcmp(arg, "colour")) {
       char *a = strtok(NULL, " \t");
@@ -2030,25 +2062,17 @@ void handleCommand(char *line, Print &out) {
         }
         hex = b;
       }
-      if (*hex == '#')
-        hex++;
-      char *endp = NULL;
-      unsigned long v = strtoul(hex, &endp, 16);
-      if (!endp || *endp || v > 0xFFFFFFUL) {
+      uint32_t v;
+      if (!parseHexColor(hex, v) || !stateClockSetColor(which, v)) {
         out.println(F("err: colour must be 6 hex digits, e.g. FF8800"));
         return;
       }
-      if (which < 0) {
-        for (uint8_t i = 0; i < 3; i++)
-          clockSetColor(i, (uint32_t)v);
-      settingsDirty = true;
-        out.printf("ok clock color all=%06lX\n", v);
-      } else {
-        clockSetColor((uint8_t)which, (uint32_t)v);
-        settingsDirty = true;
-        out.printf("ok clock color %s=%06lX\n",
-                      which == 0 ? "hour" : which == 1 ? "min" : "sec", v);
-      }
+      out.printf("ok clock color %s=%06lX\n",
+                 which < 0    ? "all"
+                 : which == 0 ? "hour"
+                 : which == 1 ? "min"
+                              : "sec",
+                 (unsigned long)v);
     } else if (!strcmp(arg, "secs")) {
       char *v = strtok(NULL, " \t");
       clockSeconds = !(v && !strcmp(v, "off"));
@@ -2290,8 +2314,8 @@ void handleCommand(char *line, Print &out) {
       out.println(F("ok dilate=auto"));
       return;
     }
-    long pct = atol(arg);
-    if (pct < 0 || !stateSetDilation((uint8_t)pct)) {
+    long pct;
+    if (!parseLong(arg, 0, 100, pct) || !stateSetDilation(pct)) {
       out.println(F("err: dilation must be 0-100"));
       return;
     }

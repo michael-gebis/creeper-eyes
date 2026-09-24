@@ -4,6 +4,8 @@
 
 #if NETWORK
 
+#include "health.h"
+#include "nvsread.h"
 #include <MD5Builder.h>
 #include <Preferences.h>
 
@@ -57,27 +59,42 @@ static String md5Of(const char *s) {
   return md5.toString();
 }
 
+// What ArduinoOTA wants: 32 lowercase hex digits.  Anything else stored
+// under otaHash would be compared against every update and match none.
+static bool isMd5Hex(const char *s) {
+  size_t n = 0;
+  for (; s[n]; n++)
+    if (!((s[n] >= '0' && s[n] <= '9') || (s[n] >= 'a' && s[n] <= 'f')))
+      return false;
+  return n == 32;
+}
+
 void credBegin(void) {
+  // Read-write only so that a damaged value can be removed -- see nvsread.h.
+  // A stored credential that fails the checks credSet() would have applied
+  // is ignored, and the built-in one is in force instead, which is also
+  // exactly what a board that was never given one does.
   Preferences prefs;
-  prefs.begin(CRED_NAMESPACE, true); // read-only
+  bool open = prefs.begin(CRED_NAMESPACE, false);
+  if (!open)
+    healthNote("credential storage could not be opened; using built-ins");
   for (int i = 0; i < CRED_COUNT; i++) {
-    // isKey() first, rather than getString() with a default.  A missing key
-    // is the ordinary case -- a board that has never had a password set has
-    // all four missing -- but Preferences::getString logs it at error level,
-    // so an ordinary boot printed four alarming NOT_FOUND lines in a row.
-    // isKey() asks the same question without the commentary.
-    stored[i] = prefs.isKey(KEYS[i]);
-    live[i] = stored[i] ? prefs.getString(KEYS[i], "")
-                        : String(builtIn((CredKind)i));
-    // A key that exists but holds nothing counts as absent: credSet refuses
-    // to write one, so it could only come from something else, and honouring
-    // it would mean an empty password in force.
-    if (stored[i] && !live[i].length()) {
-      stored[i] = false;
-      live[i] = String(builtIn((CredKind)i));
+    char buf[CRED_MAX_LEN + 1];
+    stored[i] = open && nvsReadStr(prefs, KEYS[i], buf, sizeof(buf));
+    if (stored[i]) {
+      String err;
+      bool usable = (i == CRED_OTA) ? isMd5Hex(buf)
+                                    : credCheck((CredKind)i, buf, err);
+      if (!usable) {
+        nvsReject(prefs, KEYS[i], i == CRED_OTA ? "is not an MD5 hash"
+                                                : "is not a usable credential");
+        stored[i] = false;
+      }
     }
+    live[i] = stored[i] ? String(buf) : String(builtIn((CredKind)i));
   }
-  prefs.end();
+  if (open)
+    prefs.end();
 
 #if OTA_AUTH
   // The built-in OTA password is a password, not a hash, so it needs hashing
@@ -91,6 +108,23 @@ const char *credGet(CredKind k) {
   if (k < 0 || k >= CRED_COUNT)
     return "";
   return live[k].c_str();
+}
+
+bool credMatches(CredKind k, const char *value) {
+  if (k < 0 || k >= CRED_COUNT || !value)
+    return false;
+  // Constant time over the stored value's length.  The timing signal from
+  // an early-exit strcmp is not much of a lever over a network this slow,
+  // but the fix is a few lines and the alternative is explaining why it
+  // was not worth them.
+  const char *want = live[k].c_str();
+  size_t n = strlen(want);
+  if (!n || strlen(value) != n)
+    return false;
+  uint8_t diff = 0;
+  for (size_t i = 0; i < n; i++)
+    diff |= (uint8_t)(value[i] ^ want[i]);
+  return diff == 0;
 }
 
 bool credIsStored(CredKind k) {
@@ -113,7 +147,7 @@ bool credCheck(CredKind k, const char *value, String &err) {
     err = "must not be empty";
     return false;
   }
-  if (v.length() > 63) {
+  if (v.length() > CRED_MAX_LEN) {
     err = "must be 63 characters or fewer";
     return false;
   }

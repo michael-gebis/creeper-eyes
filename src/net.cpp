@@ -11,6 +11,9 @@
 #include <esp_sntp.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
+
+#include "health.h"
+#include "nvsread.h"
 #include <esp_wifi.h>
 #include <WiFi.h>
 #include <WiFiManager.h>
@@ -67,12 +70,54 @@ static char bootSsid[33];
 // exists.  Using it to ask "do we have stored credentials?" therefore always
 // answered no, and the stored-network branch below had never once run -- a
 // board configured through the portal went back to the portal on every boot.
+//
+// The driver keeps that config in NVS of its own (nvs.net80211) and loads it
+// without any checks of ours, so they are made here, on the copy it hands
+// back.  The SSID field is 32 bytes with no room reserved for a terminator,
+// hence the bounded copy.
+//
+// Only rules that hold for every kind of network, so that nothing real is
+// ever thrown away: no control characters in either field -- an SSID may be
+// any bytes, but none anybody can type is one -- and a key that fills all 64
+// bytes is a raw PSK, which is hex.  (Lengths are otherwise left alone: WPA
+// wants 8-63 characters, but WEP keys are 5 or 13.)  A stored network that
+// fails is forgotten.  It could never be joined, and forgetting it is what
+// sends the board to the setup portal, where a good one replaces it.
+static bool unprintable(const uint8_t *s, size_t n) {
+  for (size_t i = 0; i < n; i++)
+    if (s[i] < 0x20 || s[i] == 0x7f)
+      return true;
+  return false;
+}
+
+static bool storedNetworkPlausible(const wifi_config_t &conf) {
+  size_t ssidLen = strnlen((const char *)conf.sta.ssid, sizeof(conf.sta.ssid));
+  size_t passLen = strnlen((const char *)conf.sta.password,
+                           sizeof(conf.sta.password));
+  if (unprintable(conf.sta.ssid, ssidLen) ||
+      unprintable(conf.sta.password, passLen))
+    return false;
+  if (passLen == sizeof(conf.sta.password))
+    for (size_t i = 0; i < passLen; i++)
+      if (!isxdigit(conf.sta.password[i]))
+        return false;
+  return true;
+}
+
 static void readStoredSsid(void) {
   wifi_config_t conf;
   bootSsid[0] = '\0';
   if (esp_wifi_get_config(WIFI_IF_STA, &conf) != ESP_OK)
     return;
-  strncpy(bootSsid, (const char *)conf.sta.ssid, sizeof(bootSsid) - 1);
+  if (!conf.sta.ssid[0])
+    return; // nothing stored: the ordinary case on a new board
+  if (!storedNetworkPlausible(conf)) {
+    healthNote("the stored WiFi network was damaged and has been forgotten");
+    WiFi.disconnect(false, true); // erase the stored AP, keep the radio up
+    return;
+  }
+  // Bounded both ways: the source may lack a terminator, the copy may not.
+  memcpy(bootSsid, conf.sta.ssid, sizeof(conf.sta.ssid));
   bootSsid[sizeof(bootSsid) - 1] = '\0';
 }
 
@@ -87,7 +132,12 @@ bool netStoredSsid(char *out, size_t n) {
 bool netRequestJoin(const char *ssid, const char *pass) {
   if (!ssid || !*ssid || strlen(ssid) > 32)
     return false;
-  if (pass && strlen(pass) > 63)
+  if (!pass)
+    pass = "";
+  // The same rules a stored network is held to at boot, so nothing accepted
+  // here is forgotten there.
+  if (strlen(pass) > 63 || unprintable((const uint8_t *)ssid, strlen(ssid)) ||
+      unprintable((const uint8_t *)pass, strlen(pass)))
     return false;
   strncpy(pendingSsid, ssid, sizeof(pendingSsid) - 1);
   pendingSsid[sizeof(pendingSsid) - 1] = 0;
@@ -107,7 +157,7 @@ static bool takePortalRequest(void) {
   Preferences p;
   if (!p.begin(NET_PREFS, false))
     return false;
-  bool want = p.getBool(NET_KEY_PORTAL, false);
+  bool want = nvsReadBool(p, NET_KEY_PORTAL, false);
   if (want)
     p.remove(NET_KEY_PORTAL);
   p.end();

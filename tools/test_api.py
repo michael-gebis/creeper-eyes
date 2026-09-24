@@ -121,7 +121,7 @@ class Api:
             self.opener = urllib.request.build_opener()
 
     def raw(self, path: str, method: str = "GET",
-            body: Optional[Json | bytes] = None,
+            body: Optional[Any] = None,
             headers: Optional[dict[str, str]] = None,
             full: bool = False) -> tuple[int, bytes]:
         """One request.  Returns the status and body; never raises for HTTP.
@@ -185,7 +185,7 @@ class Api:
 # ---------------------------------------------------------------- assertions --
 
 def expect(res: Result, api: Api, label: str, path: str, method: str = "GET",
-           body: Optional[Json | bytes] = None, status: int = 200,
+           body: Optional[Any] = None, status: int = 200,
            headers: Optional[dict[str, str]] = None,
            full: bool = False) -> Json:
     """A request whose status is the thing under test."""
@@ -295,6 +295,78 @@ def test_eyes(res: Result, api: Api, start: Json) -> None:
     expect(res, api, "index past the end is 404", "/eye", "PUT",
            {"index": 999}, status=404)
     expect(res, api, "empty body is 400", "/eye", "PUT", {}, status=400)
+
+
+def test_validation(res: Result, api: Api, start: Json) -> None:
+    """Input the API must refuse, and refuse whole.  Each of these was once
+    accepted as something else: a range check made after a narrowing cast
+    let 300 through as 44, sscanf read "12:30junk" as 12:30, and a field of
+    the wrong type was skipped while the request reported success."""
+    res.heading("refusing bad input")
+    field(res, start, "system.warnings", "state reports warnings")
+
+    for label, body in (("a JSON array", [1, 2]), ("a bare number", 5)):
+        expect(res, api, "%s is not a body" % label, "/pupil", "PUT", body,
+               status=400)
+
+    expect(res, api, "percent 300 is 400", "/dilate", "PUT",
+           {"percent": 300}, status=400)
+    expect(res, api, "percent -1 is 400", "/dilate", "PUT",
+           {"percent": -1}, status=400)
+    expect(res, api, "percent \"50\" is 400", "/dilate", "PUT",
+           {"percent": "50"}, status=400)
+    expect(res, api, "index 256 is 404", "/eye", "PUT", {"index": 256},
+           status=404)
+    expect(res, api, "gaze 65636 is 400", "/gaze", "PUT",
+           {"x": 65636, "y": 100}, status=400)
+    expect(res, api, "a nonsense zone is 400", "/tz", "PUT",
+           {"tz": "hello world"}, status=400)
+
+    flip: Json = api.json("/flip")
+    expect(res, api, "flip with one bad side is 400", "/flip", "PUT",
+           {"left": not flip.get("left"), "right": "yes"}, status=400)
+    same(res, "and the good side did not change",
+         api.json("/flip").get("left"), flip.get("left"))
+
+    if start.get("clock"):
+        before: Json = api.json("/clock")
+        for label, body in (
+                ("rate 65537", {"rate": 65537}),
+                ("rate \"5\"", {"rate": "5"}),
+                ("time 257:00", {"time": "257:00"}),
+                ("time 12:30junk", {"time": "12:30junk"}),
+                ("colour \"\"", {"colors": {"hour": ""}}),
+                ("colour FF88", {"colors": {"hour": "FF88"}}),
+                ("colour +FF8800", {"colors": {"hour": "+FF8800"}}),
+                ("colors as a string", {"colors": "red"})):
+            expect(res, api, "%s is 400" % label, "/clock", "PUT", body,
+                   status=400)
+        expect(res, api, "a good rate beside a bad colour is 400", "/clock",
+               "PUT", {"rate": 2, "colors": {"hour": "zz"}}, status=400)
+        same(res, "and the rate did not change",
+             api.json("/clock").get("rate"), before.get("rate"))
+    else:
+        res.skip("clock input", "no clock in this build")
+
+    if start.get("sleep"):
+        for label, body in (("start 25:00", {"start": "25:00"}),
+                            ("start 22:00x", {"start": "22:00x"}),
+                            ("level 101", {"level": 101}),
+                            ("enabled \"yes\"", {"enabled": "yes"})):
+            expect(res, api, "sleep %s is 400" % label, "/sleep", "PUT", body,
+                   status=400)
+    else:
+        res.skip("sleep input", "no sleep mode in this build")
+
+    # Every one of these would reboot the board if it were accepted, which
+    # is exactly why each must not be.
+    for label, body in (("an SSID with a control character",
+                         {"ssid": "home\u0001net"}),
+                        ("a password that is a number",
+                         {"ssid": "home", "pass": 12345678}),
+                        ("a 33-character SSID", {"ssid": "x" * 33})):
+        expect(res, api, "wifi: %s is 400" % label, "/wifi", "PUT", body,
+               status=400)
 
 
 def blank_eye(name: str) -> bytes:
@@ -1483,6 +1555,7 @@ def main(argv: list[str]) -> int:
     test_page(res, api)
     test_eyes(res, api, start)
     test_eye_slot(res, api, args.eye_file)
+    test_validation(res, api, start)
     test_gaze(res, api)
     test_gaze_burst(res, api)
     test_dilate(res, api)

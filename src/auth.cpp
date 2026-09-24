@@ -39,22 +39,12 @@ static bool hostIsOurs(const String &host) {
 
 #if AUTH_TOKEN
 
-// Compared in constant time.  The timing signal from an early-exit strcmp is
-// not much of a lever over a network this slow, but the fix is three lines
-// and the alternative is explaining why it was not worth three lines.
+// "Bearer <token>", the token compared in constant time by credMatches().
 static bool tokenMatches(const String &header) {
   static const char *const prefix = "Bearer ";
   if (!header.startsWith(prefix))
     return false;
-  const char *got = header.c_str() + strlen(prefix);
-  const char *want = credGet(CRED_TOKEN);
-  size_t n = strlen(want);
-  if (!n || strlen(got) != n)
-    return false;
-  uint8_t diff = 0;
-  for (size_t i = 0; i < n; i++)
-    diff |= (uint8_t)(got[i] ^ want[i]);
-  return diff == 0;
+  return credMatches(CRED_TOKEN, header.c_str() + strlen(prefix));
 }
 
 #endif // AUTH_TOKEN

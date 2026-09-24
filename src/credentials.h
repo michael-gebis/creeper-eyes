@@ -52,6 +52,14 @@ void credBegin(void);
 // The value in force.  CRED_OTA returns the MD5 hash, never a password.
 const char *credGet(CredKind k);
 
+// Longest value accepted, in characters.  Stored values longer than this
+// are treated as damage when loaded.
+#define CRED_MAX_LEN 63
+
+// Whether `value` is the one in force, compared in constant time.  False
+// for an empty credential, which never matches anything.
+bool credMatches(CredKind k, const char *value);
+
 // Whether this credential has been changed from the value built into the
 // firmware.  For the UI, which shows what is set without ever showing what it
 // is set to.

@@ -55,6 +55,10 @@ td.v{word-break:break-all}
 #err{color:var(--bad);min-height:1.2em;font-size:12px;margin-top:10px}
 #banner{display:none;margin-top:12px;padding:10px 12px;border-radius:8px;
         background:#2b2418;border:1px solid #5a4526;color:var(--warn);font-size:13px}
+#warn{margin-top:12px;padding:10px 12px;border-radius:8px;max-width:1180px;
+      background:#2b2418;border:1px solid #5a4526;color:var(--ink);font-size:13px}
+#warn b{color:var(--warn)}
+#warnList{margin:6px 0 0;padding-left:18px;color:var(--dim)}
 .dim{color:var(--dim)}
 a{color:var(--accent)}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;
@@ -72,6 +76,12 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
 <h1>frank <small id=sub>connecting…</small></h1>
 
 <div id=banner></div>
+<div id=warn hidden>
+  <b>The board found problems in its stored settings when it started.</b>
+  Each was ignored and the default used instead. If the default is not what
+  you want, set it again and save.
+  <ul id=warnList></ul>
+</div>
 
 <div class=grid>
   <div class=card>
@@ -277,7 +287,7 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
 
 <script>
 const $ = s => document.querySelector(s);
-let st = null, busy = false, halted = false;
+let st = null, busy = false, halted = false, warnShown = '';
 
 async function api(path, method, body) {
   const o = {method: method || 'GET'};
@@ -485,6 +495,20 @@ function render(s) {
     : '';
 
   $('#dirty').textContent = s.system.settingsDirty ? 'unsaved changes' : 'saved';
+
+  // Found at boot and fixed for the life of the run, so rebuilt only when
+  // the list itself differs.  Text nodes, not markup: a line can quote a
+  // saved value.
+  const warn = s.system.warnings || [];
+  if (warn.join('\n') !== warnShown) {
+    warnShown = warn.join('\n');
+    $('#warn').hidden = !warn.length;
+    $('#warnList').replaceChildren(...warn.map(w => {
+      const li = document.createElement('li');
+      li.textContent = w;
+      return li;
+    }));
+  }
 }
 
 // Where the time came from matters more than the time itself: a clock

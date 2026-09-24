@@ -107,7 +107,8 @@ extern uint32_t netShowUntil;
 // one it is on right now.  False, and out emptied, if there is none.
 bool netStoredSsid(char *out, size_t n);
 
-// Validates and queues.  False if the SSID is empty or either is too long.
+// Validates and queues.  False if the SSID is empty, either is too long, or
+// either contains a control character.
 bool netRequestJoin(const char *ssid, const char *pass);
 
 // Forget the stored network.  The build-time credentials, if any, still

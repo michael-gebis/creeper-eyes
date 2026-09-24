@@ -3,6 +3,7 @@
 #include "eyestore.h"
 
 #include "config.h"
+#include "health.h"
 #include <Arduino.h>
 #include <esp_partition.h>
 #include <mbedtls/sha256.h>
@@ -170,10 +171,19 @@ void eyeStoreBegin(void) {
     DEBUG_PRINTF("[eyes] no eye slot; a USB flash adds one\n");
     return;
   }
-  if (mapAndVerify())
+  if (mapAndVerify()) {
     DEBUG_PRINTF("[eyes] slot: %s\n", loadedName);
-  else
+    return;
+  }
+  // Not a design.  Erased flash reads 0xFF, which is simply empty; anything
+  // else there is a file that did not survive, and is cleared so that it is
+  // reported once rather than on every boot.
+  if (mapped && mapped[0] != 0xFF) {
+    healthNote("the eye slot held a damaged file; it has been cleared");
+    eyeStoreErase();
+  } else {
     DEBUG_PRINTF("[eyes] slot: empty\n");
+  }
 }
 
 bool eyeStoreAvailable(void) { return part != NULL; }

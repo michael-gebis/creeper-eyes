@@ -42,6 +42,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import zlib
 from typing import Any, Optional
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -149,20 +150,30 @@ def find_partition(port: str, want: str = "nvs") -> dict[str, Any]:
 
 # ---------------------------------------------------------------- NVS parse --
 
+def entry_crc_ok(entry: bytes) -> bool:
+    """An entry's own CRC32 covers everything but itself (bytes 4-7), seeded
+    the way ESP-IDF's nvs_partition_gen.py seeds it."""
+    (want,) = struct.unpack("<I", entry[4:8])
+    return zlib.crc32(entry[0:4] + entry[8:32], 0xFFFFFFFF) == want
+
+
 def parse_nvs(image: bytes) -> dict[str, Any]:
     """Decode the partition for reading.
 
     Best effort, and labelled as such in the output: a restore uses the raw
-    image, so a gap here costs nothing but legibility.
+    image, so a gap here costs nothing but legibility.  But it is also how
+    somebody looks at a board they suspect, so nothing in the image is
+    trusted: every entry's CRC is checked, a span or a length that would run
+    off the end of its page is not followed, and an entry that fails any of
+    that is listed as damaged rather than decoded into something plausible.
     """
     namespaces: dict[int, str] = {}
     raw_entries: list[dict[str, Any]] = []
+    damaged: int = 0
 
     page_start: int
-    for page_start in range(0, len(image), PAGE_SIZE):
+    for page_start in range(0, len(image) - PAGE_SIZE + 1, PAGE_SIZE):
         page: bytes = image[page_start:page_start + PAGE_SIZE]
-        if len(page) < PAGE_SIZE:
-            break
         state: int
         (state,) = struct.unpack("<I", page[0:4])
         if state not in (PAGE_ACTIVE, PAGE_FULL, PAGE_FREEING):
@@ -185,6 +196,16 @@ def parse_nvs(image: bytes) -> dict[str, Any]:
             key: str = entry[8:24].split(b"\0")[0].decode("utf-8", "replace")
             data: bytes = entry[24:32]
 
+            # A damaged header cannot be trusted for its span either, so
+            # step one entry and look again.
+            if not entry_crc_ok(entry) or not 1 <= span <= ENTRIES_PER_PAGE - i:
+                raw_entries.append({"ns_index": ns, "key": key,
+                                    "type": "damaged", "chunk": chunk,
+                                    "value": None})
+                damaged += 1
+                i += 1
+                continue
+
             value: Any = None
             if etype in PRIMITIVE_FORMATS:
                 size: int = struct.calcsize(PRIMITIVE_FORMATS[etype])
@@ -193,9 +214,15 @@ def parse_nvs(image: bytes) -> dict[str, Any]:
                     namespaces[int(value)] = key
             elif etype in (0x21, 0x41, 0x42):
                 dlen: int
+                dcrc: int
                 (dlen,) = struct.unpack("<H", data[0:2])
+                (dcrc,) = struct.unpack("<I", data[4:8])
+                room: int = (span - 1) * ENTRY_SIZE  # the entries it claims
                 blob: bytes = page[base + ENTRY_SIZE:base + ENTRY_SIZE + dlen]
-                if etype == 0x21:
+                if dlen > room or zlib.crc32(blob, 0xFFFFFFFF) != dcrc:
+                    value = {"damaged": "data does not match its length or CRC"}
+                    damaged += 1
+                elif etype == 0x21:
                     value = blob.split(b"\0")[0].decode("utf-8", "replace")
                 else:
                     value = {"bytes": dlen,
@@ -208,7 +235,7 @@ def parse_nvs(image: bytes) -> dict[str, Any]:
             raw_entries.append({"ns_index": ns, "key": key,
                                 "type": TYPE_NAMES.get(etype, hex(etype)),
                                 "chunk": chunk, "value": value})
-            i += max(1, span)
+            i += span
 
     grouped: dict[str, dict[str, Any]] = {}
     e: dict[str, Any]
@@ -218,7 +245,7 @@ def parse_nvs(image: bytes) -> dict[str, Any]:
         name: str = namespaces.get(e["ns_index"], "ns%d" % e["ns_index"])
         grouped.setdefault(name, {})[e["key"]] = {
             "type": e["type"], "value": e["value"]}
-    return {"namespaces": namespaces, "entries": grouped}
+    return {"namespaces": namespaces, "entries": grouped, "damaged": damaged}
 
 
 # -------------------------------------------------------------------- save --
@@ -271,6 +298,10 @@ def do_save(port: str, path: str) -> int:
             print("   %-16s %d keys: %s" % (name, len(keys),
                                             ", ".join(keys[:6])
                                             + (" ..." if len(keys) > 6 else "")))
+    if decoded.get("damaged"):
+        print("WARNING: %d entries failed their checksum and are listed as "
+              "damaged.\n  The board ignores those itself; the raw image "
+              "still has them exactly as read." % decoded["damaged"])
     wifi: list[str] = [n for n in ns if "net80211" in n]
     print("wifi credentials present: %s"
           % ("yes, in " + wifi[0] if wifi else
@@ -280,18 +311,40 @@ def do_save(port: str, path: str) -> int:
 
 # ----------------------------------------------------------------- restore --
 
-def do_restore(port: str, path: str, yes: bool) -> int:
-    doc: dict[str, Any]
-    with open(path, encoding="utf-8") as f:
-        doc = json.load(f)
-
-    if doc.get("format") != 1:
-        raise SystemExit("unfamiliar backup format: %r" % doc.get("format"))
-
-    image: bytes = base64.b64decode(doc["image_base64"])
+def load_backup(path: str) -> tuple[dict[str, Any], bytes]:
+    """The backup file, checked before any of it is believed: well-formed
+    JSON of the shape do_save writes, an image that decodes, and a checksum
+    that matches it.  Anything else stops here, with a reason."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            doc: Any = json.load(f)
+    except (OSError, ValueError) as e:
+        raise SystemExit("cannot read %s: %s" % (path, e))
+    if not isinstance(doc, dict) or doc.get("format") != 1:
+        raise SystemExit("not a backup this tool wrote (format %r)"
+                         % (doc.get("format") if isinstance(doc, dict) else None))
+    part: Any = doc.get("partition")
+    if not (isinstance(part, dict)
+            and all(isinstance(part.get(k), int) and part[k] >= 0
+                    for k in ("offset", "size"))
+            and isinstance(doc.get("image_base64"), str)
+            and isinstance(doc.get("sha256"), str)):
+        raise SystemExit("the backup is missing fields, or they have the "
+                         "wrong types; refusing to use it")
+    try:
+        image: bytes = base64.b64decode(doc["image_base64"], validate=True)
+    except binascii.Error:
+        raise SystemExit("the image in this file is not valid base64")
     if hashlib.sha256(image).hexdigest() != doc["sha256"]:
         raise SystemExit("the image in this file does not match its own "
                          "checksum; refusing to write it")
+    return doc, image
+
+
+def do_restore(port: str, path: str, yes: bool) -> int:
+    doc: dict[str, Any]
+    image: bytes
+    doc, image = load_backup(path)
 
     saved: dict[str, Any] = doc["partition"]
     print("this backup: nvs at 0x%X, %d bytes, saved %s"

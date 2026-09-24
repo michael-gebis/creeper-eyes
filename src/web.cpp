@@ -60,8 +60,13 @@ void webHandleCmd(void) {
   }
   String c = server.arg("c");
   char line[96];
-  strncpy(line, c.c_str(), sizeof(line) - 1);
-  line[sizeof(line) - 1] = '\0';
+  // Refused rather than cut short: a truncated command is a different
+  // command -- `wifi join` with half a password, say -- not a shorter one.
+  if (c.length() >= sizeof(line)) {
+    server.send(400, "text/plain", "command too long" "\n");
+    return;
+  }
+  memcpy(line, c.c_str(), c.length() + 1);
 
   StringPrint out;
   handleCommand(line, out);

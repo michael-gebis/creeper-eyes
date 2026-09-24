@@ -26,6 +26,11 @@
 
 #include "eyestore.h" // EyeLoadResult
 
+// Numbers arrive as `long`, whatever they end up stored as, and each
+// operation checks its own range on that.  Taking the narrow type instead
+// made every caller cast first -- and a cast before the check is how a
+// dilation of 300 became 44 and an eye index of 256 became 0.
+
 // ---------------------------------------------------------------- snapshot --
 
 // A consistent read of everything worth reporting.  Taken in one call so a
@@ -66,7 +71,7 @@ void stateGet(DeviceState &out);
 
 uint8_t stateEyeCount(void);
 const char *stateEyeName(uint8_t index); // NULL if out of range
-bool stateSetEyeIndex(uint8_t index);
+bool stateSetEyeIndex(long index);
 bool stateSetEyeName(const char *name);
 void stateNextEye(void);
 
@@ -99,13 +104,13 @@ bool stateEyeUnload(void);
 // -------------------------------------------------------------------- gaze --
 
 // x and y are 0-1023; anything outside that is rejected.
-bool stateSetGaze(int16_t x, int16_t y);
+bool stateSetGaze(long x, long y);
 void stateGazeAuto(void);
 
 // ---------------------------------------------------------------- dilation --
 
 // 0 is the narrowest pupil, 100 the widest.
-bool stateSetDilation(uint8_t percent);
+bool stateSetDilation(long percent);
 void stateDilationAuto(void);
 
 // ------------------------------------------------------------------ pupil ---
@@ -134,10 +139,10 @@ void stateSplash(void);
 
 void stateClockSetOn(bool on);
 void stateClockSetSeconds(bool on);
-bool stateClockSetRate(uint16_t rate);          // 1-3600
-bool stateClockSetTime(uint8_t h, uint8_t m, uint8_t s);
+bool stateClockSetRate(long rate);              // 1-3600
+bool stateClockSetTime(long h, long m, long s);
 // which: 0 hour, 1 minute, 2 second, -1 all three.  rgb is 0xRRGGBB.
-bool stateClockSetColor(int8_t which, uint32_t rgb);
+bool stateClockSetColor(long which, uint32_t rgb);
 
 // ------------------------------------------------------- when they happen --
 //

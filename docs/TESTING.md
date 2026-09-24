@@ -78,6 +78,13 @@ upload on purpose, and removes it again. The uploads the board refuses
 *before* erasing anything are tested on every run, and checked to have left
 the slot alone.
 
+A group called *refusing bad input* sends the API the kinds of values it
+once accepted wrongly: out-of-range numbers that a narrowing cast used to
+wrap into range, times with trailing junk, fields of the wrong type, and
+one bad field beside a good one, which must leave the good one unapplied
+too. None of it changes the board, including the WiFi cases, each of which
+would reboot it if it were ever accepted.
+
 It also reports any request that took over a second, because on this board a
 slow request is a stalled render loop.
 

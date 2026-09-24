@@ -22,6 +22,8 @@
 #include "rtc.h"
 #include "timekeeping.h"
 #include "state.h"
+#include "health.h"
+#include "parse.h"
 #include <ArduinoJson.h>
 #include <WebServer.h>
 #include <WiFi.h>
@@ -112,6 +114,31 @@ static bool readBody(JsonDocument &doc) {
     sendError(400, "malformed JSON");
     return false;
   }
+  // Every body this API takes is an object.  A bare array or number parses,
+  // and every field lookup on it then quietly finds nothing.
+  if (!doc.is<JsonObject>()) {
+    sendError(400, "expected a JSON object");
+    return false;
+  }
+  return true;
+}
+
+// Whether `key` is in the body with a type other than T.  That is an error,
+// not something to skip: {"rate":"5"} was sent to change the rate, and
+// ignoring it would report success for a change that never happened.  Absent
+// is fine -- every PUT here changes only what it is sent.
+//
+// Answers 400, naming the field, and returns true, so a handler checks every
+// field it knows before it changes anything:
+//
+//   if (wrongType<bool>(b, "on", "true or false")) return;
+template <typename T>
+static bool wrongType(JsonDocument &b, const char *key, const char *expected) {
+  JsonVariantConst v = b[key];
+  if (v.isNull() || v.is<T>())
+    return false;
+  String msg = String(key) + " must be " + expected;
+  sendError(400, msg.c_str());
   return true;
 }
 
@@ -290,6 +317,17 @@ static void getState(void) {
   sys["freeHeap"] = s.freeHeap;
   sys["uptimeSeconds"] = s.uptimeSec;
   sys["settingsDirty"] = s.settingsDirty;
+  // What the board found wrong with its stored data at boot -- see
+  // health.h.  Usually empty, so it costs a few bytes on a reply that is
+  // polled once a second, and it saves the page a second request.
+  JsonArray warn = sys["warnings"].to<JsonArray>();
+  for (uint8_t i = 0; i < healthCount(); i++)
+    warn.add(healthLine(i));
+  if (healthDropped()) {
+    char more[32];
+    snprintf(more, sizeof(more), "...and %u more", (unsigned)healthDropped());
+    warn.add(more);
+  }
   sendJson(200, d);
 }
 
@@ -347,10 +385,18 @@ static bool slotStreamed = false;
 static bool slotAllowed = false;
 static EyeLoadResult slotResult = EYE_LOAD_INCOMPLETE;
 
+// The server reads a streamed body until Content-Length is met, waiting up
+// to a second for each piece, so a sender trickling a byte a second would
+// hold the render loop -- and the eyes -- for as long as it liked.  A real
+// upload over a LAN takes a few seconds; past this it is cut off.
+#define EYE_UPLOAD_MAX_MS 30000
+static uint32_t slotStartedMs = 0;
+
 static void eyeSlotBody(void) {
   HTTPRaw &r = S->raw();
   switch (r.status) {
   case RAW_START:
+    slotStartedMs = millis();
     slotStreamed = true;
     slotAllowed = authPermits(*S);
     slotResult = EYE_LOAD_INCOMPLETE;
@@ -358,6 +404,10 @@ static void eyeSlotBody(void) {
       stateEyeLoadBegin(S->clientContentLength());
     break;
   case RAW_WRITE:
+    if (millis() - slotStartedMs > EYE_UPLOAD_MAX_MS) {
+      S->client().stop(); // the next read comes back empty: RAW_ABORTED
+      break;
+    }
     if (slotAllowed)
       stateEyeLoadChunk(r.buf, r.currentSize);
     break;
@@ -423,16 +473,19 @@ static void putEye(void) {
   JsonDocument b;
   if (!readBody(b))
     return;
-  if (b["next"].is<bool>() && b["next"].as<bool>()) {
+  if (wrongType<bool>(b, "next", "true or false") ||
+      wrongType<const char *>(b, "name", "a string") ||
+      wrongType<long>(b, "index", "a whole number"))
+    return;
+  if (b["next"].as<bool>()) {
     stateNextEye();
   } else if (b["name"].is<const char *>()) {
     if (!stateSetEyeName(b["name"])) {
-      sendError(404, "no such eye design in this build");
+      sendError(404, "no such eye design on this board");
       return;
     }
-  } else if (b["index"].is<int>()) {
-    int i = b["index"];
-    if (i < 0 || !stateSetEyeIndex((uint8_t)i)) {
+  } else if (b["index"].is<long>()) {
+    if (!stateSetEyeIndex(b["index"].as<long>())) {
       sendError(404, "index out of range");
       return;
     }
@@ -455,11 +508,15 @@ static void putGaze(void) {
   JsonDocument b;
   if (!readBody(b))
     return;
+  if (wrongType<const char *>(b, "mode", "\"auto\"") ||
+      wrongType<long>(b, "x", "a whole number") ||
+      wrongType<long>(b, "y", "a whole number"))
+    return;
   const char *mode = b["mode"] | "";
   if (!strcmp(mode, "auto")) {
     stateGazeAuto();
-  } else if (b["x"].is<int>() && b["y"].is<int>()) {
-    if (!stateSetGaze(b["x"], b["y"])) {
+  } else if (b["x"].is<long>() && b["y"].is<long>()) {
+    if (!stateSetGaze(b["x"].as<long>(), b["y"].as<long>())) {
       sendError(400, "x and y must each be 0-1023");
       return;
     }
@@ -482,12 +539,14 @@ static void putDilate(void) {
   JsonDocument b;
   if (!readBody(b))
     return;
+  if (wrongType<const char *>(b, "mode", "\"auto\"") ||
+      wrongType<long>(b, "percent", "a whole number"))
+    return;
   const char *mode = b["mode"] | "";
   if (!strcmp(mode, "auto")) {
     stateDilationAuto();
-  } else if (b["percent"].is<int>()) {
-    int p = b["percent"];
-    if (p < 0 || !stateSetDilation((uint8_t)p)) {
+  } else if (b["percent"].is<long>()) {
+    if (!stateSetDilation(b["percent"].as<long>())) {
       sendError(400, "percent must be 0-100");
       return;
     }
@@ -541,21 +600,26 @@ static void putFlip(void) {
   JsonDocument b;
   if (!readBody(b))
     return;
-  bool any = false;
   static const char *const sides[2] = {"left", "right"};
+  bool any = false;
   for (uint8_t e = 0; e < 2; e++) {
-    if (!b[sides[e]].is<bool>())
-      continue;
-    if (!stateSetFlip(e, b[sides[e]])) {
-      sendError(400, "no such panel in this build");
+    if (wrongType<bool>(b, sides[e], "true or false"))
       return;
-    }
-    any = true;
+    any |= b[sides[e]].is<bool>();
   }
   if (!any) {
     sendError(400, "expected left and/or right: true or false");
     return;
   }
+  // Checked, above, before either side changed; a one-panel build is the
+  // only way the second can still be refused, and it is refused whole.
+  if (b["right"].is<bool>() && displayCount() < 2) {
+    sendError(400, "no such panel in this build");
+    return;
+  }
+  for (uint8_t e = 0; e < 2; e++)
+    if (b[sides[e]].is<bool>())
+      stateSetFlip(e, b[sides[e]]);
   getFlip();
 }
 
@@ -579,43 +643,61 @@ static void getClock(void) {
   sendJson(200, d);
 }
 
-// Every field is optional; whatever is present is applied.
+// Every field is optional; whatever is present is applied -- but only once
+// all of it has been checked, so a bad colour does not leave a new rate
+// behind it.
 static void putClock(void) {
   JsonDocument b;
   if (!readBody(b))
     return;
+  if (wrongType<bool>(b, "on", "true or false") ||
+      wrongType<bool>(b, "seconds", "true or false") ||
+      wrongType<long>(b, "rate", "a whole number") ||
+      wrongType<const char *>(b, "time", "\"HH:MM\" or \"HH:MM:SS\"") ||
+      wrongType<JsonObjectConst>(b, "colors", "an object"))
+    return;
+
+  long rate = 0;
+  bool haveRate = b["rate"].is<long>();
+  if (haveRate) {
+    rate = b["rate"].as<long>();
+    if (rate < 1 || rate > 3600) {
+      sendError(400, "rate must be 1-3600");
+      return;
+    }
+  }
+  uint8_t h = 0, m = 0, sec = 0;
+  bool haveTime = b["time"].is<const char *>();
+  if (haveTime && !parseTimeOfDay(b["time"], true, h, m, sec)) {
+    sendError(400, "time must be \"HH:MM\" or \"HH:MM:SS\"");
+    return;
+  }
+  static const char *const names[3] = {"hour", "minute", "second"};
+  uint32_t rgb[3];
+  bool haveColor[3] = {false, false, false};
+  JsonObjectConst c = b["colors"];
+  for (uint8_t i = 0; i < 3; i++) {
+    JsonVariantConst v = c[names[i]];
+    if (v.isNull())
+      continue;
+    if (!v.is<const char *>() || !parseHexColor(v.as<const char *>(), rgb[i])) {
+      sendError(400, "colours must be six hex digits, e.g. FF8800");
+      return;
+    }
+    haveColor[i] = true;
+  }
 
   if (b["on"].is<bool>())
     stateClockSetOn(b["on"]);
   if (b["seconds"].is<bool>())
     stateClockSetSeconds(b["seconds"]);
-  if (b["rate"].is<int>() && !stateClockSetRate(b["rate"])) {
-    sendError(400, "rate must be 1-3600");
-    return;
-  }
-  if (b["time"].is<const char *>()) {
-    unsigned h = 0, m = 0, sec = 0;
-    if (sscanf(b["time"], "%u:%u:%u", &h, &m, &sec) < 2 ||
-        !stateClockSetTime((uint8_t)h, (uint8_t)m, (uint8_t)sec)) {
-      sendError(400, "time must be HH:MM or HH:MM:SS");
-      return;
-    }
-  }
-  JsonObject c = b["colors"];
-  if (!c.isNull()) {
-    static const char *const names[3] = {"hour", "minute", "second"};
-    for (int8_t i = 0; i < 3; i++) {
-      if (!c[names[i]].is<const char *>())
-        continue;
-      char *end = nullptr;
-      unsigned long v = strtoul(c[names[i]], &end, 16);
-      if (!end || *end || v > 0xFFFFFFUL) {
-        sendError(400, "colours must be six hex digits, e.g. FF8800");
-        return;
-      }
-      stateClockSetColor(i, (uint32_t)v);
-    }
-  }
+  if (haveRate)
+    stateClockSetRate(rate);
+  if (haveTime)
+    stateClockSetTime(h, m, sec);
+  for (uint8_t i = 0; i < 3; i++)
+    if (haveColor[i])
+      stateClockSetColor(i, rgb[i]);
   getClock();
 }
 
@@ -675,7 +757,7 @@ static void putTz(void) {
     return;
   }
   if (!timeSetTz(b["tz"])) {
-    sendError(400, "timezone string too long");
+    sendError(400, "not a known zone name or a POSIX timezone string");
     return;
   }
   // Queued, not done here: re-resolving the time servers can block for
@@ -715,6 +797,9 @@ static void putNtp(void) {
   if (!readBody(b))
     return;
 
+  if (wrongType<bool>(b, "enabled", "true or false") ||
+      wrongType<const char *>(b, "op", "\"sync\""))
+    return;
   if (b["enabled"].is<bool>()) {
     netNtpSetEnabled(b["enabled"]);
     stateMarkDirty(); // it is a saved setting like the timezone
@@ -769,6 +854,8 @@ static void putRtc(void) {
   JsonDocument b;
   if (!readBody(b))
     return;
+  if (wrongType<const char *>(b, "op", "\"sync\""))
+    return;
   const char *op = b["op"] | "";
   if (strcmp(op, "sync")) {
     sendError(400, "op must be sync");
@@ -813,6 +900,10 @@ static void putWifi(void) {
   if (!readBody(b))
     return;
 
+  if (wrongType<const char *>(b, "op", "\"forget\" or \"portal\"") ||
+      wrongType<const char *>(b, "ssid", "a string") ||
+      wrongType<const char *>(b, "pass", "a string"))
+    return;
   const char *op = b["op"] | "";
   if (!strcmp(op, "forget")) {
     netRequestForget();
@@ -820,7 +911,8 @@ static void putWifi(void) {
     netRequestPortal();
   } else if (b["ssid"].is<const char *>()) {
     if (!netRequestJoin(b["ssid"], b["pass"] | "")) {
-      sendError(400, "ssid must be 1-32 characters and pass at most 63");
+      sendError(400, "ssid must be 1-32 characters and pass at most 63, "
+                     "neither with control characters");
       return;
     }
   } else {
@@ -842,6 +934,8 @@ static void putWifi(void) {
 static void postAction(void) {
   JsonDocument b;
   if (!readBody(b))
+    return;
+  if (wrongType<const char *>(b, "action", "a string"))
     return;
   const char *a = b["action"] | "";
   if (!strcmp(a, "blink"))
@@ -932,7 +1026,7 @@ static void putCredentials(void) {
   // AUTH_HOST_CHECK closes most of that, but it is optional and this is one
   // field.
   const char *current = b["current"] | "";
-  if (strcmp(current, credGet(CRED_PASS))) {
+  if (!credMatches(CRED_PASS, current)) {
     sendError(403, "the current password does not match");
     return;
   }
@@ -955,6 +1049,8 @@ static void putCredentials(void) {
 
   int wanted = 0;
   for (auto &c : changes) {
+    if (wrongType<const char *>(b, c.field, "a string"))
+      return;
     if (!b[c.field].is<const char *>())
       continue;
 #if !AUTH_HTTP
@@ -1066,22 +1162,14 @@ static void getSleep(void) {
 
 // "HH:MM", or a bare minute count for anything driving this by hand.
 static bool parseHHMM(const char *s, uint16_t &out) {
-  if (!s || !*s)
+  uint8_t h, m, unused;
+  long mins;
+  if (parseTimeOfDay(s, false, h, m, unused))
+    mins = h * 60 + m;
+  else if (!parseLong(s, 0, 1439, mins))
     return false;
-  unsigned h = 0, m = 0;
-  if (sscanf(s, "%u:%u", &h, &m) == 2) {
-    if (h > 23 || m > 59)
-      return false;
-    out = (uint16_t)(h * 60 + m);
-    return true;
-  }
-  char *end = NULL;
-  long v = strtol(s, &end, 10);
-  if (end && !*end && v >= 0 && v < 1440) {
-    out = (uint16_t)v;
-    return true;
-  }
-  return false;
+  out = (uint16_t)mins;
+  return true;
 }
 
 static void putSleep(void) {
@@ -1091,6 +1179,11 @@ static void putSleep(void) {
 
   // Validate everything before changing anything, so a bad "stop" does not
   // leave a new "start" applied.
+  if (wrongType<const char *>(b, "start", "\"HH:MM\"") ||
+      wrongType<const char *>(b, "stop", "\"HH:MM\"") ||
+      wrongType<long>(b, "level", "a whole number") ||
+      wrongType<bool>(b, "enabled", "true or false"))
+    return;
   uint16_t start = sleepStart(), stop = sleepStop();
   bool haveWindow = false;
 
@@ -1111,8 +1204,8 @@ static void putSleep(void) {
 
   uint8_t level = sleepLevel();
   bool haveLevel = false;
-  if (b["level"].is<int>()) {
-    int v = b["level"];
+  if (b["level"].is<long>()) {
+    long v = b["level"];
     if (v < 0 || v > 100) {
       sendError(400, "level must be 0-100");
       return;
@@ -1152,6 +1245,8 @@ static void putSleep(void) {
 static void postSettings(void) {
   JsonDocument b;
   if (!readBody(b))
+    return;
+  if (wrongType<const char *>(b, "op", "\"save\" or \"forget\""))
     return;
   const char *op = b["op"] | "";
   if (!strcmp(op, "save"))
