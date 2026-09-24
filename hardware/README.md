@@ -23,7 +23,7 @@ off-the-shelf modules and the wires between them:
 - optionally, a DS3231 module
 
 So the board is a **carrier**: a socket for the DevKit, a 7-pin header for
-each eye, a 6-pin header for the RTC, and the shared SPI bus routed between
+each eye, a 5-pin header for the RTC, and the shared SPI bus routed between
 them in copper. One capacitor, because the panels' boost converters draw in
 bursts and it costs nothing. No active parts, nothing surface-mount, nothing
 to calculate. Its job is to replace the breadboard with something that cannot
@@ -55,9 +55,22 @@ guide spends a page on.
 
 The panels connect by cable — a 7-wire Dupont lead or a JST-XH pigtail onto
 each header — because they live in the head's eye sockets, not on the board.
-The RTC header follows the pin order of the common ZS-042 module (`32K SQW SCL
-SDA VCC GND`), so that one plugs straight in; any other module goes on by four
-wires to the labelled pins.
+The RTC header takes the five-pin "DS3231 mini" module sold for the Raspberry
+Pi, which plugs straight onto it: `VCC SDA SCL NC GND` from top to bottom,
+matching the module's own `+ D C NC -`, with GND on the bottom pin. Any other
+module goes on by four wires to the labelled pins.
+
+## Revisions
+
+**Rev B**, current: J5, the RTC header, is five pins in the order of the
+DS3231 mini module (`VCC SDA SCL NC GND`, rows 12–16) instead of six in the
+ZS-042's (`32K SQW SCL SDA VCC GND`, rows 12–17). SCL keeps its route; SDA,
+VCC and GND each come in on a different row. Nothing else moved.
+
+**Rev A**, the first order: the mini module does not plug onto J5. Wire it
+by name instead — four jumpers, module `+`→`VCC`, `D`→`SDA`, `C`→`SCL`,
+`-`→`GND` — and leave J5's `32K` and `SQW` empty. Power off first: the
+firmware only looks for the RTC at boot.
 
 ## What it costs
 
@@ -65,7 +78,7 @@ wires to the labelled pins.
 | :-- | :-- | :-- |
 | JLCPCB or PCBWay, 2-layer, 72 × 56 mm | ~$2 fabrication, $2–5 slow shipping (~$20 by courier if impatient) | under $2 |
 | Two 1×15 female headers, 2.54 mm — the DevKit socket | ~$1 | |
-| Two 1×7 and one 1×6 male pin headers, 2.54 mm | ~$1 | |
+| Two 1×7 and one 1×5 male pin headers, 2.54 mm | ~$1 | |
 | C1, 10 µF electrolytic, 5 mm diameter, 2 mm lead pitch (any value 10–100 µF fits) | pennies | |
 
 **About $10 for five boards, all in**, and one to two weeks. The DevKit and

@@ -130,7 +130,7 @@ class Layout:
     pitch: float
     J2_X: float = field(init=False)      # DevKit right row (D23 ... 3V3)
     J4_X: float = field(init=False)      # Frank's left eye (your right), rows 4-10
-    J5_X: float = field(init=False)      # RTC, rows 12-17
+    J5_X: float = field(init=False)      # RTC, rows 12-16
     GR_X: float = field(init=False)      # GND rail, right
     PR_X: float = field(init=False)      # 3V3 rail, right
     CSR_ESC: float = field(init=False)   # escape columns: where a signal
@@ -171,17 +171,17 @@ class Layout:
             ("3V3", B, [(PL_X, row(4)), (PL_X, lane(14))]),
             ("3V3", F, [(J3_X, row(4)), (PL_X, row(4))]),          # J3 VCC
             ("3V3", F, [(C1_X, C1_PLUS_Y), (PL_X, C1_PLUS_Y)]),    # C1 +
-            ("3V3", B, [(PR_X, row(4)), (PR_X, row(16))]),
+            ("3V3", B, [(PR_X, row(4)), (PR_X, lane(14))]),
             ("3V3", F, [(J4_X, row(4)), (PR_X, row(4))]),          # J4 VCC
-            ("3V3", F, [(J5_X, row(16)), (PR_X, row(16))]),        # J5 VCC
+            ("3V3", F, [(J5_X, row(12)), (PR_X, row(12))]),        # J5 VCC
             # GND: one run along row 14 from C1 through both DevKit GND pins
             # to the right rail, and a rail down each side.
             ("GND", F, [(C1_X, row(14)), (GR_X, row(14))]),
             ("GND", B, [(GL_X, row(5)), (GL_X, row(14))]),
             ("GND", F, [(J3_X, row(5)), (GL_X, row(5))]),          # J3 GND
-            ("GND", B, [(GR_X, row(5)), (GR_X, row(17))]),
+            ("GND", B, [(GR_X, row(5)), (GR_X, row(16))]),
             ("GND", F, [(J4_X, row(5)), (GR_X, row(5))]),          # J4 GND
-            ("GND", F, [(J5_X, row(17)), (GR_X, row(17))]),        # J5 GND
+            ("GND", F, [(J5_X, row(16)), (GR_X, row(16))]),        # J5 GND
             # DIN on lane 6: J3 r6 and J4 r6 stub down, J2 r7 stubs up.
             ("DIN", F, [(J3_X, row(6)), (J3_X, lane(6))]),
             ("DIN", F, [(J3_X, lane(6)), (J4_X, lane(6))]),
@@ -217,22 +217,22 @@ class Layout:
             ("SCL", F, [(J2_X, row(2)), (SCL_ESC, row(2))]),
             ("SCL", B, [(SCL_ESC, row(2)), (SCL_ESC, row(14))]),
             ("SCL", F, [(SCL_ESC, row(14)), (J5_X, row(14))]),
-            # SDA: J2 r5 out one step, down, across to J5 r15.
+            # SDA: J2 r5 out one step, down, across to J5 r13.
             ("SDA", F, [(J2_X, row(5)), (SDA_ESC, row(5))]),
-            ("SDA", B, [(SDA_ESC, row(5)), (SDA_ESC, row(15))]),
-            ("SDA", F, [(SDA_ESC, row(15)), (J5_X, row(15))]),
+            ("SDA", B, [(SDA_ESC, row(5)), (SDA_ESC, row(13))]),
+            ("SDA", F, [(SDA_ESC, row(13)), (J5_X, row(13))]),
         ]
         self.vias = [
             ("3V3", PL_X, lane(14)), ("3V3", PR_X, lane(14)),
             ("3V3", PL_X, row(4)), ("3V3", PL_X, C1_PLUS_Y),
-            ("3V3", PR_X, row(4)), ("3V3", PR_X, row(16)),
+            ("3V3", PR_X, row(4)), ("3V3", PR_X, row(12)),
             ("GND", GL_X, row(14)), ("GND", GR_X, row(14)),
-            ("GND", GL_X, row(5)), ("GND", GR_X, row(5)), ("GND", GR_X, row(17)),
+            ("GND", GL_X, row(5)), ("GND", GR_X, row(5)), ("GND", GR_X, row(16)),
             ("CS_R", CSR_ESC, lane(8)), ("CS_R", CSR_ESC, row(13)),
             ("CS_L", CSL_ESC, row(11)), ("CS_L", CSL_ESC, lane(8)),
             ("DC", DC_ESC, row(7)), ("DC", DC_ESC, lane(9)),
             ("SCL", SCL_ESC, row(2)), ("SCL", SCL_ESC, row(14)),
-            ("SDA", SDA_ESC, row(5)), ("SDA", SDA_ESC, row(15)),
+            ("SDA", SDA_ESC, row(5)), ("SDA", SDA_ESC, row(13)),
         ]
 
 
@@ -249,7 +249,11 @@ DEVKIT_RIGHT = ["D23", "D22", "TX0", "RX0", "D21", "D19", "D18", "D5", "TX2",
 DEVKIT_PINS = DEVKIT_LEFT + DEVKIT_RIGHT
 
 OLED_PINS = ["VCC", "GND", "DIN", "CLK", "CS", "DC", "RST"]
-RTC_PINS = ["32K", "SQW", "SCL", "SDA", "VCC", "GND"]
+# The five-pin "DS3231 mini" sold for the Raspberry Pi, which plugs onto
+# 2.54 mm pins and labels them + D C NC -.  Rev A followed the six-pin
+# ZS-042 instead (32K SQW SCL SDA VCC GND), which this module does not
+# fit.  Top to bottom, GND last; SCL keeps the row it always had.
+RTC_PINS = ["VCC", "SDA", "SCL", "NC", "GND"]
 
 # (reference, pad number, net)
 CONNECTIONS: list[tuple[str, int, str]] = [
@@ -268,7 +272,7 @@ CONNECTIONS: list[tuple[str, int, str]] = [
     ("J3", 5, "CS_R"), ("J3", 6, "DC"), ("J3", 7, "RST"),
     ("J4", 1, "3V3"), ("J4", 2, "GND"), ("J4", 3, "DIN"), ("J4", 4, "CLK"),
     ("J4", 5, "CS_L"), ("J4", 6, "DC"), ("J4", 7, "RST"),
-    ("J5", 3, "SCL"), ("J5", 4, "SDA"), ("J5", 5, "3V3"), ("J5", 6, "GND"),
+    ("J5", 1, "3V3"), ("J5", 2, "SDA"), ("J5", 3, "SCL"), ("J5", 5, "GND"),
     ("C1", 1, "3V3"), ("C1", 2, "GND"),
 ]
 
@@ -389,7 +393,7 @@ def build_board(kicad_share: str, pitch: str, out: str, name: str) -> None:
           "J3", VALUES["J3"], J3_X, row(4))
     place(load("Connector_PinHeader_2.54mm", "PinHeader_1x07_P2.54mm_Vertical"),
           "J4", VALUES["J4"], L.J4_X, row(4))
-    place(load("Connector_PinHeader_2.54mm", "PinHeader_1x06_P2.54mm_Vertical"),
+    place(load("Connector_PinHeader_2.54mm", "PinHeader_1x05_P2.54mm_Vertical"),
           "J5", VALUES["J5"], L.J5_X, row(12))
     c1 = load("Capacitor_THT", "CP_Radial_D5.0mm_P2.00mm")
     c1 = place(c1, "C1", VALUES["C1"], C1_X, C1_PLUS_Y, 90)
@@ -410,8 +414,8 @@ def build_board(kicad_share: str, pitch: str, out: str, name: str) -> None:
         ("U1", 23): (L.J2_X, row(8)), ("U1", 26): (L.J2_X, row(11)),
         ("U1", 28): (L.J2_X, row(13)), ("U1", 29): (L.J2_X, row(14)),
         ("U1", 30): (L.J2_X, row(15)),
-        ("J5", 3): (L.J5_X, row(14)), ("J5", 4): (L.J5_X, row(15)),
-        ("J5", 5): (L.J5_X, row(16)), ("J5", 6): (L.J5_X, row(17)),
+        ("J5", 1): (L.J5_X, row(12)), ("J5", 2): (L.J5_X, row(13)),
+        ("J5", 3): (L.J5_X, row(14)), ("J5", 5): (L.J5_X, row(16)),
         ("C1", 1): (C1_X, C1_PLUS_Y), ("C1", 2): (C1_X, C1_MINUS_Y),
     }
     for i in range(1, 8):
@@ -527,7 +531,7 @@ def build_board(kicad_share: str, pitch: str, out: str, name: str) -> None:
     # thing that tells two otherwise identical boards apart.
     text(f"ESP32 DevKit V1  (30 pin, rows {pitch} mm)", cx, bottom + 1.6, 0.8)
 
-    text(f"creeper-eyes carrier  rev A  rows {pitch} mm", cx, BOARD_H - 1.6, 1.0, bold=True)
+    text(f"creeper-eyes carrier  rev B  rows {pitch} mm", cx, BOARD_H - 1.6, 1.0, bold=True)
     text("github.com/michael-gebis/creeper-eyes", L.BOARD_W / 2, 1.6, 0.8, lay=pcbnew.B_SilkS)
     text(f"rows {pitch} mm", L.BOARD_W / 2, BOARD_H - 1.6, 1.0, lay=pcbnew.B_SilkS, bold=True)
 
@@ -659,8 +663,8 @@ def build_schematic(pitch: str, out: str, name: str) -> None:
                              "Waveshare 1.5inch OLED / RGB OLED module header",
                              "Connector_PinHeader_2.54mm:PinHeader_1x07_P2.54mm_Vertical")
                + conn_symbol(name, "DS3231_module", RTC_PINS,
-                             "DS3231 RTC module (ZS-042 pin order)",
-                             "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical")
+                             "DS3231 mini RTC module (Raspberry Pi pin order)",
+                             "Connector_PinHeader_2.54mm:PinHeader_1x05_P2.54mm_Vertical")
                + cap_symbol(name))
 
     items = ""
@@ -749,7 +753,7 @@ def build_schematic(pitch: str, out: str, name: str) -> None:
     hdr = "Connector_PinHeader_2.54mm:PinHeader_1x0%d_P2.54mm_Vertical"
     connector("OLED_1.5in_7pin", "J3", VALUES["J3"], 60.96, 63.5, OLED_PINS, hdr % 7)
     connector("OLED_1.5in_7pin", "J4", VALUES["J4"], 60.96, 106.68, OLED_PINS, hdr % 7)
-    connector("DS3231_module", "J5", VALUES["J5"], 60.96, 148.59, RTC_PINS, hdr % 6)
+    connector("DS3231_module", "J5", VALUES["J5"], 60.96, 148.59, RTC_PINS, hdr % 5)
 
     cx, cy = 228.6, 100.33
     instance("CP", "C1", VALUES["C1"], cx, cy, "Capacitor_THT:CP_Radial_D5.0mm_P2.00mm",
