@@ -22,10 +22,11 @@ close. There is no switch: define it and it applies.
 #define OTA_PASSWORD "choose-something"    // in include/secrets.h
 ```
 
-Uploading then needs it, from the environment rather than a committed file:
+Uploading then needs it. [`tools/ota.py`](../tools/ota.py) reads it from
+`secrets.h`, or takes `--password`:
 
 ```sh
-OTA_PASSWORD=choose-something pio run -e gray_ota -t upload
+python tools/ota.py --host frank.local --env gray_rtc_ota
 ```
 
 That sets the initial one. It can be changed later from the control page
@@ -38,6 +39,14 @@ API and `/cmd`. Digest rather than basic because the password is never sent
 — only a hash of it with a server nonce — which matters because this device
 cannot practically serve HTTPS (see below). Browsers handle the challenge
 themselves and ask once.
+
+A nonce lasts `AUTH_NONCE_S`, five minutes, whoever is asking. A request
+carrying an older one is challenged with `stale=true`, which tells the browser
+to retry with the new nonce rather than ask the person again; only a wrong
+password presented with the current nonce reaches a prompt. The lifetime also
+bounds how long a captured request could be replayed. (The web server library
+made a fresh nonce for every challenge and never said `stale`, so one script
+being challenged sent every open control page to a password prompt.)
 
 `-DAUTH_TOKEN=1` adds a bearer token as an alternative, for scripts that
 would rather not do digest:
@@ -54,6 +63,10 @@ two — make it long and random. Either may be used on its own or both together.
 device. That is the defence against **DNS rebinding**, which authentication
 alone does not stop: a page you visit can make your own browser call
 `192.168.x.x`, and a browser holding cached credentials will attach them.
+
+Uploading an [eye file](EYE_FILES.md#security) is the one request whose body
+arrives before its handler runs, so it makes the same check itself before a
+byte reaches flash.
 
 Turning on `AUTH_HTTP` without `AUTH_USER`/`AUTH_PASS`, or `AUTH_TOKEN`
 without `AUTH_TOKEN_VALUE`, **fails the build** rather than producing a device
@@ -101,7 +114,8 @@ hash, so only the hash is kept.
 Hold the **BOOT** button for ten seconds while the board is running. The
 panels count down from five seconds in, so a press that is about to wipe the
 board says so first; let go and nothing happens. At zero it erases every
-stored setting, restores the built-in credentials and reboots.
+stored setting, restores the built-in credentials and reboots. It leaves the
+WiFi network alone, which the radio stores for itself, and the eye slot.
 
 The gesture needs `COMMANDS` (the default), since that is what polls the
 button at all.
@@ -157,9 +171,9 @@ close enough to see the network can compute.
 its own, deliberately: a password the panels cannot show is one nobody can
 get past.
 
-The portal opens when the head has no network it recognises — which includes
-after the BOOT reset above, since that clears the stored network along with
-everything else.
+The portal opens when the head has no network it recognises. The BOOT reset
+above does not clear the stored network, so a head keeps its WiFi through one;
+`wifi forget` or `wifi portal` is the way to the portal on purpose.
 
 ## Why there is no HTTPS
 

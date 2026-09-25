@@ -19,6 +19,8 @@ plugged in but power. Everything past that is optional.
   can aim the gaze or fire a startle effect without opening the head
 - **Tells the time**, with an analogue clock drawn in the iris
 - **Sleeps at night**, so it is not staring at 3am
+- **Dims to suit the room**, fading between levels, and switches right off —
+  [brightness](docs/BRIGHTNESS.md)
 - **Sets itself up from a code on the eye** — point a phone at it and it
   joins the head's network and opens the setup page, with nothing typed
 - **Updates over WiFi**, so a sealed head never needs opening again
@@ -74,8 +76,8 @@ Both are 3.3 V / 5 V tolerant and need no level shifting.
 - The printed parts and hardware from the
   [Printables model](https://www.printables.com/model/620191-frankenstein-head-with-animated-eyes)
 
-A plain USB port powers everything comfortably. Two panels plus an idle ESP32
-draw well under 200 mA.
+A plain USB port powers everything comfortably: two panels and the ESP32,
+WiFi and all, sit well inside the 500 mA a port supplies.
 
 ## Wiring
 
@@ -111,9 +113,10 @@ its own header, and the SPI bus is copper rather than Dupont leads — which
 matters mostly because nothing can work loose inside a sealed head. About $10
 for five boards.
 
-> It is **untested**. The design passes KiCad's electrical, netlist and design
-> rule checks, and nothing more: no board has been made and no eye has blinked
-> on one. The breadboard is the wiring that is known to work.
+> **Rev A is tested and works**: a DevKit on one drives two colour panels and a
+> DS3231, the clock on jumpers because its header suits a different module
+> from the one in use. **Rev B**, which changes that header, is **untested**:
+> it passes KiCad's checks, and no board has been made.
 
 ## Build and flash
 
@@ -147,10 +150,11 @@ pipx install platformio          # or: pip install --user platformio
 | `probe1327` | Raw SSD1327 init, no library | Identifying an unknown panel |
 | `esp32dev_rtc` / `gray_rtc_open` | Eyes plus a battery-backed clock | With a [DS3231 fitted](docs/WIRING_RTC.md) |
 | `gray_rtc` | The same, with authentication on | A head left on a network. Needs credentials in `secrets.h` |
-| `esp32dev_local` / `gray_local` | Eyes only, no networking | A head with no WiFi — 679 KB smaller |
+| `esp32dev_local` / `gray_local` | Eyes only, no networking | A head with no WiFi — about 695 KB smaller |
 | `gray_rtc_ota` / `esp32dev_rtc_ota` | The RTC builds, flashed over WiFi | **Use these** to update an RTC or authenticated head |
 | `esp32dev_ota` / `gray_ota` | The plain builds, flashed over WiFi | Updating a sealed head. Using one on an RTC board flashes the RTC and auth away |
 | `rtc_probe` | Raw I²C scan and DS3231 read | Bringing up an RTC module |
+| `qrtest` / `qrtest_rgb` | QR codes on the panels, grey / colour, no network | Measuring what a phone can read — [Codes on the eyes](docs/QR.md) |
 
 `gray_rtc` is the only environment that requires anything of you before it
 will build: `AUTH_USER`, `AUTH_PASS` and `AUTH_TOKEN_VALUE` in
@@ -187,7 +191,7 @@ This page gets you a working head. Everything else has a page of its own.
 | [Sleep mode](docs/SLEEP.md) | Dark panels overnight |
 | [Configuring](docs/CONFIG.md) | Every build option, and what gets saved |
 | [Locking it down](docs/SECURITY.md) | Passwords, and why there is no HTTPS |
-| [A circuit board](hardware/README.md) | The wiring as a PCB — untested so far |
+| [A circuit board](hardware/README.md) | The wiring as a PCB — rev A tested, rev B not yet made |
 | [Testing](docs/TESTING.md) | The test suite, the soak harness, the tools |
 
 And two pages that are neither instructions nor reference, but a record of
@@ -225,7 +229,8 @@ Firmware lineage, oldest first:
 - **Laurent Moll**, 2018 — [Uncanny Eyes costume](https://www.hackster.io/projects/376a13/), dual-display ESP32 work.
 - **[bitcldr/creeper-eyes](https://github.com/bitcldr/creeper-eyes)** — the PlatformIO project this forks from.
 - **[TeensyEyes](https://github.com/chrismiller/TeensyEyes)** — Chris Miller. MIT. 23 of the 25 eye designs are converted from its artwork by [`tools/gen_eyes.py`](tools/gen_eyes.py).
-- This fork — generic ESP32 support, grayscale panels, console, splash, diagnostics.
+- This fork — generic ESP32 support, grayscale panels, console, splash, diagnostics,
+  networking, the control page and API, eye files, the dimmer and the carrier board.
 
 Three bugs fixed here also affect the upstream colour build: an out-of-range
 eyelid index that put a teardrop artifact at one eye's edge, a shared reset

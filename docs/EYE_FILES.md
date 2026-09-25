@@ -7,9 +7,8 @@ can go in the slot without rebuilding anything.
 
 ## Using it
 
-1. Get an eye file (`dragon.bin`, say), either built with
-   [`tools/make_eye.py`](../tools/make_eye.py) as below or downloaded from a
-   release.
+1. Build an eye file (`dragon.bin`, say) with
+   [`tools/make_eye.py`](../tools/make_eye.py), as below.
 2. On the control page, in the **Eye** card, choose the file under
    **load an eye file** and press **load**.
 3. The panels read `EYE LOADING` for five to eight seconds, then the new design comes
@@ -37,6 +36,9 @@ ok slot empty; eye=0 default
 python tools/make_eye.py dragon        # one design -> dist/eyes/dragon.bin
 python tools/make_eye.py --all         # every header in include/ -> dist/eyes/
 ```
+
+`--all` includes `default.bin`, which the board refuses because a design by
+that name is built in. It is there for a build that leaves `default` out.
 
 It reads the same headers the firmware compiles in (`include/eyes/*.h`,
 `include/defaultEye.h`, `include/newtEye.h`) and writes the tables out as raw
@@ -111,7 +113,8 @@ file that differs in anything is rejected. The firmware never tries to adapt
 one.
 
 **The name** must be 1–15 characters of `a-z` and `0-9`, starting with a letter,
-and must not be the name of a built-in design. Uniqueness is what lets `save`
+and must not be the name of a built-in design, nor `list`, `next`, `toggle` or
+`unload`, which the console's `eye` command would read as its own words. Uniqueness is what lets `save`
 store a design by name. The character set is what lets the name go straight
 into JSON, the console and the page without escaping.
 
@@ -170,6 +173,11 @@ with the usual `401` or `403` by the handler. Nothing is erased. This also
 covers a browser sending the body once without credentials and then again
 with them.
 
+An upload is also cut off after 30 seconds. The server reads a streamed body
+until its declared length arrives, waiting up to a second for each piece, so
+without a limit a sender trickling a byte a second could hold the render loop,
+and the eyes, for as long as it liked. A real upload takes a few seconds.
+
 Nothing in the file is executed. Only the 64-byte header is parsed, and every
 field in it is checked against a fixed value or a fixed range. The payload is
 pixels and lookup tables, read by a renderer that indexes each table only with
@@ -186,8 +194,8 @@ well-formed file can do is look ugly.
 | `DELETE` | `/api/v1/eyes/slot` | empties the slot. Replies as `GET` |
 
 Errors are JSON `{"error": "..."}` like everywhere else. A file that is not a
-valid eye file gets `400`. A name that clashes with a built-in design, or a
-board with no slot, gets `409`. A flash failure gets `500`.
+valid eye file gets `400`. A name that clashes with a built-in design or a
+console word, or a board with no slot, gets `409`. A flash failure gets `500`.
 
 ```sh
 curl -T dist/eyes/dragon.bin -H 'Content-Type: application/octet-stream' \

@@ -143,7 +143,7 @@ release notes for nothing. Three things bite.
   manual check, bad for polling, and worse for several heads behind one NAT.
 - **TLS costs.** mbedTLS wants tens of KB of heap during the handshake,
   alongside the panel canvases and the web server, plus a couple of hundred KB
-  of flash against that 500 KB of headroom.
+  of flash against that 600 KB of headroom.
 
 **Signing the binary makes most of that go away.** With a public key baked
 into the firmware and a signature checked before the slot is marked bootable,
@@ -200,8 +200,8 @@ date. Each of these has a place already waiting for it; none is written
 yet.
 
 - **`docs/images/webui.png`, retaken.** The control page as it was on
-  2026-09-10, before the **flip left** / **flip right** buttons joined the
-  Eye card. It is the first thing the README shows and the first thing in
+  2026-09-10, before the **flip** buttons, the eye-file controls, the
+  brightness slider and the warnings box joined it. It is the first thing the README shows and the first thing in
   [Driving it](docs/CONTROL.md), so it is the picture most people will
   compare against what they see. Same file name, same two places; nothing
   else references it.

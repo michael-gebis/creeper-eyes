@@ -18,7 +18,9 @@ It goes dark using the panel's own command rather than by drawing black. An
 OLED showing black pixels is already dark, so a frame of black would spend a
 full SPI push to achieve what one byte does — and would leave the panel
 driving its rows besides. Waking costs one command and no redraw, because the
-panel's memory survives being switched off.
+panel's memory survives being switched off. Both are fades rather than jumps,
+done by the [dimmer](BRIGHTNESS.md), and `sleep level` is a share of its
+brightness setting.
 
 **It will not sleep unless the board knows what time it is.** With no network,
 no RTC and no hand-set time, it stays awake and says `waiting for the time`
@@ -40,8 +42,9 @@ startup cards still run — each of those lights the panels for as long as it
 needs them, and sleep takes them back afterwards.
 
 One consequence worth knowing: a sleeping board reports `fps = 0`, because
-nothing is being rendered. `system.fps` sits next to `sleep.asleep` in
-`GET /api/v1/state` so the zero can be told apart from a fault.
+nothing is being rendered — and so does one with the brightness at 0. In
+`GET /api/v1/state`, `sleep.asleep` and `dim.shown` sit beside `system.fps`
+so the zero can be told apart from a fault.
 
 Design notes, including what was measured and what was only assumed,
 follow below.
@@ -69,14 +72,6 @@ does not.
 Both are one command. `0xAF` brings the panel back, and the panel's contents
 survive — GDDRAM is untouched by `0xAE`, so waking does not need a redraw,
 only the command.
-
-Sleep no longer sends either one itself. It hands the
-[dimmer](BRIGHTNESS.md) a fraction of the brightness setting: 100 awake, the
-level asleep, 0 for off. The dimmer fades there and switches the panels off at
-0. So a level of 50 with the brightness at 60% is 30%, and going to sleep or
-waking is a fade rather than a jump. The table above is still what reaches the
-panels, and the SSD1351's dim now uses its colour channels as well as the master
-current, for finer steps.
 
 **Two facts worth having before choosing between them.** Neither is in this
 document because neither has been measured:
@@ -284,7 +279,7 @@ All three questions went the way the recommendations pointed.
 
 1. **Both, with off as the default.** `SLEEP_LEVEL` is 0, which switches the
    panels off and stops rendering. Any value from 1 to 100 dims them instead
-   and *keeps drawing*, so the eyes still move faintly — a nightlight rather
+   (now to that share of the brightness setting — see below) and *keeps drawing*, so the eyes still move faintly — a nightlight rather
    than a sleep. Freezing the last frame at low contrast was the third option
    and would have looked like a fault rather than a setting.
 2. **Awake for a minute after anything deliberate.** `SLEEP_WAKE_S` is 60, and
@@ -296,6 +291,20 @@ All three questions went the way the recommendations pointed.
    counting reads would have meant a forgotten browser tab kept the head awake
    all night.
 3. **`start == stop` means never.**
+
+The one API change the design called for was made as proposed: `SSD1327` has
+`setPower()` and `setContrast()`, and its raw command interface stays private.
+
+### Then the dimmer
+
+Sleep no longer switches the panels itself. Since the
+[dimmer](BRIGHTNESS.md) arrived, `sleepPoll()` returns a fraction of the
+brightness setting — 100 awake, the level asleep, 0 for off — and the dimmer
+fades there, switches the panels off at 0, and tells the render loop when there
+is nothing to draw. So a level of 50 with the brightness at 60% is 30%, and
+going to sleep or waking is a fade rather than a jump. The commands in the
+table above are still what reach the panels; the SSD1351's dim now uses its
+colour channels as well as the master current, for finer steps.
 
 ### One thing the design did not have
 
@@ -320,14 +329,15 @@ first, or an address card at 3am arrives invisibly.
 
 It is handled in one place. `pushCanvas()` — which every card in the firmware
 goes through, from the splash to the address cards to the OTA progress
-display — calls `displaySetPower(true)` before it draws. `displaySetPower()`
-tracks the current state and returns immediately when it is already right, so
-callers ask freely and nothing pays for asking. Sleep takes the panels back on
-the next frame after the card's deadline passes.
+display — calls `dimmerCard()` before it draws, which switches the panels on
+and lights them at a readable level whatever sleep or the brightness setting
+says. Both steps return at once when there is nothing to change, so callers
+ask freely and nothing pays for asking. After the card's deadline the dimmer
+fades back to wherever the eyes should be.
 
-That is why sleep sits *below* the card checks in `frame()` rather than above
-them: the cards return before `sleepPoll()` is ever reached, so the two never
-argue over the same frame.
+That is why sleep and the dimmer sit *below* the card checks in `frame()`
+rather than above them: the cards return before either is reached, so they
+never argue over the same frame.
 
 ### The card that said "asleep — sleeps in 2h 4m"
 

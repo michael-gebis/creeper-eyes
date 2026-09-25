@@ -25,7 +25,9 @@ computed from the others. And the **pin numbers** in
 [`src/main.cpp`](../src/main.cpp) (`DISPLAY_DC`, `DISPLAY_RESET`,
 `SELECT_L_PIN`, `SELECT_R_PIN`, `MOSI_PIN`, `MISO_PIN`, `SCLK_PIN`,
 `UART_RX_PIN`) are plain `#define`s: `-DDISPLAY_DC=…` is a macro
-redefinition, not an override, so those are edited in place.
+redefinition, not an override, so those are edited in place. They are wiring,
+not preference — change them only if you wire differently, and update
+[docs/WIRING.md](WIRING.md) to match.
 
 | Option | Default | Effect |
 | :----- | :------ | :----- |
@@ -36,7 +38,7 @@ redefinition, not an override, so those are edited in place.
 | `DEBUG_LED_PIN` | `2` | On-board LED used for the heartbeat. |
 | `STARTUP_SPLASH` | `1` | Panel name cards at boot. `0` boots straight into the eyes. |
 | `SPLASH_SECONDS` | `5` | How long the splash counts down. |
-| `BOOT_BUTTON_PIN` | `0` | Button that toggles eye artwork. |
+| `BOOT_BUTTON_PIN` | `0` | Button that cycles eye designs; held, the factory reset. |
 | `SSD1327_SPI_HZ` | `8000000` | Grayscale bus speed. Lower it if long jumpers cause flicker. |
 | `STARTLE_WINDUP_MS` | `1400` | Slow constrict before the startle jolt. |
 | `CLOCK` | `1` | Analogue clock face. `0` compiles it out. |
@@ -44,7 +46,7 @@ redefinition, not an override, so those are edited in place.
 | `CLOCK_*_COLOR` | `0x000000` | Starting hand colours, changeable at runtime with `clock color`. |
 | `CLOCK_NOON` | `128` | Where twelve sits, in the polar table's 0–511 angle. |
 | `PUPIL_OFF_SCALE` | `64` | Iris scale used when the pupil is off. At or below 64 the pupil vanishes. |
-| `NETWORK` | `1` | WiFi, NTP, web server and OTA. `0` compiles all of it out. With `CLOCK=0` too that is 679 KB, taking a `gray` build from 69% of the partition to 33%. |
+| `NETWORK` | `1` | WiFi, NTP, web server and OTA. `0` compiles all of it out: about 695 KB, taking `esp32dev` from 65% of the 1.81 MB app partition to 27%. |
 | `RTC` | `0` | A DS3231 battery-backed clock. `1` fits one; costs ~26 KB. See [docs/WIRING_RTC.md](WIRING_RTC.md). |
 | `RTC_SDA_PIN` / `RTC_SCL_PIN` | `21` / `22` | I²C pins for it. Both otherwise unused. |
 | `RTC_ADDR` | `0x68` | The DS3231's fixed address. |
@@ -54,12 +56,16 @@ redefinition, not an override, so those are edited in place.
 | `AUTH_HTTP` | `0` | Digest authentication on the page, the API and `/cmd`. |
 | `AUTH_TOKEN` | `0` | A bearer token as an alternative credential, for scripts. |
 | `AUTH_HOST_CHECK` | `0` | Refuse requests whose `Host` is not this device — the DNS-rebinding defence. |
+| `AUTH_NONCE_S` | `300` | How long one digest nonce lasts. Past it, a browser is told its nonce is stale and retries without asking for the password — see [Locking it down](SECURITY.md#the-web-interface). |
 | `SLEEP` | `1` | Dark panels overnight. `0` compiles it out. |
 | `SLEEP_ENABLED` | `0` | Whether the window is in force out of the box. Off: a prop going dark unasked reads as a fault. |
 | `SLEEP_START_MIN` / `SLEEP_STOP_MIN` | `22*60` / `7*60` | The default window, in local minutes past midnight. |
-| `SLEEP_LEVEL` | `0` | 0 switches the panels off and stops rendering; 1–100 dims them and keeps the eyes moving. |
+| `SLEEP_LEVEL` | `0` | 0 switches the panels off and stops rendering; 1–100 is that share of the brightness setting, and the eyes keep moving. |
 | `SLEEP_WAKE_S` | `60` | How long a command holds the eyes awake inside the window. `0` makes the window absolute. |
-| `FACTORY_RESET_MS` | `10000` | How long BOOT must be held, while running, to erase every setting. `0` removes the gesture, and so does `COMMANDS=0`, which is what polls the button. |
+| `DIM_GAMMA_X10` | `22` | The default brightness curve, in tenths: 22 is gamma 2.2, 10 is linear. Changeable at runtime — see [Brightness](BRIGHTNESS.md). |
+| `DIM_FADE_MS` | `500` | How long a brightness fade across the whole range takes. |
+| `DIM_SWEEP_MS` | `8000` | Each half of `dim sweep`. |
+| `FACTORY_RESET_MS` | `10000` | How long BOOT must be held, while running, to erase every setting and stored credential — not the WiFi network, nor the eye slot. `0` removes the gesture, and so does `COMMANDS=0`, which is what polls the button. |
 | `IPV6` | `0` | All of IPv6, compiled out. Cannot usefully be turned on yet — see [IPv6](NETWORK.md#ipv6). |
 | `FIRMWARE_VERSION` | `1.0` | Bumped by hand, for features worth announcing. |
 | `PROJECT_URL` | this repository | Shown by `version` and on the control page. |
@@ -85,10 +91,6 @@ Inherited from upstream, unchanged:
 | `TRACKING` | on | Eyelids follow the pupil. |
 | `AUTOBLINK` | on | Eyes blink on their own. |
 | `IRIS_MIN` / `IRIS_MAX` | `150` / `400` | Pupil range. Counter-intuitively, `IRIS_MIN` is the **widest** pupil — the value divides into the iris map. |
-
-Pin assignments (`DISPLAY_DC`, `DISPLAY_RESET`, `SELECT_L_PIN`, `SELECT_R_PIN`,
-`MOSI_PIN`, `SCLK_PIN`) are wiring, not preference — change them only if you
-wire differently, and update [docs/WIRING.md](WIRING.md) to match.
 
 One switch is derived rather than set: `CONTROLLABLE` is `COMMANDS || NETWORK`,
 and gates the machinery both interfaces share — the operations layer in
@@ -119,7 +121,7 @@ ok saved eye=dragon swap=on
 | Clock on/off, rate, second hand, hand colours | |
 | Timezone | |
 | Time server on or off (`ntp on` / `ntp off`) | |
-| Sleep: enabled, window, brightness | |
+| Sleep: enabled, window, level | |
 
 Wi-Fi credentials are the exception to all of this: they are stored by the
 radio in its own part of NVS, not by `save`, and `forget` does not clear

@@ -4,12 +4,13 @@ The breadboard and its fourteen jumper wires, as a printed circuit board: a
 carrier that the ESP32 DevKit plugs into, with a header for each eye and one
 for the optional clock, and the SPI bus in copper instead of Dupont leads.
 
-> **This is preliminary work. As of 12 September 2026 it is completely
-> untested.** Board delivery and testing expected in a month.
+> **Rev A is tested and works.** A DevKit plugged into one drives two colour
+> panels, with a DS3231 on jumpers — its header suits the ZS-042, not the
+> module in use, which is what rev B changes — and without C1, which it has
+> not needed so far.
 >
-> Everything below has been checked by KiCad — electrical rules, schematic
-> against board, design rules — and by nothing else. No board has been made,
-> no DevKit has been plugged into one, and no eye has blinked on one.
+> **Rev B is untested.** It passes KiCad's checks — electrical rules,
+> schematic against board, design rules — and no board has been made.
 
 ![The board, top side](rows-25.10mm/images/board-top.png)
 
@@ -62,12 +63,13 @@ module goes on by four wires to the labelled pins.
 
 ## Revisions
 
-**Rev B**, current: J5, the RTC header, is five pins in the order of the
+**Rev B**, current, untested: J5, the RTC header, is five pins in the order of the
 DS3231 mini module (`VCC SDA SCL NC GND`, rows 12–16) instead of six in the
 ZS-042's (`32K SQW SCL SDA VCC GND`, rows 12–17). SCL keeps its route; SDA,
 VCC and GND each come in on a different row. Nothing else moved.
 
-**Rev A**, the first order: the mini module does not plug onto J5. Wire it
+**Rev A**, the first order, tested and working: the mini module does not plug
+onto J5. Wire it
 by name instead — four jumpers, module `+`→`VCC`, `D`→`SDA`, `C`→`SCL`,
 `-`→`GND` — and leave J5's `32K` and `SQW` empty. Power off first: the
 firmware only looks for the RTC at boot.
@@ -191,7 +193,10 @@ Kept off deliberately, and cheap to add if there is ever a reason:
   although nothing is ever read back — the panels are write-only — the
   peripheral is attached to the pin all the same. Passing `-1` there instead
   would genuinely free it, and is the change to make before breaking it out.
-- a photocell, which upstream Uncanny Eyes uses to drive dilation
+- a photocell, which upstream Uncanny Eyes uses to drive dilation. A light
+  sensor for the [dimmer](../docs/BRIGHTNESS.md) is on the
+  [TODO list](../TODO.md#a-light-sensor-for-automatic-brightness), and the
+  unused `D34`, `D35`, `VP` and `VN` are where it would go
 - a ground pour — at 8 MHz on a 7 cm board, with the breadboard already
   working, it would be decoration
 

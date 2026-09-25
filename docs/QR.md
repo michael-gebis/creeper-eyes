@@ -112,9 +112,10 @@ watching the console has a cable in the board, which is nearer than that.
 
 `http://192.168.123.166/`, not `http://frank.local/`.
 
-The name needs mDNS, which Windows does not have without Bonjour and which
-Android only resolves reliably from 12 onward — the same trap the README
-already documents for over-the-air updates. A QR that opens `frank.local`
+The name needs mDNS, which Windows resolves unreliably without Bonjour and
+Android only reliably from 12 onward — the same trap
+[Networking](NETWORK.md#over-the-air-updates) documents for over-the-air
+updates. A QR that opens `frank.local`
 would simply fail for a lot of people.
 
 A dotted quad works anywhere on the subnet, and because the code is drawn live
@@ -126,7 +127,7 @@ address gets, so that is the worst case rather than a flattering one.
 
 Yes, verified end to end on hardware:
 
-1. The portal opens and the right eye shows the join code.
+1. The portal opens and Frank's left eye — your right — shows the join code.
 2. A phone camera reads it off the eye and joins `frank-setup` — nobody
    types the network name or the password.
 3. The captive portal opens the setup page by itself.
@@ -191,5 +192,6 @@ pio run -e qrtest_rgb -t upload -t monitor    # SSD1351 colour
 **USB only.** There is no network stack in this build, so flashing it over the
 air leaves the board unreachable until somebody plugs a cable in.
 
-The right eye shows the code; the left eye says which one, so a photograph of
-the pair documents itself.
+The panel on your right — Frank's left, where the real codes go — shows the
+code, and the one on your left says which code it is, so a photograph of the
+pair documents itself.

@@ -99,11 +99,11 @@ are already correct.
 ### Power budget
 
 Two 128×128 OLEDs draw roughly 20–40 mA each at typical content, more on bright
-frames. With the ESP32 idle at 40–80 mA that fits a 500 mA USB port
-comfortably.
-
-It stops being comfortable if you add Wi-Fi later — transmit bursts spike hard.
-Plan a proper supply then, not now.
+frames and at the top of the [brightness](BRIGHTNESS.md) range. The ESP32 draws
+more than either: its WiFi is on and kept awake, for responsiveness, and
+transmit bursts spike hard. None of these figures has been measured on this
+project. It fits a 500 mA USB port, but that port and its cable should be
+decent ones; a brownout, below, is what a weak one looks like.
 
 ### Use the breadboard rails
 
@@ -164,7 +164,8 @@ wired correctly. Trust your eyes, not the number.
 
 It counts frames actually drawn, so it reads **zero** while something else
 owns the panels — the boot splash, or the twelve seconds of address cards
-after `net`. That is correct rather than alarming: during those, no eye is
+after `net` — and while the brightness is at 0 or the head is asleep with its
+panels off. That is correct rather than alarming: during those, no eye is
 being rendered.
 
 ### Watch the console
@@ -186,7 +187,7 @@ points at power, not at data wiring.
 | Noise or garbage, not static | `DC` on `D33`, or clock integrity. Commands are being read as pixels, or the reverse. |
 | Flicker, tearing, speckle | Breadboard signal integrity. Shorten the `CLK` and `DIN` jumpers, keep them away from the power runs, and lower `SSD1327_SPI_HZ` if you are on grayscale. |
 | Both panels show the same content | A `CS` line shorted or on the wrong row — both panels selected at once. |
-| Board resets when a panel connects | Brownout. Move to a powered hub or feed 5 V to `VIN`. |
+| Board resets when a panel connects | Brownout. Move to a powered hub or feed 5 V to `VIN`, and on the [carrier board](../hardware/README.md) fit C1. |
 | Board will not boot at all | Check nothing has crept onto `D12`. Held high at reset it stops the board starting. None of the eye signals use it. |
 
 Isolating a fault is easiest one panel at a time: unplug one entirely and
@@ -219,7 +220,7 @@ Every pin this project uses is broken out on the 30-pin DevKit V1:
 | 27 | `D27` | RST | |
 | 33 | `D33` | DC | |
 | 2 | *(no header pin)* | Heartbeat LED | On-board blue LED |
-| 0 | *(no header pin)* | Eye toggle | BOOT button |
+| 0 | *(no header pin)* | Cycles eye designs; held 10 s, factory reset | BOOT button |
 
 `GPIO12` is deliberately unused: held high at reset it selects a 1.8 V flash
 voltage and the board will not start. Keep it clear.
@@ -231,3 +232,5 @@ default:
 
 - **[A battery-backed clock](WIRING_RTC.md)** — a DS3231 on four wires, so the
   head knows what time it is after a power cut or with no network at all.
+- **[A circuit board](../hardware/README.md)** in place of the breadboard and
+  its fourteen jumpers.

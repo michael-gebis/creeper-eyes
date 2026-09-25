@@ -25,7 +25,11 @@ module" or by the board name **ZS-042**, usually in multipacks of three or
 four for a few pounds. The one this was written against is
 [a four-pack of the 3.3V/5V board](https://www.amazon.com/dp/B08X4H3NBR).
 
-They carry an AT24C32 EEPROM alongside the clock chip. This project does not
+The smaller five-pin **"DS3231 mini"** sold for the Raspberry Pi works as well.
+Its pins are labelled `+ D C NC -`: VCC, SDA, SCL, nothing, GND. Rev B of the
+[carrier board](../hardware/README.md) takes it directly.
+
+The ZS-042 boards carry an AT24C32 EEPROM alongside the clock chip. This project does not
 use it; it sits harmlessly at a different address.
 
 Two things the listings do not tell you:
@@ -105,12 +109,14 @@ answer, and it does no harm to the chip.
 The RTC is compiled out by default. Turn it on with one flag:
 
 ```sh
-pio run -e gray_rtc -t upload          # grayscale panels + RTC
+pio run -e gray_rtc_open -t upload     # grayscale panels + RTC
 pio run -e esp32dev_rtc -t upload      # colour panels + RTC
 ```
 
 Those two environments are just `gray` and `esp32dev` with `-DRTC=1`; you can
-add the same flag to any environment of your own. It costs about **26 KB** of
+add the same flag to any environment of your own. `gray_rtc` is the greyscale
+one with [passwords](SECURITY.md) on as well, and will not build until they
+are set. It costs about **26 KB** of
 flash, which is the I²C library plus the driver.
 
 Different pins, if you need them:
@@ -122,6 +128,10 @@ build_flags = -DRTC=1 -DRTC_SDA_PIN=16 -DRTC_SCL_PIN=17
 A build with `RTC=1` and no module attached is **not an error**. The probe at
 boot finds nothing, says so on the console, and the clock free-runs exactly as
 it did before. You can wire the module up later without reflashing.
+
+A module whose registers hold an impossible date — a month of 0, a digit
+above 9 — is treated like one whose battery ran out: ignored, reported under
+`warnings`, and overwritten the next time the clock is set.
 
 ## First power-on
 

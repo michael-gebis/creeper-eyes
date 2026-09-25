@@ -202,6 +202,11 @@ It builds, uploads, and then asks the board whether the update took. Progress
 shows on the panels too — the eyes stop during the transfer, which is expected
 and not a hang.
 
+An update over the air replaces the firmware and nothing else: in particular
+not the partition table, which only a USB flash writes. A board flashed over
+USB before the [eye slot](EYE_FILES.md#the-one-time-usb-flash) existed runs a
+newer firmware without one until it is flashed over USB once.
+
 Pick the `--env` matching the build the board is *running*: `gray_rtc_ota` for
 a board built as `gray_rtc`. `gray_ota` extends `gray`, so using it on an RTC
 build would quietly flash away the RTC support and the authentication — an
@@ -232,13 +237,14 @@ running the new firmware are different claims. It polls `/api/v1/info` until
 the commit matches the one just built and uptime has reset, and retries only
 what genuinely failed.
 
-One thing still bites on Windows: **`frank.local` will not resolve** unless
-Bonjour is installed, since Windows has no mDNS resolver of its own. The
-device advertises correctly — pass the address instead.
+One thing can still bite on Windows: **`frank.local` may not resolve**.
+Recent versions resolve `.local` names themselves, unreliably; with Bonjour
+installed they do so dependably. The device advertises correctly either way —
+if the name fails, pass the address instead.
 
 macOS and Linux resolve it without help.
 
-A transfer is about 1350 round trips, so it is exposed to a weak link in a way
+A transfer is about 1,200 round trips, so it is exposed to a weak link in a way
 a single request is not, and this link drops about 6% of its packets — see
 [docs/HTTP_LATENCY.md](HTTP_LATENCY.md). `tools/ota.py` retries what
 genuinely failed. If it keeps failing, check `GET /api/v1/net` for the signal

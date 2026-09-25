@@ -62,9 +62,9 @@ third of a typical request, and every outlier was a retransmission timer. If
 the board feels slow, run this before changing any code — see
 [docs/HTTP_LATENCY.md](HTTP_LATENCY.md).
 
-Around 135 checks across every endpoint: round trips, range limits, the 400 /
-404 / 405 boundaries, malformed bodies, CORS preflight, credentials, and a
-burst of gaze updates of the kind dragging the aim pad produces — which
+Around 200 checks across every endpoint: round trips, range limits, the 400 /
+404 / 405 boundaries, malformed bodies, CORS preflight, credentials, brightness
+and its fades, and a burst of gaze updates of the kind dragging the aim pad produces — which
 checks both that the last position is the one that sticks and that the eyes
 keep rendering while it happens.
 
@@ -93,6 +93,8 @@ slow request is a stalled render loop.
 [`tools/ota.py`](../tools/ota.py) uploads firmware over WiFi and verifies it
 against the running device,
 [`tools/gen_eyes.py`](../tools/gen_eyes.py) converts the artwork,
+[`tools/make_eye.py`](../tools/make_eye.py) turns a design into an
+[eye file](EYE_FILES.md),
 [`tools/gen_page.py`](../tools/gen_page.py) compresses the control page into the
 firmware, [`tools/git_rev.py`](../tools/git_rev.py) stamps the build with its
 commit, and [`tools/nvs_backup.py`](../tools/nvs_backup.py) saves everything the
@@ -107,7 +109,7 @@ at the point it is introduced. A count of bare assignments in these files is
 not a count of missing types, for three reasons. Reassignments carry no
 annotation, which is what [PEP 526](https://peps.python.org/pep-0526/) asks
 for — the name is declared once, not at every binding. Tuple unpacking
-(`code, raw = api.req(...)`) and the targets of `with` and `for` cannot carry
+(`code, raw = api.raw(...)`) and the targets of `with` and `for` cannot carry
 one syntactically; every such binding here takes its type from an annotated
 call or a literal, and where neither applies — the fields `struct.unpack`
 returns, say — the names are declared on their own lines just above. And `Any` appears where it is honest to — decoded JSON and

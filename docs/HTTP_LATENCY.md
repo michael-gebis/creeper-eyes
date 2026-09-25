@@ -1,6 +1,7 @@
 # Why a 35-byte GET takes 50 ms
 
-Notes for a change not yet made. The short version: every request costs about
+Notes for a change that was then built, measured over hours, and not kept —
+the verdict is further down. The short version: every request costs about
 a render frame, because that is how often the web server gets looked at, and
 no amount of tuning inside that model removes it.
 
@@ -76,7 +77,7 @@ change "obviously" helps.
 
 The pattern: the wins came from sending less, not from working faster.
 
-## The change not yet made: move the server off the render loop
+## The change considered: move the server off the render loop
 
 The ESP32 has two cores. The Arduino `loop()` — and therefore the renderer and
 the web server — runs on core 1. Core 0 runs the WiFi and lwIP stacks and is

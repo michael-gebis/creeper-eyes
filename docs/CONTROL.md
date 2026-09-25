@@ -11,8 +11,11 @@ If you are not sure which you want: open `http://frank.local/` in a browser.
 ![The control page](images/webui.png)
 
 **http://frank.local/** — a control page for everything the console can do:
-eye design (and [eye files](EYE_FILES.md)), gaze, dilation, pupil, panel swap and flip, clock and hand colours, the
-time and its sources, sleep, passwords, Wi-Fi, and the address details. It polls the device once a second,
+eye design (and [eye files](EYE_FILES.md)), gaze, dilation, pupil, panel swap and flip,
+[brightness](BRIGHTNESS.md), clock and hand colours, the time and its sources, sleep,
+passwords, Wi-Fi, and the address details — and, above the cards, anything wrong
+the board [found in its stored settings](CONFIG.md#if-stored-settings-are-damaged).
+It polls the device once a second,
 so two browsers looking at it stay in step with each other and with anything
 you type over serial.
 
@@ -22,8 +25,8 @@ anyone asks of a control they have just moved.
 
 The page is static: [`data/index.html`](../data/index.html), gzipped into the
 firmware at build time by [`tools/gen_page.py`](../tools/gen_page.py) and served
-straight out of flash. 36 KB becomes 12, which took the page load from 554 ms
-to under 100 — the board sends roughly one TCP segment per rendered frame, so
+straight out of flash. About 41 KB becomes 14; compressing it took the page
+load from 554 ms to under 100 when that was measured — the board sends roughly one TCP segment per rendered frame, so
 the only thing that really helps is sending fewer of them. Its tab icon is an inline SVG `data:` URI from
 [`src/favicon.h`](../src/favicon.h) rather than a `/favicon.ico` route — no
 second handler, and no second request against a server that manages one
@@ -94,11 +97,13 @@ Open `pio device monitor` and type `help`. Commands are line-based at 115200.
 | `sleep` | What the sleep window is set to, and what it is doing |
 | `sleep on\|off` | Enable or disable it |
 | `sleep HH:MM HH:MM` | The window: when to sleep, then when to wake |
-| `sleep level <0-100>` | `0` switches the panels off; above that, dims them |
+| `sleep level <0-100>` | `0` switches the panels off; above that, a share of the brightness setting |
 | `help` | The list above. `?` does the same |
 
-The **BOOT button** toggles the eye artwork, which is handy on the bench but
-unreachable once the head is assembled — hence the console.
+The **BOOT button** cycles through the eye designs, which is handy on the
+bench but unreachable once the head is assembled — hence the console. Held
+for ten seconds it erases the settings instead; see
+[Locking it down](SECURITY.md#forgetting-the-password).
 
 Overrides are sticky: `look` and `dilate` hold their commanded value until you
 return them with `auto`. The autonomous animation keeps running underneath, so
@@ -106,8 +111,9 @@ handing control back is seamless.
 
 ## REST API
 
-Everything the page does, `curl` can do. **`/api/v1`**, JSON in and JSON out,
-CORS open so a page served from anywhere can drive the device.
+Everything the page does, `curl` can do. **`/api/v1`**, JSON in and JSON out.
+While no credential is required, CORS is open, so a page served from anywhere
+can drive the device; with one, cross-origin pages are not invited.
 
 | Method | Path | What it does |
 | :----- | :--- | :----------- |
@@ -153,10 +159,13 @@ afterwards to find out what happened. Failures carry a reason:
 {"error": "x and y must each be 0-1023"}
 ```
 
-`400` for a bad body or an out-of-range value, `404` for an eye design this
-build does not contain or an RTC it does not have, `405` for the wrong verb on
-a real path, `409` where NTP and a hand-set time would conflict, and `500` if
-storage fails. With authentication compiled in, `401` for a missing or wrong
+`400` for a bad body, a field of the wrong type, or an out-of-range value —
+checked before anything is applied, so a refused request changes nothing.
+`404` for an eye design this board does not have, or an RTC or clock face the
+build does not contain. `405` for the wrong verb on a real path. `409` when the
+board's state is in the way: a time client that is off or has no link yet, an
+RTC with no real time to store, an eye file whose name is taken, or a board with
+no eye slot. `500` if storage fails. With authentication compiled in, `401` for a missing or wrong
 credential and `403` for a `Host` that is not this device — or for changing a
 credential without presenting the current one.
 

@@ -33,8 +33,9 @@
 // ECC L is deliberately absent: at 41 bytes it produces the same version 3 as
 // ECC M, so it would be the same picture with less redundancy.
 //
-// Both panels show the same code at once, so whichever eye is easier to point
-// a camera into is the one you use.
+// The code goes on the panel on your right -- Frank's left, where the real
+// ones go -- and the one on your left captions it, so a photograph of the
+// pair says what it shows.
 
 #include <Arduino.h>
 #include <SPI.h>

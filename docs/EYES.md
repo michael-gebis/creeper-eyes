@@ -62,15 +62,15 @@ and greyscale.
 
 25 designs ship with the project: two from Adafruit's original Uncanny Eyes,
 and 23 converted from [TeensyEyes](https://github.com/chrismiller/TeensyEyes).
-Each costs roughly **158 KB of flash**, so about four fit alongside everything
-else — they are chosen at build time rather than all
-compiled in.
+Only `default` is built in. Any other is one [eye file](EYE_FILES.md) away,
+loaded from the control page without a rebuild. Built in, each costs roughly
+**158 KB of flash**, so about four fit alongside everything else.
 
-Edit `include/eyes_config.h`:
+To build more in, edit `include/eyes_config.h`:
 
 ```c
 #define EYE_DEFAULT 1   // Standard human-ish hazel eye
-#define EYE_NEWT    1   // Eye of newt
+#define EYE_NEWT    0   // Eye of newt
 #define EYE_DRAGON  0   // Fiery dragon, slit pupil
 ...
 ```
@@ -93,6 +93,7 @@ number:
   0  default     <- current
   1  dragon
   2  skull
+  eye slot empty; load a file from the control page
 > eye dragon
 ok eye=1 dragon
 ```
@@ -217,7 +218,7 @@ which chip select without getting at the wires.
 
 ## Credits
 
-The two built-in designs, `default` and `newt`, come from Adafruit's
+The two Adafruit designs, `default` (the one built in) and `newt`, come from its
 [Uncanny Eyes](https://learn.adafruit.com/animated-electronic-eyes) by
 Phil Burgess / Paint Your Dragon.
 

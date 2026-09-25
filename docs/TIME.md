@@ -28,7 +28,9 @@ they are IANA city names — `los_angeles`, `kolkata`, `auckland`, `kathmandu`
 project started with (`pacific`, `eastern`, `uk`, …) still work.
 
 Anywhere not on the list works too: `tz` takes a raw POSIX string, which is
-what the C library wants in the end. The full IANA database is megabytes and
+what the C library wants in the end. One that could not be a timezone — no
+zone name, no offset, characters the format does not use — is refused rather
+than stored. The full IANA database is megabytes and
 needs a filesystem; a POSIX string is thirty bytes, and the trade is that a
 country changing its DST rules needs a firmware update rather than a data
 one. For a Halloween prop that is the right side of the deal.
