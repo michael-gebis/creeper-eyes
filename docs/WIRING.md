@@ -152,11 +152,10 @@ round, and `save` keeps it. See [Eyes](EYES.md#if-a-panel-is-upside-down).
 
 ### The frame rate will not change
 
-The serial heartbeat reports roughly `fps=40` on colour panels, and more on
+The serial heartbeat reports roughly `fps=50` on colour panels, and more on
 grayscale — counted per eye drawn, and the two eyes take turns, so each eye
-is updated half that often. Beside it, `draw`, `send` and `other` split each
-frame's time into computing the pixels, sending them, and everything else;
-on colour the send is most of it. The figures depend on what else the build is
+is updated half that often. Beside it, `draw`, `wait`, `send` and `other` split
+each frame's time up; [Frame rate](FRAME_RATE.md) explains them. The figures depend on what else the build is
 doing, since the web server is polled from the same loop, which is why those in
 [HTTP_LATENCY.md](HTTP_LATENCY.md) are lower. And it reports the same with
 **nothing connected at all**. The SPI peripheral clocks the same bytes out

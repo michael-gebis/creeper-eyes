@@ -36,6 +36,13 @@ void showMessage(const char *l1, const char *l2, const char *l3,
 void showMessageOn(int8_t which, const char *l1, const char *l2,
                    const char *l3, const char *l4);
 
+// Waits until no eye frame is queued or on the wire -- see OVERLAP_SEND.
+// For the few things that must not interleave with one: a card, which a
+// frame queued before it would otherwise paint over, and a swap or flip,
+// which change what a frame in flight is using.  Returns at once when
+// nothing is being sent, and before the sender exists.
+void displayQuiesce(void);
+
 // Panels lit or dark, via the controller's own command rather than by
 // drawing black.  GDDRAM survives, so waking costs one command and no
 // redraw.  Both are no-ops when already in the requested state, so callers

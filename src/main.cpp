@@ -627,6 +627,7 @@ static_assert(PANEL_W == SCREEN_WIDTH && PANEL_H == SCREEN_HEIGHT,
 // Called between frames only: a swap landing mid-transaction would leave a
 // chip select asserted on the wrong panel.
 static void applySwap(void) {
+  displayQuiesce(); // a frame in flight is using the chip select this moves
   uint8_t a = eye[0].cs, b = eye[1].cs;
   eye[0].cs = b;
   eye[1].cs = a;
@@ -647,6 +648,7 @@ static uint8_t flipSlot(uint8_t cs) { return cs == SELECT_R_PIN ? 1 : 0; }
 // the QR code are all covered without any of them knowing.  On the
 // SSD1351 the library's own setRotation() sends the same register.
 static void applyFlips(void) {
+  displayQuiesce(); // setRotation() changes state the sender reads
   for (uint8_t e = 0; e < NUM_EYES; e++) {
     const bool f = panelFlip[flipSlot(eye[e].cs)];
 #if USE_SSD1327
@@ -777,6 +779,8 @@ void displaySetLuminance(uint8_t e, float f) {
 }
 
 void pushCanvas(uint8_t e, GFXcanvas1 &canvas) {
+  // An eye frame queued before this card would otherwise land on top of it.
+  displayQuiesce();
   // Anything drawing a card wants the panels lit and readable, whatever the
   // dimmer or sleep mode had them at.  Cheap when they already are.
   dimmerCard();
@@ -804,6 +808,8 @@ void pushCanvas(uint8_t e, GFXcanvas1 &canvas) {
 #if CONTROLLABLE
 static void loadSettings(void); // defined below setup(), with the settings
 #endif
+
+static void startSender(void); // defined below setup(), with drawEye()
 
 HardwareSerial SerialIn(1);
 
@@ -1032,17 +1038,154 @@ void setup(void) {
   setupNetwork();
   netOnConnected();
 #endif
+  startSender(); // before the render loop, which is the first to use it
 #if COMMANDS
   Serial.println(F("[creeper-eyes] console ready -- type 'help'"));
 #endif
 }
 
 // EYE-RENDERING FUNCTION --------------------------------------------------9
+// SENDING FRAMES -----------------------------------------------------------
+//
+// With OVERLAP_SEND, a finished frame is handed to a small task on core 0,
+// which sends it while this core -- the render loop, on core 1 -- draws the
+// next into the other buffer.  The eyes take turns, so with two buffers each
+// eye's frame is always in one of them.  Handing a frame over waits for the
+// previous one to be off the wire, so a buffer is never drawn into while it
+// is being sent.
+//
+// The two cores share the SPI bus safely without anything here: the Arduino
+// core's beginTransaction() takes a mutex and endTransaction() gives it
+// back, and every panel write -- the Adafruit library's, the SSD1327
+// class's, a frame -- is one transaction.  A command from the render loop
+// simply waits while a frame goes out.  What the mutex cannot do is order
+// things, which is what displayQuiesce() is for.
+
 // Where a frame's time goes, summed over the heartbeat's interval and
-// reported with it: computing the pixels, and sending them.  The rest of the
-// interval is everything else the render loop does -- the web server, OTA,
-// the motion code.  Three micros() calls a frame, so it stays in.
-static uint32_t perfDrawUs = 0, perfSendUs = 0;
+// reported with it: drawing the pixels, waiting for the previous frame to be
+// sent (with OVERLAP_SEND), and sending -- on core 0, or here without it.
+// The rest of the interval is everything else the render loop does.
+static uint32_t perfDrawUs = 0, perfWaitUs = 0, perfSendUs = 0, perfEyeUs = 0;
+static portMUX_TYPE perfMux = portMUX_INITIALIZER_UNLOCKED; // perfSendUs, cross-core
+
+// Sends one finished frame to eye e's panel, on whichever core calls it.
+static void sendFrame(uint8_t e, const void *frame) {
+#if USE_SSD1327
+  SPI.beginTransaction(graySPI);
+  eye[e].display.pushFrame((const uint8_t *)frame);
+  SPI.endTransaction();
+#else
+  eye[e].display.startWrite();
+  // The library's own window, which sends each bound as the one byte the
+  // controller takes.  This used to send them by hand as 16-bit writes --
+  // four bytes where two are expected -- and the frames never landed.
+  eye[e].display.setAddrWindow(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+  // One large burst, through the ESP32's SPI FIFO.
+  SPI.writePixels(frame, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(uint16_t));
+  eye[e].display.endWrite();
+#endif
+}
+
+static void addSendTime(uint32_t us) {
+  portENTER_CRITICAL(&perfMux);
+  perfSendUs += us;
+  portEXIT_CRITICAL(&perfMux);
+}
+
+#if OVERLAP_SEND
+struct SendJob {
+  uint8_t e;
+  const void *frame;
+};
+static QueueHandle_t sendJobs = NULL;     // one job at most
+static SemaphoreHandle_t sendIdle = NULL; // available while nothing is in hand
+
+// Sending busy-waits on the SPI FIFO, and the render loop always has the
+// next frame ready, so this would keep core 0 busy without a break.  Core
+// 0's idle task would then never run, and the task watchdog, which listens
+// for it, aborts the board: it did, after about 25 seconds.  Dropping to the
+// idle task's own priority halved the send rate instead, because the idle
+// task takes its whole tick.  The watchdog only needs the idle task to run
+// once in its five seconds, so the sender steps aside for one tick a second:
+// about a thousandth of the time.
+#define SENDER_REST_MS 1000
+
+static void senderTask(void *) {
+  SendJob j;
+  uint32_t lastRest = millis();
+  for (;;) {
+    xQueueReceive(sendJobs, &j, portMAX_DELAY);
+    const uint32_t t0 = micros();
+    sendFrame(j.e, j.frame);
+    addSendTime(micros() - t0);
+    xSemaphoreGive(sendIdle);
+    if (millis() - lastRest >= SENDER_REST_MS) {
+      lastRest = millis();
+      vTaskDelay(1); // blocked, so core 0's idle task gets its turn
+    }
+  }
+}
+#endif
+
+void displayQuiesce(void) {
+#if OVERLAP_SEND
+  if (!sendIdle)
+    return;
+  xSemaphoreTake(sendIdle, portMAX_DELAY);
+  xSemaphoreGive(sendIdle);
+#endif
+}
+
+// Hands a finished frame over, or sends it here without OVERLAP_SEND.
+static void submitFrame(uint8_t e, const void *frame) {
+#if OVERLAP_SEND
+  if (sendJobs) {
+    const uint32_t t0 = micros();
+    xSemaphoreTake(sendIdle, portMAX_DELAY); // the previous frame is sent
+    perfWaitUs += micros() - t0;
+    const SendJob j = {e, frame};
+    xQueueSend(sendJobs, &j, portMAX_DELAY);
+    return;
+  }
+#endif
+  const uint32_t t0 = micros();
+  sendFrame(e, frame);
+  addSendTime(micros() - t0);
+}
+
+// Last thing in setup(), once the panels are up and before the render loop
+// starts.  Priority 1 on core 0, below WiFi and the TCP/IP stack, which
+// preempt it: a frame paused mid-send loses nothing, the chip select simply
+// stays low a little longer.  See senderTask() for why it rests.
+static void startSender(void) {
+#if OVERLAP_SEND
+  sendIdle = xSemaphoreCreateBinary();
+  sendJobs = xQueueCreate(1, sizeof(SendJob));
+  if (!sendIdle || !sendJobs ||
+      xTaskCreatePinnedToCore(senderTask, "panels", 3072, NULL, 1, NULL, 0) !=
+          pdPASS) {
+    // Without the task, frames are sent from the render loop as before.
+    DEBUG_PRINTF("[creeper-eyes] frame sender did not start; sending inline\n");
+    sendJobs = NULL;
+    sendIdle = NULL;
+    return;
+  }
+  xSemaphoreGive(sendIdle);
+#endif
+}
+
+// The frame buffers: two with OVERLAP_SEND, so one can be drawn while the
+// other is sent.  Colour frames go out as drawn; greyscale ones are drawn in
+// RGB565 like colour, then packed to four bits a pixel, and it is the packed
+// frame that is sent -- so there, only the packed buffer needs a second copy.
+#define FRAME_BUFFERS (OVERLAP_SEND ? 2 : 1)
+#if USE_SSD1327
+static uint16_t pBurst[SCREEN_WIDTH * SCREEN_HEIGHT];
+static uint8_t gBurst[FRAME_BUFFERS][SSD1327_FRAME_BYTES];
+#else
+static uint16_t colourFrames[FRAME_BUFFERS][SCREEN_WIDTH * SCREEN_HEIGHT];
+#endif
+static uint8_t nextBuffer = 0;
 
 void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
     uint8_t e,       // Eye array index; 0 or 1 for left/right
@@ -1066,8 +1209,11 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
   // Eyelids mirror; gaze does not.
   const bool mirrorLids = (e == 0);
   const uint32_t tStart = micros();
-  static uint16_t pBurst[SCREEN_WIDTH *
-                         SCREEN_HEIGHT]; // Full frame buffer possible on ESP32
+  const uint8_t buf = nextBuffer;
+  nextBuffer = (uint8_t)((nextBuffer + 1) % FRAME_BUFFERS);
+#if !USE_SSD1327
+  uint16_t *const pBurst = colourFrames[buf]; // drawn and sent as it is
+#endif
 
   // Set up raw pixel dump to entire screen.  Although such writes can wrap
   // around automatically from end of rect back to beginning, the region is
@@ -1180,30 +1326,18 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
 #if USE_SSD1327
   // Pack the RGB565 frame down to 4-bit grey, two pixels per byte.  This
   // halves what goes over the wire compared with the colour panel.
-  static uint8_t gBurst[SSD1327_FRAME_BYTES];
+  uint8_t *const packed = gBurst[buf];
   for (uint16_t i = 0, o = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i += 2, o++)
-    gBurst[o] = (uint8_t)((rgb565ToGray4(pBurst[i]) << 4) |
+    packed[o] = (uint8_t)((rgb565ToGray4(pBurst[i]) << 4) |
                           rgb565ToGray4(pBurst[i + 1]));
-  const uint32_t tDrawn = micros();
-
-  SPI.beginTransaction(graySPI);
-  eye[e].display.pushFrame(gBurst);
-  SPI.endTransaction();
+  const void *const frame = packed;
 #else
-  const uint32_t tDrawn = micros();
-  eye[e].display.startWrite();
-  // The library's own window, which sends each bound as the one byte the
-  // controller takes.  This used to send them by hand as 16-bit writes --
-  // four bytes where two are expected -- and the frames never landed.
-  eye[e].display.setAddrWindow(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-
-  // For ESP32, use writePixels function to transfer the whole framebuffer in
-  // one large burst
-  SPI.writePixels((uint8_t *)pBurst, sizeof(pBurst));
-  eye[e].display.endWrite();
+  const void *const frame = pBurst;
 #endif
+  const uint32_t tDrawn = micros();
   perfDrawUs += tDrawn - tStart;
-  perfSendUs += micros() - tDrawn;
+  submitFrame(e, frame);
+  perfEyeUs += micros() - tStart;
 }
 
 // EYE ANIMATION -----------------------------------------------------------
@@ -2703,14 +2837,22 @@ void frame(            // Process motion for a single frame of left or right eye
       // wired, and the LED proves it without a serial cable.
       // Per frame drawn, in tenths of a millisecond: drawing, sending, and
       // the rest of the interval.  frames can be 0 (cards, sleep, off).
+      // "wait" is the render loop waiting for the previous frame to be
+      // sent; with OVERLAP_SEND the send itself happens on the other core
+      // at the same time, so draw + wait + other is the frame, not the send.
+      portENTER_CRITICAL(&perfMux);
+      const uint32_t sendUs = perfSendUs;
+      portEXIT_CRITICAL(&perfMux);
       const uint32_t n = frames ? frames : 1;
-      const uint32_t drawT = perfDrawUs / n / 100, sendT = perfSendUs / n / 100;
-      const uint32_t spent = perfDrawUs + perfSendUs;
-      const uint32_t restT =
-          frames && elapsed * 1000UL > spent ? (elapsed * 1000UL - spent) / n / 100 : 0;
-      DEBUG_PRINTF("[creeper-eyes] fps=%u draw=%u.%ums send=%u.%ums "
-                   "other=%u.%ums heap=%u\n",
+      const uint32_t drawT = perfDrawUs / n / 100, waitT = perfWaitUs / n / 100;
+      const uint32_t sendT = sendUs / n / 100;
+      const uint32_t restT = frames && elapsed * 1000UL > perfEyeUs
+                                 ? (elapsed * 1000UL - perfEyeUs) / n / 100
+                                 : 0;
+      DEBUG_PRINTF("[creeper-eyes] fps=%u draw=%u.%ums wait=%u.%ums "
+                   "send=%u.%ums other=%u.%ums heap=%u\n",
                    (unsigned)fps, (unsigned)(drawT / 10), (unsigned)(drawT % 10),
+                   (unsigned)(waitT / 10), (unsigned)(waitT % 10),
                    (unsigned)(sendT / 10), (unsigned)(sendT % 10),
                    (unsigned)(restT / 10), (unsigned)(restT % 10),
                    (unsigned)ESP.getFreeHeap());
@@ -2720,7 +2862,10 @@ void frame(            // Process motion for a single frame of left or right eye
       lastFps = fps;
 #endif
       frames = 0;
-      perfDrawUs = perfSendUs = 0;
+      perfDrawUs = perfWaitUs = perfEyeUs = 0;
+      portENTER_CRITICAL(&perfMux);
+      perfSendUs = 0;
+      portEXIT_CRITICAL(&perfMux);
       lastReport = now;
     }
   }

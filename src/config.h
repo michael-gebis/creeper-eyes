@@ -397,6 +397,16 @@
 #define RAM_TABLES 1
 #endif
 
+// Send each eye's finished frame from the ESP32's other core while this one
+// draws the next.  Sending is most of a colour frame -- 18 ms of 24 at 16 MHz
+// -- and drawing is 4-5 ms, so doing them at once makes the frame as long as
+// the send alone instead of their sum.  Costs a second frame buffer (32 KB on
+// colour, 8 KB on greyscale) and a small task pinned to core 0.  0 sends from
+// the render loop, as before.
+#ifndef OVERLAP_SEND
+#define OVERLAP_SEND 1
+#endif
+
 // BRIGHTNESS ----------------------------------------------------------------
 //
 // The dimmer -- see src/dimmer.h and docs/BRIGHTNESS.md.  Always built: it is

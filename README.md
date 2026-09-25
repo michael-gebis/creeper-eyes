@@ -193,6 +193,7 @@ This page gets you a working head. Everything else has a page of its own.
 | [Locking it down](docs/SECURITY.md) | Passwords, and why there is no HTTPS |
 | [A circuit board](hardware/README.md) | The wiring as a PCB — rev A tested, rev B not yet made |
 | [Testing](docs/TESTING.md) | The test suite, the soak harness, the tools |
+| [Frame rate](docs/FRAME_RATE.md) | How the colour eyes went from 19 frames a second to 53 |
 
 And two pages that are neither instructions nor reference, but a record of
 being wrong in public: [why a 35-byte request took 50 ms](docs/HTTP_LATENCY.md)
