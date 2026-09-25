@@ -2035,8 +2035,12 @@ void handleCommand(char *line, Print &out) {
       listEyeDesigns(out);
       return;
     }
-    out.printf("ok eye=%u %s\n", (unsigned)eyeDesign,
-                  designAt(eyeDesign).name);
+    // The requested design, from stateGet(): eyeDesign itself only changes
+    // when the renderer picks the request up, on the next frame, so reading
+    // it here reported the design being replaced.
+    DeviceState s;
+    stateGet(s);
+    out.printf("ok eye=%u %s\n", (unsigned)s.eyeIndex, s.eyeName);
   } else if (!strcmp(cmd, "look")) {
     char *a1 = strtok(NULL, " \t");
     if (!a1) {
@@ -2512,8 +2516,9 @@ static void pollBootButton(void) {
       sleepNudge();
 #endif
       stateNextEye();
-      Serial.printf("ok eye=%u %s (button)\n", (unsigned)eyeDesign,
-                    designAt(eyeDesign).name);
+      DeviceState s; // the requested design; see the `eye` command
+      stateGet(s);
+      Serial.printf("ok eye=%u %s (button)\n", (unsigned)s.eyeIndex, s.eyeName);
     }
   }
 

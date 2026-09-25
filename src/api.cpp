@@ -730,6 +730,13 @@ static void putClock(void) {
   JsonDocument b;
   if (!readBody(b))
     return;
+#if !CLOCK
+  // Every setter below refuses without the clock, and their results are not
+  // checked -- everything is validated before anything is applied -- so say
+  // so here rather than reply as though the change had been made.
+  sendError(404, "this firmware was built without the clock face");
+  return;
+#endif
   if (wrongType<bool>(b, "on", "true or false") ||
       wrongType<bool>(b, "seconds", "true or false") ||
       wrongType<long>(b, "rate", "a whole number") ||
