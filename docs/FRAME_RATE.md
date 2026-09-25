@@ -35,6 +35,7 @@ other`.
 | Flash at 80 MHz QIO | 38 | 6.2 ms | 18.3 ms | 1.1 ms |
 | Polar map and iris in RAM (`RAM_TABLES`) | 41 | 4.5 ms | 18.3 ms | 1.0 ms |
 | Sending on the other core (`OVERLAP_SEND`) | 53 | 4.2 ms | 18.4 ms | 1.0 ms |
+| CPU at 160 MHz instead of 240 | 51 | 5.8 ms | 19.4 ms | 1.1 ms |
 
 Medians over about twelve one-second heartbeats each. The first row predates
 the timing, so only the send is known: 32 KB at 8 MHz.
@@ -94,25 +95,46 @@ tick every second: about a thousandth of its time.
 It costs a second frame buffer: 32 KB on colour, 8 KB on greyscale.
 `OVERLAP_SEND=0` puts everything back in the render loop.
 
-## Stability
+## Brownouts, and the CPU at 160 MHz
 
-About 25 minutes of soaking with the API test suite running against the board
-throughout, including eye-file uploads, which write flash and pause both cores.
-That was 12 full suite runs, 212 checks each, with no failures and no watchdog
-or crash output.
+Soaking is the API test suite run against the board over and over, with the
+serial port watched throughout. The runs include eye-file uploads, which write
+flash and pause both cores. The first short soaks of the overlap passed, apart
+from one software reset that nothing explained. So the board was taught to
+report why it last restarted (below), and the soaks were made longer. Same
+board, same single USB-C supply, C1 not fitted, 45 minutes each:
 
-**One reset is unexplained.** Early in the first soak, the board restarted once
-(`rst:0xc`, a software reset) during a test run, and never again in the time
-after. No crash message was captured. The filter watching the serial port then
-did not look for a brownout message, which ends in the same kind of reset, and a
-single USB-C supply with C1 not fitted makes a brownout plausible. To catch the
-next one, the board now reports any restart caused by a crash, a watchdog or a
-brownout as a [warning](CONFIG.md#if-stored-settings-are-damaged), on the
-control page and the console.
+| build | suite runs | brownouts |
+| :-- | --: | --: |
+| No overlap, CPU 240 MHz (41 fps) | 26 | 0 |
+| Overlap, CPU 240 MHz (53 fps) | 26 | 4 |
+| Overlap, CPU 160 MHz (51 fps) | 25 | 0 |
+
+Every brownout came about a second after the render loop went back to full
+speed after a pause: three after an eye-file upload finished, one after the
+address cards. That is the step from mostly idle to both cores flat out, drawing
+and sending, while WiFi answers the request. The ESP32's brownout detector is
+already at its most lenient setting, about 2.4 V, so the 3.3 V rail really was
+sagging that far.
+
+With the overlap the frame waits on the send, not the CPU, so 160 MHz costs two
+frames a second. It also cuts the current by enough that the same 45 minutes
+passed clean. With four brownouts expected at the old rate, a clean run by
+chance would be about a 2% likelihood. So the CPU runs at 160 MHz
+(`board_build.f_cpu` in `platformio.ini`).
+
+That is a margin, not a cure. A board that browns out at 240 MHz is running
+close to its supply's limit, and C1 — as large as the 5 mm footprint takes,
+typically 22 or 47 µF, rather than 10 — or a stronger supply is the real fix.
+
+The board now reports any restart caused by a crash, a watchdog or a brownout
+as a [warning](CONFIG.md#if-stored-settings-are-damaged), on the control page
+and the console. The brownouts above were how it was confirmed: each one showed
+up there.
 
 ## What is left
 
-The send is now the whole frame, 18.4 ms at 16 MHz. Only a faster bus (20 MHz
+The send is now the whole frame, about 19 ms at 16 MHz. Only a faster bus (20 MHz
 speckled one panel here) or fewer bytes per frame would go further. Driving the
 bus by DMA instead of the FIFO would free core 0 from busy-waiting, but would not
 make frames faster.

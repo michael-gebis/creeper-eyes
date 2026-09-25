@@ -6,8 +6,9 @@ for the optional clock, and the SPI bus in copper instead of Dupont leads.
 
 > **Rev A is tested and works.** A DevKit plugged into one drives two colour
 > panels, with a DS3231 on jumpers — its header suits the ZS-042, not the
-> module in use, which is what rev B changes — and without C1, which it has
-> not needed so far.
+> module in use, which is what rev B changes — and without C1. Under long,
+> heavy test load on a single USB-C supply it browned out now and then; see
+> [Frame rate](../docs/FRAME_RATE.md#brownouts-and-the-cpu-at-160-mhz). Fit C1.
 >
 > **Rev B is untested.** It passes KiCad's checks — electrical rules,
 > schematic against board, design rules — and no board has been made.
@@ -81,7 +82,7 @@ firmware only looks for the RTC at boot.
 | JLCPCB or PCBWay, 2-layer, 72 × 56 mm | ~$2 fabrication, $2–5 slow shipping (~$20 by courier if impatient) | under $2 |
 | Two 1×15 female headers, 2.54 mm — the DevKit socket | ~$1 | |
 | Two 1×7 and one 1×5 male pin headers, 2.54 mm | ~$1 | |
-| C1, 10 µF electrolytic, 5 mm diameter, 2 mm lead pitch (any value 10–100 µF fits) | pennies | |
+| C1, electrolytic, 5 mm diameter, 2 mm lead pitch: 10 µF works, but take the largest that comes in a 5 mm can, typically 22 or 47 µF | pennies | |
 
 **About $10 for five boards, all in**, and one to two weeks. The DevKit and
 the displays you already own plug into it.

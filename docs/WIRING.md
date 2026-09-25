@@ -189,7 +189,7 @@ points at power, not at data wiring.
 | Noise or garbage, not static | `DC` on `D33`, or clock integrity. Commands are being read as pixels, or the reverse. |
 | Flicker, tearing, speckle | Breadboard signal integrity. Shorten the `CLK` and `DIN` jumpers, keep them away from the power runs, and lower the bus speed: `SSD1351_SPI_HZ` on colour, which runs at 16 MHz, or `SSD1327_SPI_HZ` on grayscale. |
 | Both panels show the same content | A `CS` line shorted or on the wrong row — both panels selected at once. |
-| Board resets when a panel connects | Brownout. Move to a powered hub or feed 5 V to `VIN`, and on the [carrier board](../hardware/README.md) fit C1. |
+| Board resets when a panel connects, or now and then under load | Brownout — the control page says so after it restarts. Move to a powered hub or feed 5 V to `VIN`, and on the [carrier board](../hardware/README.md) fit C1. See [Frame rate](FRAME_RATE.md#brownouts-and-the-cpu-at-160-mhz). |
 | Board will not boot at all | Check nothing has crept onto `D12`. Held high at reset it stops the board starting. None of the eye signals use it. |
 
 Isolating a fault is easiest one panel at a time: unplug one entirely and
