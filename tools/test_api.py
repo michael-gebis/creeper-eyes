@@ -115,9 +115,10 @@ class Api:
             mgr: urllib.request.HTTPPasswordMgrWithDefaultRealm = \
                 urllib.request.HTTPPasswordMgrWithDefaultRealm()
             mgr.add_password(None, self.root, user, password)
-            self.opener = urllib.request.build_opener(
-                urllib.request.HTTPDigestAuthHandler(mgr))
+            self.digest = urllib.request.HTTPDigestAuthHandler(mgr)
+            self.opener = urllib.request.build_opener(self.digest)
         else:
+            self.digest = None
             self.opener = urllib.request.build_opener()
 
     def raw(self, path: str, method: str = "GET",
@@ -147,12 +148,25 @@ class Api:
         # read-only request is honest; a retried write would not be.
         attempts: int = 3 if method == "GET" else 1
         for attempt in range(attempts):
+            # urllib's digest handler counts retries and gives up with
+            # "digest auth failed" after five -- but only a success resets the
+            # count, so five authenticated 4xx replies in a row (which the
+            # refusal tests are made of) would fail the sixth.  Each request
+            # here is its own exchange; start its count from zero.
+            if self.digest:
+                self.digest.reset_retry_count()
             try:
                 with self.opener.open(req, data, timeout=self.timeout) as r:
                     out: tuple[int, bytes] = (r.status, r.read())
                     break
             except urllib.error.HTTPError as e:
-                out = (e.code, e.read())
+                # Not every HTTPError has a body: the ones urllib raises
+                # itself, like that digest give-up, have nothing to read.
+                try:
+                    body: bytes = e.read()
+                except Exception:  # noqa: BLE001
+                    body = b""
+                out = (e.code, body)
                 break
             except Exception as e:  # timeout, reset, DNS
                 if attempt == attempts - 1:
