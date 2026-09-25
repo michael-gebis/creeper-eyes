@@ -1100,13 +1100,10 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
   SPI.endTransaction();
 #else
   eye[e].display.startWrite();
-  eye[e].display.writeCommand(SSD1351_CMD_SETROW); // Y range
-  eye[e].display.write16(0x0);
-  eye[e].display.write16(SCREEN_HEIGHT - 1);
-  eye[e].display.writeCommand(SSD1351_CMD_SETCOLUMN); // X range
-  eye[e].display.write16(0x0);
-  eye[e].display.write16(SCREEN_WIDTH - 1);
-  eye[e].display.writeCommand(SSD1351_CMD_WRITERAM); // Begin write
+  // The library's own window, which sends each bound as the one byte the
+  // controller takes.  This used to send them by hand as 16-bit writes --
+  // four bytes where two are expected -- and the frames never landed.
+  eye[e].display.setAddrWindow(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
 
   // For ESP32, use writePixels function to transfer the whole framebuffer in
   // one large burst
