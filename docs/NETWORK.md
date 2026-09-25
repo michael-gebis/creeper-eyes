@@ -203,9 +203,12 @@ shows on the panels too — the eyes stop during the transfer, which is expected
 and not a hang.
 
 An update over the air replaces the firmware and nothing else: in particular
-not the partition table, which only a USB flash writes. A board flashed over
-USB before the [eye slot](EYE_FILES.md#the-one-time-usb-flash) existed runs a
-newer firmware without one until it is flashed over USB once.
+not the partition table or the bootloader, which only a USB flash writes. A
+board flashed over USB before the [eye slot](EYE_FILES.md#the-one-time-usb-flash)
+existed runs a newer firmware without one until it is flashed over USB once. The
+same goes for the faster flash settings in
+[Configuring](CONFIG.md#build-options): the bootloader sets the flash speed, so
+a board updated only over the air is expected to keep drawing at its old speed.
 
 Pick the `--env` matching the build the board is *running*: `gray_rtc_ota` for
 a board built as `gray_rtc`. `gray_ota` extends `gray`, so using it on an RTC

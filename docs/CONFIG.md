@@ -19,6 +19,15 @@ rendering code they belong to. Either way each is `#ifndef`-guarded, so any of
 them can be overridden from `build_flags` in `platformio.ini` without editing
 a source file — which is how the `gray` environment sets `USE_SSD1327`.
 
+A few settings are PlatformIO's rather than the firmware's, and live in
+`platformio.ini` itself, commented there: the partition table
+(`board_build.partitions`, see [Eye files](EYE_FILES.md#where-the-room-came-from)),
+and the flash at 80 MHz on four data lines (`board_build.f_flash`,
+`board_build.flash_mode`) instead of the board definition's 40 MHz on two, which
+roughly halved the time to draw an eye. Both only reach a board by a USB flash:
+the partition table is written only by one, and the flash speed is set by the
+bootloader, which is too.
+
 Two groups are **not** guarded and cannot be overridden this way. Three
 derived values — `CONTROLLABLE`, `FAVICON_FRANK` and `FAVICON_EYES` — are
 computed from the others. And the **pin numbers** in
