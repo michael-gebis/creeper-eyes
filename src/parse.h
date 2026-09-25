@@ -31,6 +31,33 @@ static inline bool parseLong(const char *s, long lo, long hi, long &out) {
   return true;
 }
 
+// A decimal number with at most one digit after the point, in tenths:
+// "2.2" is 22 and "3" is 30.  Then the range, in tenths as well.
+static inline bool parseTenths(const char *s, long lo, long hi, long &out) {
+  if (!s || !isdigit((unsigned char)*s))
+    return false;
+  long whole = 0;
+  while (isdigit((unsigned char)*s)) {
+    whole = whole * 10 + (*s++ - '0');
+    if (whole > 100000)
+      return false; // far past any range this is used for
+  }
+  long tenths = 0;
+  if (*s == '.') {
+    s++;
+    if (!isdigit((unsigned char)*s))
+      return false;
+    tenths = *s++ - '0';
+  }
+  if (*s)
+    return false;
+  long v = whole * 10 + tenths;
+  if (v < lo || v > hi)
+    return false;
+  out = v;
+  return true;
+}
+
 // Exactly six hex digits, with or without a leading '#'.
 static inline bool parseHexColor(const char *s, uint32_t &out) {
   if (!s)

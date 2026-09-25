@@ -9,7 +9,7 @@ set, the panels go dark and the eyes stop being drawn.
 sleep                      # what it is set to, and what it is doing
 sleep on
 sleep 22:00 07:00          # start, then stop
-sleep level 0              # 0 switches the panels off; 1-100 dims instead
+sleep level 0              # 0 switches the panels off; 1-100 is a share of the brightness
 ```
 
 Or the **Sleep** card on the control page, or `PUT /api/v1/sleep`.
@@ -69,6 +69,14 @@ does not.
 Both are one command. `0xAF` brings the panel back, and the panel's contents
 survive — GDDRAM is untouched by `0xAE`, so waking does not need a redraw,
 only the command.
+
+Sleep no longer sends either one itself. It hands the
+[dimmer](BRIGHTNESS.md) a fraction of the brightness setting: 100 awake, the
+level asleep, 0 for off. The dimmer fades there and switches the panels off at
+0. So a level of 50 with the brightness at 60% is 30%, and going to sleep or
+waking is a fade rather than a jump. The table above is still what reaches the
+panels, and the SSD1351's dim now uses its colour channels as well as the master
+current, for finer steps.
 
 **Two facts worth having before choosing between them.** Neither is in this
 document because neither has been measured:

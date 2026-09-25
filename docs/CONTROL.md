@@ -73,6 +73,7 @@ Open `pio device monitor` and type `help`. Commands are line-based at 115200.
 | `clock color [hour\|min\|sec] RRGGBB` | Hand colours |
 | `blink` | Blink both eyes now |
 | `swap [on\|off]` | Swap which physical panel is which eye |
+| `dim [0-100]` | Brightness; 0 is off. Also `dim gamma <1.0-4.0>`, `dim trim left\|right <-50..50>`, `dim sweep [off]` — see [Brightness](BRIGHTNESS.md) |
 | `flip left\|right [on\|off]` | Turn one panel's image through 180°, for a panel fitted upside down. Your left and right, facing the head |
 | `save` | Persist every setting tagged persistent — see [Configuring](CONFIG.md#remembering-settings) |
 | `forget` | Clear saved settings |
@@ -122,6 +123,7 @@ CORS open so a page served from anywhere can drive the device.
 | `GET` `PUT` | `/api/v1/dilate` | `{"percent":40}` or `{"mode":"auto"}` |
 | `GET` `PUT` | `/api/v1/pupil` | `{"on":false}` |
 | `GET` `PUT` | `/api/v1/swap` | `{"on":true}` — swaps left and right panels |
+| `GET` `PUT` | `/api/v1/dim` | `{"percent":40}`, `{"gamma":2.8}`, `{"trim":{"left":-15}}`, `{"sweep":true}` — any of them |
 | `GET` `PUT` | `/api/v1/flip` | `{"left":true}`, `{"right":false}` or both — a panel fitted upside down |
 | `GET` `PUT` | `/api/v1/clock` | `on`, `seconds`, `rate`, `time`, `colors` — any subset |
 | `GET` `PUT` | `/api/v1/netinfo` | `{"on":true}` — address cards on the panels |

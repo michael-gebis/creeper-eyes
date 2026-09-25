@@ -4,7 +4,6 @@
 
 #if SLEEP
 
-#include "display.h"
 #include "timekeeping.h"
 #include <Arduino.h>
 
@@ -141,7 +140,7 @@ bool sleepNextChange(uint16_t &minutesOut, bool &toAsleepOut) {
   return true;
 }
 
-bool sleepPoll(void) {
+uint8_t sleepPoll(void) {
   const char *why;
   bool want = decide(&why);
   reason = why;
@@ -150,29 +149,13 @@ bool sleepPoll(void) {
 
   asleepNow = want;
 
-  // Apply what the conclusion implies, every poll rather than only on the
-  // asleep/awake edge.
-  //
-  // Edge-triggering was the first version and it was wrong: changing the
-  // level while already asleep never reached the panels, so going from 0
-  // (off) to dimmed left them powered down while rendering resumed -- eyes
-  // being drawn onto a dark panel, with nothing in the state to suggest why.
-  //
-  // Both setters return immediately when they are already in the requested
-  // state, so calling them unconditionally costs two comparisons a frame.
-  uint8_t wantBright = (want && level) ? level : 100;
-  bool wantOn = !want || level > 0;
-
-  // Brightness first when waking, so the panels never come back at whatever
-  // dim value they were left on.
-  if (wantOn)
-    displaySetBrightness(wantBright);
-  displaySetPower(wantOn);
-
-  // Only the fully-dark case skips rendering.  A dimmed panel keeps drawing,
-  // so the eyes still move faintly -- freezing the last frame at low contrast
-  // would look like a fault rather than a setting.
-  return asleepNow && level == 0;
+  // The conclusion as a fraction of the brightness setting, every poll
+  // rather than only on the asleep/awake edge.  Edge-triggering was the
+  // first version and it was wrong: changing the level while already asleep
+  // never reached the panels.  The dimmer does the rest -- fading, switching
+  // the panels off at 0, and telling the renderer when there is nothing to
+  // draw.  A dimmed panel keeps drawing, so the eyes still move faintly.
+  return want ? level : 100;
 }
 
 #endif // SLEEP

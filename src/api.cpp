@@ -265,6 +265,16 @@ static void fillTime(JsonObject o) {
 #endif
 }
 
+static void fillDim(JsonObject o, const DeviceState &s) {
+  o["percent"] = s.dimPercent;
+  o["shown"] = s.dimShown; // differs during a fade, a sweep, or sleep
+  o["gamma"] = s.dimGammaX10 / 10.0;
+  JsonObject t = o["trim"].to<JsonObject>();
+  t["left"] = s.dimTrim[0];
+  t["right"] = s.dimTrim[1];
+  o["sweeping"] = s.dimSweeping;
+}
+
 static void fillFlip(JsonObject o, const DeviceState &s) {
   o["left"] = s.flipped[0];
   o["right"] = s.flipped[1];
@@ -280,6 +290,7 @@ static void getState(void) {
   d["pupil"]["on"] = s.pupilOn;
   d["swap"]["on"] = s.swapped;
   fillFlip(d["flip"].to<JsonObject>(), s);
+  fillDim(d["dim"].to<JsonObject>(), s);
   d["startle"]["active"] = s.startleActive;
   fillClock(d["clock"].to<JsonObject>(), s);
   fillNet(d["net"].to<JsonObject>());
@@ -621,6 +632,75 @@ static void putFlip(void) {
     if (b[sides[e]].is<bool>())
       stateSetFlip(e, b[sides[e]]);
   getFlip();
+}
+
+static void getDim(void) {
+  DeviceState s;
+  stateGet(s);
+  JsonDocument d;
+  fillDim(d.to<JsonObject>(), s);
+  sendJson(200, d);
+}
+
+// Any of percent, gamma, trim.left, trim.right and sweep.  All checked
+// before any is applied.
+static void putDim(void) {
+  JsonDocument b;
+  if (!readBody(b))
+    return;
+  if (wrongType<long>(b, "percent", "a whole number, 0-100") ||
+      wrongType<float>(b, "gamma", "a number, 1.0-4.0") ||
+      wrongType<JsonObjectConst>(b, "trim", "an object") ||
+      wrongType<bool>(b, "sweep", "true or false"))
+    return;
+
+  const bool havePercent = b["percent"].is<long>();
+  const long percent = b["percent"].as<long>();
+  if (havePercent && (percent < 0 || percent > 100)) {
+    sendError(400, "percent must be 0-100");
+    return;
+  }
+  const bool haveGamma = b["gamma"].is<float>();
+  const long gammaX10 = lroundf(b["gamma"].as<float>() * 10.0f);
+  if (haveGamma && (gammaX10 < DIM_GAMMA_MIN || gammaX10 > DIM_GAMMA_MAX)) {
+    sendError(400, "gamma must be 1.0-4.0");
+    return;
+  }
+  static const char *const sides[2] = {"left", "right"};
+  JsonObjectConst trim = b["trim"];
+  bool haveTrim[2] = {false, false};
+  long trimValue[2] = {0, 0};
+  for (uint8_t e = 0; e < 2; e++) {
+    JsonVariantConst v = trim[sides[e]];
+    if (v.isNull())
+      continue;
+    if (!v.is<long>() || v.as<long>() < -50 || v.as<long>() > 50) {
+      sendError(400, "trim.left and trim.right must be whole numbers, -50 to 50");
+      return;
+    }
+    if (e >= displayCount()) {
+      sendError(400, "no such panel in this build");
+      return;
+    }
+    haveTrim[e] = true;
+    trimValue[e] = v.as<long>();
+  }
+  if (!havePercent && !haveGamma && !haveTrim[0] && !haveTrim[1] &&
+      !b["sweep"].is<bool>()) {
+    sendError(400, "expected percent, gamma, trim or sweep");
+    return;
+  }
+
+  if (haveGamma)
+    stateDimSetGamma(gammaX10);
+  for (uint8_t e = 0; e < 2; e++)
+    if (haveTrim[e])
+      stateDimSetTrim(e, trimValue[e]);
+  if (havePercent)
+    stateDimSet(percent); // ends a sweep, so before one is started
+  if (b["sweep"].is<bool>())
+    stateDimSweep(b["sweep"]);
+  getDim();
 }
 
 static void putSwap(void) {
@@ -1321,6 +1401,10 @@ void apiRegister(AuthWebServer &s) {
   s.on(API "/swap", HTTP_PUT, guarded<putSwap>);
   s.on(API "/swap", HTTP_OPTIONS, handleOptions);
   s.on(API "/swap", HTTP_ANY, notAllowed);
+  s.on(API "/dim", HTTP_GET, guarded<getDim>);
+  s.on(API "/dim", HTTP_PUT, guarded<putDim>);
+  s.on(API "/dim", HTTP_OPTIONS, handleOptions);
+  s.on(API "/dim", HTTP_ANY, notAllowed);
   s.on(API "/flip", HTTP_GET, guarded<getFlip>);
   s.on(API "/flip", HTTP_PUT, guarded<putFlip>);
   s.on(API "/flip", HTTP_OPTIONS, handleOptions);

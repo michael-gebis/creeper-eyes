@@ -41,6 +41,10 @@ uint16_t nvsReadU16(Preferences &p, const char *key, uint16_t def,
 uint32_t nvsReadU32(Preferences &p, const char *key, uint32_t def,
                     uint32_t lo, uint32_t hi);
 
+// Signed, stored by putChar().
+int8_t nvsReadI8(Preferences &p, const char *key, int8_t def, int8_t lo,
+                 int8_t hi);
+
 // A string with no control characters that fits `n` bytes with its
 // terminator.  True with the value in `out`; false with `out` empty if the
 // key is absent or its value was unusable (and has been dealt with).

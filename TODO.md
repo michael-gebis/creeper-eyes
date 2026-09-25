@@ -176,6 +176,23 @@ algorithm and which implementation is an open question, not a decision.
   inside the sleep window, on the grounds that nobody is watching to see it
   fail.
 
+## A light sensor for automatic brightness
+
+The [dimmer](docs/BRIGHTNESS.md) exists; what it lacks is a reason to move by
+itself. A light-dependent resistor and a fixed resistor, as a divider on one of
+the DevKit's input-only pins, would let the eyes turn themselves down in a dark
+room and up in a bright one.
+
+- **Pins.** `D34`, `D35`, `VP` (GPIO36) and `VN` (GPIO39) are all unused on
+  the carrier board and are all ADC1, which keeps working with WiFi up (ADC2
+  does not). On a rev A or rev B board it is three jumpers; a later revision
+  could carry a footprint for it.
+- **Where it plugs in.** Another factor in `dimmerPoll()`'s target, beside
+  sleep's: the setting stays what the person chose, and the sensor scales it.
+- **Open questions.** Where the sensor sits so it sees the room and not the
+  eyes' own glow; how much smoothing, so a passing shadow does not flicker the
+  eyes; and whether it should only ever dim, never brighten past the setting.
+
 ## Three pictures
 
 The only photograph in the repository is a screenshot, and it is out of

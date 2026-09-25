@@ -260,6 +260,8 @@ def test_state(res: Result, api: Api) -> Json:
                  "gaze.mode", "gaze.x", "gaze.y",
                  "dilate.mode", "dilate.percent",
                  "pupil.on", "swap.on", "flip.left", "flip.right",
+                 "dim.percent", "dim.shown", "dim.gamma", "dim.trim.left",
+                 "dim.trim.right", "dim.sweeping",
                  "startle.active",
                  "clock.on", "clock.seconds", "clock.time", "clock.rate",
                  "clock.colors.hour", "clock.colors.minute",
@@ -271,7 +273,7 @@ def test_state(res: Result, api: Api) -> Json:
                  "system.settingsDirty"):
         field(res, s, path, "state has %s" % path)
     if s:
-        res.ok("all %d documented fields present" % 33)
+        res.ok("all %d documented fields present" % 39)
     return s
 
 
@@ -381,6 +383,92 @@ def test_validation(res: Result, api: Api, start: Json) -> None:
                         ("a 33-character SSID", {"ssid": "x" * 33})):
         expect(res, api, "wifi: %s is 400" % label, "/wifi", "PUT", body,
                status=400)
+
+
+def settle_shown(api: Api, want: int, within: float = 2.0) -> Any:
+    """Poll dim.shown until it reaches `want` or time runs out; a fade takes
+    DIM_FADE_MS for the whole range, so this allows it several times over."""
+    deadline: float = time.time() + within
+    got: Any = None
+    while time.time() < deadline:
+        got = api.json("/dim").get("shown")
+        if got == want:
+            break
+        time.sleep(0.2)
+    return got
+
+
+def test_dim(res: Result, api: Api, start: Json) -> None:
+    """The dimmer.  Nothing here is saved; the board is put back after."""
+    res.heading("brightness")
+    before: Json = expect(res, api, "GET /dim", "/dim")
+    if not before:
+        return
+
+    r: Json = expect(res, api, "PUT /dim percent 40", "/dim", "PUT", {"percent": 40})
+    same(res, "set to 40", r.get("percent"), 40)
+    same(res, "fades to 40", settle_shown(api, 40), 40)
+    expect(res, api, "PUT /dim percent 0", "/dim", "PUT", {"percent": 0})
+    same(res, "0 fades all the way off", settle_shown(api, 0), 0)
+    fps: Any = api.json("/state").get("system", {}).get("fps")
+    res.ok("still answering while off", "fps %s" % fps)
+
+    r = expect(res, api, "PUT /dim gamma 1.8", "/dim", "PUT", {"gamma": 1.8})
+    same(res, "gamma reads back", r.get("gamma"), 1.8)
+    r = expect(res, api, "trim left alone", "/dim", "PUT", {"trim": {"left": 10}})
+    same(res, "left trimmed, right untouched",
+         (r.get("trim", {}).get("left"), r.get("trim", {}).get("right")),
+         (10, before.get("trim", {}).get("right")))
+
+    for label, body in (("percent 101", {"percent": 101}),
+                        ("percent \"50\"", {"percent": "50"}),
+                        ("gamma 0.5", {"gamma": 0.5}),
+                        ("gamma 4.1", {"gamma": 4.1}),
+                        ("gamma \"2.2\"", {"gamma": "2.2"}),
+                        ("trim 51", {"trim": {"left": 51}}),
+                        ("trim as a number", {"trim": 5}),
+                        ("sweep \"yes\"", {"sweep": "yes"}),
+                        ("an empty change", {})):
+        expect(res, api, "%s is 400" % label, "/dim", "PUT", body, status=400)
+    now: Json = api.json("/dim")
+    expect(res, api, "a good percent beside a bad trim is 400", "/dim", "PUT",
+           {"percent": 77, "trim": {"right": 99}}, status=400)
+    same(res, "and the percent did not change", api.json("/dim").get("percent"),
+         now.get("percent"))
+
+    r = expect(res, api, "PUT /dim sweep", "/dim", "PUT", {"sweep": True})
+    same(res, "sweeping", r.get("sweeping"), True)
+    r = expect(res, api, "a level ends the sweep", "/dim", "PUT", {"percent": 60})
+    same(res, "no longer sweeping", r.get("sweeping"), False)
+
+    # Sleep's level is a share of the setting: 60% at a level of 50 is 30%.
+    # /sleep last, because it is the one change that does not count as
+    # somebody being there -- anything after it would wake the eyes.
+    slp: Json = api.json("/sleep")
+    if not slp or not slp.get("now"):
+        res.skip("sleep dims the setting", "no sleep mode, or no clock")
+    else:
+        h, m = (int(x) for x in slp["now"].split(":"))
+        mins: int = h * 60 + m
+        at = lambda o: "%02d:%02d" % (((mins + o) % 1440) // 60, (mins + o) % 60)
+        api.json("/sleep", "PUT", {"enabled": True, "start": at(-60),
+                                   "stop": at(60), "level": 50})
+        same(res, "asleep at level 50 shows 30%", settle_shown(api, 30), 30)
+        api.json("/sleep", "PUT", {"enabled": slp["enabled"], "start": slp["start"],
+                                   "stop": slp["stop"], "level": slp["level"]})
+        same(res, "awake again shows 60%", settle_shown(api, 60), 60)
+
+    restore_dim(api, before)
+
+
+def restore_dim(api: Api, was: Json) -> None:
+    if not was:
+        return
+    api.raw("/dim", "PUT", {"percent": was.get("percent", 100),
+                            "gamma": was.get("gamma", 2.2),
+                            "trim": {"left": was.get("trim", {}).get("left", 0),
+                                     "right": was.get("trim", {}).get("right", 0)},
+                            "sweep": False})
 
 
 def blank_eye(name: str) -> bytes:
@@ -1165,6 +1253,7 @@ def restore(api: Api, start: Json) -> None:
     flip: Any = start.get("flip", {})
     api.raw("/flip", "PUT", {"left": flip.get("left", False),
                              "right": flip.get("right", False)})
+    restore_dim(api, start.get("dim", {}))
     clock: Any = start.get("clock", {})
     if clock:
         api.raw("/clock", "PUT", {"on": clock.get("on", False),
@@ -1570,6 +1659,7 @@ def main(argv: list[str]) -> int:
     test_eyes(res, api, start)
     test_eye_slot(res, api, args.eye_file)
     test_validation(res, api, start)
+    test_dim(res, api, start)
     test_gaze(res, api)
     test_gaze_burst(res, api)
     test_dilate(res, api)
@@ -1598,7 +1688,7 @@ def main(argv: list[str]) -> int:
 
     print("\n== putting the board back ==")
     restore(api, start)
-    res.ok("restored", "eye, gaze, width, pupil, swap, flip, clock")
+    res.ok("restored", "eye, gaze, width, pupil, swap, flip, brightness, clock")
 
     elapsed: float = time.time() - started
     print()

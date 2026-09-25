@@ -62,6 +62,20 @@ uint32_t nvsReadU32(Preferences &p, const char *key, uint32_t def,
   return readRanged(p, key, PT_U32, def, lo, hi);
 }
 
+int8_t nvsReadI8(Preferences &p, const char *key, int8_t def, int8_t lo,
+                 int8_t hi) {
+  if (!present(p, key, PT_I8))
+    return def;
+  int8_t v = p.getChar(key, def);
+  if (v < lo || v > hi) {
+    char why[40];
+    snprintf(why, sizeof(why), "is %d, outside %d-%d", v, lo, hi);
+    nvsReject(p, key, why);
+    return def;
+  }
+  return v;
+}
+
 bool nvsReadStr(Preferences &p, const char *key, char *out, size_t n) {
   out[0] = '\0';
   if (!present(p, key, PT_STR))

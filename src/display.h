@@ -43,8 +43,19 @@ void showMessageOn(int8_t which, const char *l1, const char *l2,
 void displaySetPower(bool on);
 bool displayIsOn(void);
 
-// Brightness, 0-100.  100 is what the panels are initialised to; 0 is very
-// dark but still lit -- use displaySetPower(false) for actually off.
-void displaySetBrightness(uint8_t percent);
+// One panel's light output, as a fraction of the most its controller can
+// drive: 1.0 is the controller's maximum, and anything above 0 is lit, if
+// faintly -- off is displaySetPower(false).  Through the panel's own current
+// controls; see dimmer.h, which is the only caller, for why.
+void displaySetLuminance(uint8_t e, float fraction);
+
+// The fraction the panels are initialised to -- below 1.0, since neither
+// controller's setup runs it at full current.  What "unchanged" means.
+float displayInitialLuminance(void);
+
+// Which chip-select slot eye `e` is on at the moment -- 0 for SELECT_L_PIN,
+// 1 for SELECT_R_PIN.  For settings that belong to the panel rather than to
+// the eye, which a swap moves between them.
+uint8_t displaySlot(uint8_t e);
 
 #endif // DISPLAY_H

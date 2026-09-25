@@ -49,6 +49,12 @@ struct DeviceState {
 
   bool swapped;
   bool flipped[2]; // per eye as displayed: 0 is on your left, 1 your right
+
+  uint8_t dimPercent;  // the brightness setting, 0 (off) to 100
+  uint8_t dimShown;    // what the panels show now: fades, sleep, a sweep
+  uint8_t dimGammaX10; // the curve, in tenths
+  int8_t dimTrim[2];   // per eye as displayed, like flipped[]
+  bool dimSweeping;
   bool startleActive;
 
   bool clockOn;
@@ -128,6 +134,18 @@ void stateSetSwap(bool swapped);
 // but the setting attaches to the panel that eye is on and stays with it
 // through a later swap.  False if there is no such eye.  Between frames.
 bool stateSetFlip(uint8_t eye, bool flipped);
+
+// -------------------------------------------------------------- brightness --
+// See dimmer.h.  0 is off; changes fade.  Each false if out of range.
+
+bool stateDimSet(long percent);          // 0-100
+bool stateDimSetGamma(long gammaX10);    // DIM_GAMMA_MIN-DIM_GAMMA_MAX, tenths
+// `eye` as displayed, like stateSetFlip(), and like it the trim attaches to
+// the panel that eye is on.  -50 to +50, a percentage of that panel's level.
+bool stateDimSetTrim(uint8_t eye, long percent);
+// The slow full-range sweep, for judging a curve by eye.  Not a setting:
+// it is not saved, and setting a level ends it.
+void stateDimSweep(bool on);
 
 // ---------------------------------------------------------------- one-shots --
 

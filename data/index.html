@@ -88,6 +88,35 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
     <h2>Eye <span class="tag saved">persistent</span></h2>
     <div class=row><select id=eye class=grow></select><button id=eyeNext>next</button></div>
     <div class=row>
+      <label for=bright>bright</label><input type=range id=bright min=0 max=100>
+      <span id=brightTxt class=dim></span>
+    </div>
+    <details>
+      <summary class=dim>tune brightness</summary>
+      <div class=row>
+        <label for=brightGamma>curve</label>
+        <select id=brightGamma>
+          <option value="1.0">linear, 1.0</option>
+          <option value="1.8">1.8</option>
+          <option value="2.2">2.2</option>
+          <option value="2.8">2.8</option>
+          <option value="3.5">3.5</option>
+        </select>
+        <button id=brightSweep>sweep</button>
+      </div>
+      <div class=row>
+        <label for=trimL>left</label><input type=range id=trimL min=-50 max=50>
+        <span id=trimLTxt class=dim></span>
+      </div>
+      <div class=row>
+        <label for=trimR>right</label><input type=range id=trimR min=-50 max=50>
+        <span id=trimRTxt class=dim></span>
+      </div>
+      <p class=note>The curve decides how the slider's steps feel; sweep runs
+      slowly from full to nearly off and back so you can judge one. Trim evens
+      out two panels that do not match; your left and right.</p>
+    </details>
+    <div class=row>
       <button id=pupil>pupil</button>
       <button id=swap>swap panels</button>
     </div>
@@ -331,7 +360,43 @@ async function act(fn) {
   busy = true; $('#err').textContent = '';
   try { await fn(); await refresh(); }
   catch (e) { $('#err').textContent = e.message; }
-  finally { busy = false; }
+  finally { busy = false; flushNewest(); }
+}
+
+// Controls that are dragged -- the gaze pad, the sliders -- produce events far
+// faster than the board can answer them, and each one used to become a PUT
+// followed by a full GET: two round trips, back to back, for the length of
+// the drag.  The board serves one client at a time from inside its render
+// loop, so that is precisely the load that makes the eyes stall.
+//
+// Instead: keep only the newest value per endpoint, allow one request in
+// flight, and when it lands send the newest again if anything has moved
+// since.  The rate limits itself to whatever the board can sustain, with no
+// timer to tune, and the reply to a PUT already describes the result -- the
+// once-a-second poll reconciles anything else.  Nothing is dropped: a value
+// set while the board is busy waits here, and act() drains it when it is done.
+const newest = new Map();
+
+async function flushNewest() {
+  if (busy || halted) return;
+  busy = true;
+  try {
+    while (newest.size) {
+      const [path, body] = newest.entries().next().value;
+      newest.delete(path);
+      await api(path, 'PUT', body);
+    }
+    $('#err').textContent = '';
+  } catch (e) {
+    $('#err').textContent = e.message;
+  } finally {
+    busy = false;
+  }
+}
+
+function sendNewest(path, body) {
+  newest.set(path, body);
+  flushNewest();
 }
 
 // A field being edited must not be overwritten by the next poll.
@@ -416,6 +481,19 @@ function render(s) {
   $('#eye').value = s.eye.index;
   $('#pupil').classList.toggle('on', s.pupil.on);
   $('#swap').classList.toggle('on', s.swap.on);
+  const dm = s.dim;
+  if (!held($('#bright'))) $('#bright').value = dm.percent;
+  $('#brightTxt').textContent = (dm.percent ? dm.percent + '%' : 'off') +
+    (dm.shown !== dm.percent ? ` (now ${dm.shown}%)` : '');
+  const curve = dm.gamma.toFixed(1);
+  if (![...$('#brightGamma').options].some(o => o.value === curve))
+    $('#brightGamma').add(new Option(curve, curve)); // one set elsewhere, not listed
+  if (!held($('#brightGamma'))) $('#brightGamma').value = curve;
+  $('#brightSweep').classList.toggle('on', dm.sweeping);
+  for (const [id, v] of [['trimL', dm.trim.left], ['trimR', dm.trim.right]]) {
+    if (!held($('#' + id))) $('#' + id).value = v;
+    $('#' + id + 'Txt').textContent = (v > 0 ? '+' : '') + v + '%';
+  }
   $('#flipL').classList.toggle('on', s.flip.left);
   $('#flipR').classList.toggle('on', s.flip.right);
 
@@ -575,6 +653,18 @@ $('#eye').onchange = e => act(() => api('/eye', 'PUT', {index: +e.target.value})
 $('#eyeNext').onclick = () => act(() => api('/eye', 'PUT', {next: true}));
 $('#pupil').onclick = () => act(() => api('/pupil', 'PUT', {on: !st.pupil.on}));
 $('#swap').onclick = () => act(() => api('/swap', 'PUT', {on: !st.swap.on}));
+// Live while dragging: the board fades to each value as it arrives.  The
+// trims share one endpoint, so each sends the pair and neither loses the other.
+$('#bright').oninput = e => {
+  $('#brightTxt').textContent = +e.target.value ? e.target.value + '%' : 'off';
+  sendNewest('/dim', {percent: +e.target.value});
+};
+const sendTrim = () => sendNewest('/dim', {trim: {left: +$('#trimL').value,
+                                                  right: +$('#trimR').value}});
+$('#trimL').oninput = sendTrim;
+$('#trimR').oninput = sendTrim;
+$('#brightGamma').onchange = e => act(() => api('/dim', 'PUT', {gamma: +e.target.value}));
+$('#brightSweep').onclick = () => act(() => api('/dim', 'PUT', {sweep: !st.dim.sweeping}));
 $('#flipL').onclick = () => act(() => api('/flip', 'PUT', {left: !st.flip.left}));
 $('#flipR').onclick = () => act(() => api('/flip', 'PUT', {right: !st.flip.right}));
 
@@ -766,22 +856,6 @@ $('#slpLevel').onchange = () => act(async () => {
 
 const pad = $('#pad');
 
-// Dragging produces pointer events far faster than the board can answer them,
-// and each one used to become a PUT followed by a full GET -- two round trips,
-// back to back, for the length of the drag.  The board serves one client at a
-// time from inside its render loop, so that is precisely the load that makes
-// the eyes stall.
-//
-// Instead: keep only the newest target, allow one request in flight, and when
-// it lands send the newest again if the pointer has moved since.  The rate
-// limits itself to whatever the board can actually sustain, with no timer to
-// tune, and the traffic halves because the reply to a PUT already describes
-// the result -- the once-a-second poll reconciles anything else.
-//
-// It also fixes a quieter bug: a move arriving while a request was out used to
-// be dropped, so the *last* position of a drag, the one that matters, often
-// never got sent at all and the eye stopped somewhere in the middle.
-let gazeTarget = null;
 let dragging = false;
 
 function showDot(x, y) {
@@ -789,31 +863,13 @@ function showDot(x, y) {
   $('#dot').style.top = (flipY(y) / 1023 * 100) + '%';
 }
 
-async function gazeFlush() {
-  if (busy || halted) return;
-  busy = true;
-  try {
-    while (gazeTarget) {
-      const t = gazeTarget;
-      gazeTarget = null;
-      await api('/gaze', 'PUT', t);
-    }
-    $('#err').textContent = '';
-  } catch (e) {
-    $('#err').textContent = e.message;
-  } finally {
-    busy = false;
-  }
-}
-
 function aim(ev) {
   const r = pad.getBoundingClientRect();
   const c = v => Math.max(0, Math.min(1023, Math.round(v)));
   const x = c((ev.clientX - r.left) / r.width * 1023);
   const y = flipY(c((ev.clientY - r.top) / r.height * 1023));
-  gazeTarget = {x: x, y: y};
   showDot(x, y); // follows the pointer, not the network
-  gazeFlush();
+  sendNewest('/gaze', {x: x, y: y});
 }
 
 pad.onpointerdown = e => {

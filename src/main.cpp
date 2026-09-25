@@ -27,6 +27,7 @@
 #include "rtc.h"
 #include "timekeeping.h"
 #include "eyestore.h"
+#include "dimmer.h"
 #include "health.h"
 #include "nvsread.h"
 #include "parse.h"
@@ -400,6 +401,10 @@ static bool settingsDirty = false;
 #define PREFS_KEY_SLP_A "slpStart"
 #define PREFS_KEY_SLP_B "slpStop"
 #define PREFS_KEY_SLP_LVL "slpLevel"
+#define PREFS_KEY_DIM "dim"
+#define PREFS_KEY_DIM_GAMMA "dimGamma" // tenths: 22 is gamma 2.2
+#define PREFS_KEY_DIM_TRIM0 "dimTrim0" // SELECT_L_PIN's panel, -50..50
+#define PREFS_KEY_DIM_TRIM1 "dimTrim1" // SELECT_R_PIN's
 
 // The clock's display preferences are saved; the time itself is not.
 // Restoring a time from whenever the power went off would be wrong by
@@ -432,6 +437,10 @@ static void saveSettings(void) {
   prefs.putUShort(PREFS_KEY_SLP_B, sleepStop());
   prefs.putUChar(PREFS_KEY_SLP_LVL, sleepLevel());
 #endif
+  prefs.putUChar(PREFS_KEY_DIM, dimmerPercent());
+  prefs.putUChar(PREFS_KEY_DIM_GAMMA, dimmerGammaX10());
+  prefs.putChar(PREFS_KEY_DIM_TRIM0, dimmerTrim(0));
+  prefs.putChar(PREFS_KEY_DIM_TRIM1, dimmerTrim(1));
   prefs.end();
   settingsDirty = false;
 }
@@ -640,18 +649,17 @@ void splashCenter(GFXcanvas1 &c, const char *str, uint8_t size,
 // PANEL POWER ---------------------------------------------------------------
 // Lit or dark, and how bright, without drawing anything.
 //
-// Sleep mode uses these rather than pushing black pixels.  An OLED showing
-// black is already dark, so a frame of black costs a full SPI push to achieve
-// what one command does -- and the command also stops the panel driving its
-// rows, which a frame of black does not.
+// The dimmer drives these rather than pushing black or scaled pixels.  An
+// OLED showing black is already dark, so a frame of black costs a full SPI
+// push to achieve what one command does -- and the command also stops the
+// panel driving its rows, which a frame of black does not.
 //
 // The state is tracked here so callers can ask for what they want without
-// caring what is already true.  pushCanvas() in particular asks for the
-// panels on before every card it draws, which is what stops an address card
-// or an update message arriving invisibly on a sleeping head.
+// caring what is already true.  pushCanvas() in particular asks the dimmer
+// for readable panels before every card it draws, which is what stops an
+// address card or an update message arriving invisibly on a sleeping head.
 
 static bool panelsOn = true;
-static uint8_t panelBrightness = 100;
 
 bool displayIsOn(void) { return panelsOn; }
 
@@ -673,31 +681,74 @@ void displaySetPower(bool on) {
   }
 }
 
-void displaySetBrightness(uint8_t percent) {
-  if (percent > 100)
-    percent = 100;
-  if (percent == panelBrightness)
-    return;
-  panelBrightness = percent;
-  for (uint8_t e = 0; e < NUM_EYES; e++) {
+// What each controller's initialisation leaves it at, against the most it can
+// drive.  The SSD1327's contrast register goes to 255 and begin() sets 0x80.
+// The SSD1351 starts at full master current, with the three colour channels
+// at 0xC8, 0x80 and 0xC8 -- blue and red at 200 of 255, green lower to balance
+// them.  The dimmer's 100% scales that ratio up until the highest reaches
+// 255, so the colour balance never changes, only the level.
 #if USE_SSD1327
-    // 0x80 is what begin() sets, so 100% means the panel as it was set up
-    // rather than the register's maximum.
-    eye[e].display.setContrast(graySPI, (uint8_t)((percent * 0x80) / 100));
+static const float INITIAL_LUMINANCE = 0x80 / 255.0f;
 #else
-    // Master contrast is four bits; 0x0F is what the library's init sends.
-    eye[e].display.startWrite();
-    eye[e].display.writeCommand(SSD1351_CMD_CONTRASTMASTER);
-    eye[e].display.spiWrite((uint8_t)((percent * 15) / 100));
-    eye[e].display.endWrite();
+static const uint8_t CHANNEL_INIT[3] = {0xC8, 0x80, 0xC8};
+static const float INITIAL_LUMINANCE = 0xC8 / 255.0f;
 #endif
+
+float displayInitialLuminance(void) { return INITIAL_LUMINANCE; }
+
+uint8_t displaySlot(uint8_t e) { return flipSlot(eye[e].cs); }
+
+// The registers last sent to each panel, so a fade that has not moved a
+// register this frame sends nothing.  Zero means "not sent yet".
+static uint16_t sentLevel[NUM_EYES];
+
+void displaySetLuminance(uint8_t e, float f) {
+  if (e >= NUM_EYES)
+    return;
+  if (f > 1.0f)
+    f = 1.0f;
+#if USE_SSD1327
+  // One register, current in 256 steps.  Floor of 1: above zero means lit.
+  long reg = lroundf(f * 255.0f);
+  uint8_t contrast = (uint8_t)(reg < 1 ? 1 : reg);
+  if (sentLevel[e] == (uint16_t)(contrast + 1))
+    return;
+  sentLevel[e] = contrast + 1;
+  eye[e].display.setContrast(graySPI, contrast);
+#else
+  // Two stages.  Master current is sixteen coarse steps, (m + 1) / 16 of
+  // full; each channel then has 256 fine ones.  Take the smallest master
+  // step that reaches the level and make up the rest in the channels, which
+  // keeps fine resolution all the way down instead of sixteen jumps.
+  int m = (int)ceilf(f * 16.0f) - 1;
+  if (m < 0)
+    m = 0;
+  const float fine = f * 16.0f / (m + 1); // 0..1 of the channels' own range
+  uint8_t ch[3];
+  for (uint8_t i = 0; i < 3; i++) {
+    long v = lroundf(fine * CHANNEL_INIT[i] * (255.0f / 0xC8));
+    ch[i] = (uint8_t)(v < 1 ? 1 : v > 255 ? 255 : v);
   }
+  // Two bytes of signature is plenty to notice "unchanged": the master step
+  // and the brightest channel move whenever anything does.
+  const uint16_t sig = (uint16_t)((m << 8) | ch[0]) + 1;
+  if (sentLevel[e] == sig)
+    return;
+  sentLevel[e] = sig;
+  eye[e].display.startWrite();
+  eye[e].display.writeCommand(SSD1351_CMD_CONTRASTABC);
+  for (uint8_t i = 0; i < 3; i++)
+    eye[e].display.spiWrite(ch[i]);
+  eye[e].display.writeCommand(SSD1351_CMD_CONTRASTMASTER);
+  eye[e].display.spiWrite((uint8_t)m);
+  eye[e].display.endWrite();
+#endif
 }
 
 void pushCanvas(uint8_t e, GFXcanvas1 &canvas) {
-  // Anything drawing a card wants the panels lit, whether or not sleep
-  // mode has turned them off.  Cheap when they already are.
-  displaySetPower(true);
+  // Anything drawing a card wants the panels lit and readable, whatever the
+  // dimmer or sleep mode had them at.  Cheap when they already are.
+  dimmerCard();
 
 #if USE_SSD1327
   // 1 bit per pixel in, 4 bits per pixel out, two pixels to a byte.
@@ -930,6 +981,7 @@ void setup(void) {
   // eye[0].display.write16(0x76);
 
   timeApplyTz(); // the built-in default, until settings say otherwise
+  dimmerBegin(); // the panels are up at their initial level; start from it
 
 #if CONTROLLABLE
   eyeStoreBegin(); // before loadSettings(), which may name the loaded design
@@ -1212,6 +1264,13 @@ static void loadSettings(void) {
             nvsReadU16(prefs, PREFS_KEY_SLP_B, SLEEP_STOP_MIN, 0, 1439),
             nvsReadU8(prefs, PREFS_KEY_SLP_LVL, SLEEP_LEVEL, 0, 100));
 #endif
+  // Nothing saved means the brightness the panels always had.
+  const int8_t trims[2] = {nvsReadI8(prefs, PREFS_KEY_DIM_TRIM0, 0, -50, 50),
+                           nvsReadI8(prefs, PREFS_KEY_DIM_TRIM1, 0, -50, 50)};
+  dimmerLoad(nvsReadU8(prefs, PREFS_KEY_DIM, dimmerDefaultPercent(), 0, 100),
+             nvsReadU8(prefs, PREFS_KEY_DIM_GAMMA, DIM_GAMMA_X10, DIM_GAMMA_MIN,
+                       DIM_GAMMA_MAX),
+             trims);
   prefs.end();
 
 #if CLOCK
@@ -1439,6 +1498,12 @@ void stateGet(DeviceState &o) {
   // Reported per eye as displayed, which is what a person can point at.
   for (uint8_t e = 0; e < 2; e++)
     o.flipped[e] = e < NUM_EYES && panelFlip[flipSlot(eye[e].cs)];
+  o.dimPercent = dimmerPercent();
+  o.dimShown = dimmerShown();
+  o.dimGammaX10 = dimmerGammaX10();
+  for (uint8_t e = 0; e < 2; e++)
+    o.dimTrim[e] = e < NUM_EYES ? dimmerTrim(flipSlot(eye[e].cs)) : 0;
+  o.dimSweeping = dimmerSweeping();
 #if CLOCK
   o.startleActive = (startleState != STARTLE_OFF);
   o.clockOn = clockOn;
@@ -1636,6 +1701,39 @@ bool stateSetFlip(uint8_t e, bool flipped) {
   return true;
 }
 
+bool stateDimSet(long percent) {
+  LOCKED;
+  if (percent < 0 || percent > 100)
+    return false;
+  dimmerSetPercent((uint8_t)percent); // the fade happens in the render loop
+  settingsDirty = true;
+  return true;
+}
+
+bool stateDimSetGamma(long gammaX10) {
+  LOCKED;
+  if (gammaX10 < DIM_GAMMA_MIN || gammaX10 > DIM_GAMMA_MAX)
+    return false;
+  dimmerSetGammaX10((uint8_t)gammaX10);
+  settingsDirty = true;
+  return true;
+}
+
+bool stateDimSetTrim(uint8_t e, long percent) {
+  LOCKED;
+  if (e >= NUM_EYES || percent < -50 || percent > 50)
+    return false;
+  // Resolved to the panel now, as stateSetFlip() does, and for its reason.
+  dimmerSetTrim(flipSlot(eye[e].cs), (int8_t)percent);
+  settingsDirty = true;
+  return true;
+}
+
+void stateDimSweep(bool on) {
+  LOCKED;
+  dimmerSetSweep(on);
+}
+
 void stateBlink(void) {
   LOCKED;
 #if AUTOBLINK
@@ -1810,6 +1908,10 @@ static void cmdHelp(Print &out) {
                  "  pupil [on|off]            pupil, or a full iris disc\n"
                  "  swap [on|off]             swap which panel is which "
                  "eye\n"
+                 "  dim [0-100]               brightness; 0 is off\n"
+                 "  dim gamma <1.0-4.0>       the brightness curve\n"
+                 "  dim trim left|right <n>   even out two panels, -50..50\n"
+                 "  dim sweep [off]           slow full-range sweep\n"
                  "  flip left|right [on|off]  turn a panel mounted upside "
                  "down\n"
                  "  save                      remember settings across "
@@ -1819,6 +1921,17 @@ static void cmdHelp(Print &out) {
                  "  splash                    re-show the panel name cards\n"
                  "  status                    report current state\n"
                  "  help                      this list\n"));
+}
+
+// The brightness, and what feeds it.  "shown" differs from the setting
+// during a fade, a sweep, or while sleep mode has the eyes dimmed.
+static void cmdDim(Print &out) {
+  DeviceState s;
+  stateGet(s);
+  out.printf("dim=%u%% shown=%u%% gamma=%u.%u trim left=%+d right=%+d%s\n",
+             (unsigned)s.dimPercent, (unsigned)s.dimShown,
+             (unsigned)(s.dimGammaX10 / 10), (unsigned)(s.dimGammaX10 % 10),
+             s.dimTrim[0], s.dimTrim[1], s.dimSweeping ? " (sweeping)" : "");
 }
 
 // What the board found wrong with its own stored data at boot, and what it
@@ -1854,6 +1967,7 @@ void cmdStatus(Print &out) {
                 NUM_EYES > 1 && panelFlip[flipSlot(eye[NUM_EYES - 1].cs)]
                     ? "R" : "-",
                 settingsDirty ? " (unsaved)" : "");
+  out.printf(" dim=%u%%", (unsigned)dimmerPercent());
   out.printf(" panel=%s heap=%u up=%us",
                 USE_SSD1327 ? "ssd1327" : "ssd1351",
                 (unsigned)ESP.getFreeHeap(), (unsigned)(millis() / 1000));
@@ -2258,6 +2372,33 @@ void handleCommand(char *line, Print &out) {
     }
     stateSetSwap(want);
     out.printf("ok swap=%s\n", eyesSwapped ? "on" : "off");
+  } else if (!strcmp(cmd, "dim")) {
+    char *a = strtok(NULL, " \t");
+    long v;
+    bool ok = true;
+    if (!a) {
+      // bare `dim` reports
+    } else if (!strcmp(a, "gamma")) {
+      ok = parseTenths(strtok(NULL, " \t"), DIM_GAMMA_MIN, DIM_GAMMA_MAX, v) &&
+           stateDimSetGamma(v);
+    } else if (!strcmp(a, "trim")) {
+      // Your left and right, facing the head, as for `flip`.
+      char *side = strtok(NULL, " \t");
+      char *n = strtok(NULL, " \t");
+      uint8_t e = !side ? 2 : !strcmp(side, "left") ? 0 : !strcmp(side, "right") ? 1 : 2;
+      ok = e < 2 && parseLong(n, -50, 50, v) && stateDimSetTrim(e, v);
+    } else if (!strcmp(a, "sweep")) {
+      char *o = strtok(NULL, " \t");
+      stateDimSweep(!(o && !strcmp(o, "off")));
+    } else {
+      ok = parseLong(a, 0, 100, v) && stateDimSet(v);
+    }
+    if (!ok) {
+      out.println(F("usage: dim [0-100] | dim gamma <1.0-4.0> | "
+                    "dim trim left|right <-50..50> | dim sweep [off]"));
+      return;
+    }
+    cmdDim(out);
   } else if (!strcmp(cmd, "flip")) {
     // Left and right are YOURS, facing the head -- the "YOUR LEFT" line of
     // the splash -- because that is the side you can see is upside down.
@@ -2712,9 +2853,12 @@ void frame(            // Process motion for a single frame of left or right eye
   // Lowest priority of everything that can own the panels: the cards and the
   // splash above have already had their chance, and an address asked for at
   // three in the morning is still worth showing.
-  if (sleepPoll())
-    return; // dark, and nothing to draw
+  dimmerSetSleepFactor(sleepPoll());
 #endif
+  // After the cards too: they light the panels themselves, and this fades
+  // back from wherever they left them.
+  if (dimmerPoll())
+    return; // faded all the way off: dark, and nothing to draw
 #if DEBUG || CONTROLLABLE
   // Counted here rather than at the top of the function, so the rate is
   // frames drawn and not frames attempted: the returns above hand the panels

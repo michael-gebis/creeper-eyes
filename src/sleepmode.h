@@ -34,9 +34,10 @@
 void sleepBegin(void);
 
 // Called once per frame, after the cards and the splash have had their say.
-// Returns true when the panels are dark and there is nothing to draw, which
-// is the caller's cue to skip rendering entirely.
-bool sleepPoll(void);
+// Returns how bright the eyes should be, as a percentage of the brightness
+// setting: 100 awake, the level while asleep, 0 for off.  For
+// dimmerSetSleepFactor(), which does the dimming.
+uint8_t sleepPoll(void);
 
 // Someone did something deliberate -- a command, a button press, an API call
 // that changes state.  Holds the eyes awake for SLEEP_WAKE_S even inside the
@@ -64,7 +65,7 @@ void sleepSetEnabled(bool on);
 uint16_t sleepStart(void);
 uint16_t sleepStop(void);
 bool sleepSetWindow(uint16_t startMin, uint16_t stopMin);
-uint8_t sleepLevel(void);      // 0 = panels off, 1-100 = dimmed and still running
+uint8_t sleepLevel(void);      // 0 = panels off, 1-100 = % of the brightness setting
 void sleepSetLevel(uint8_t percent);
 
 // Minutes until the next transition, for a page that wants to say "asleep

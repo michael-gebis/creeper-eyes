@@ -183,6 +183,7 @@ This page gets you a working head. Everything else has a page of its own.
 | [Networking](docs/NETWORK.md) | Joining WiFi, changing it later, updating over the air |
 | [Codes on the eyes](docs/QR.md) | Setup and address codes, and what a phone can really read off a panel |
 | [Keeping time](docs/TIME.md) | Time servers, the clock face, running without a network |
+| [Brightness](docs/BRIGHTNESS.md) | The dimmer: curves, fades, matching two panels |
 | [Sleep mode](docs/SLEEP.md) | Dark panels overnight |
 | [Configuring](docs/CONFIG.md) | Every build option, and what gets saved |
 | [Locking it down](docs/SECURITY.md) | Passwords, and why there is no HTTPS |

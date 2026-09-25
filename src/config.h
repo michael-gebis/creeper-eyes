@@ -367,7 +367,8 @@
 
 // How dark.  0 turns the panels off outright and stops rendering, which is
 // the point of the feature; 1-100 dims them instead and keeps the eyes
-// moving faintly, which is a nightlight rather than a sleep.
+// moving faintly, which is a nightlight rather than a sleep.  A percentage
+// of the brightness setting, not of the panel: see BRIGHTNESS below.
 #ifndef SLEEP_LEVEL
 #define SLEEP_LEVEL 0
 #endif
@@ -381,6 +382,32 @@
 // or a browser tab left open overnight would keep the head awake.
 #ifndef SLEEP_WAKE_S
 #define SLEEP_WAKE_S 60
+#endif
+
+// BRIGHTNESS ----------------------------------------------------------------
+//
+// The dimmer -- see src/dimmer.h and docs/BRIGHTNESS.md.  Always built: it is
+// also what sleep mode dims and darkens the panels through.
+
+// The curve from setting to light, in tenths: 22 is gamma 2.2, the usual
+// choice for a display, where equal steps of the setting look like equal
+// steps of brightness.  10 is linear.  Changeable at runtime within the
+// limits below, so curves can be compared by eye.
+#ifndef DIM_GAMMA_X10
+#define DIM_GAMMA_X10 22
+#endif
+#define DIM_GAMMA_MIN 10
+#define DIM_GAMMA_MAX 40
+
+// How long a fade across the whole range takes; smaller changes are quicker
+// in proportion.  0 would jump -- avoid it, the division is by this.
+#ifndef DIM_FADE_MS
+#define DIM_FADE_MS 500
+#endif
+
+// Each half of `dim sweep`: full to nearly off, then back.
+#ifndef DIM_SWEEP_MS
+#define DIM_SWEEP_MS 8000
 #endif
 
 // AUTHENTICATION ------------------------------------------------------------

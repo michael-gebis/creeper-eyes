@@ -114,6 +114,7 @@ ok saved eye=dragon swap=on
 | :---- | :-------- |
 | Eye design | The clock's time |
 | Panel swap and flip | Gaze (`look`) |
+| Brightness, its curve, and each panel's trim | A brightness sweep |
 | Pupil on/off | Dilation (`dilate`) |
 | Clock on/off, rate, second hand, hand colours | |
 | Timezone | |
