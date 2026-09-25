@@ -811,6 +811,31 @@ static void loadSettings(void); // defined below setup(), with the settings
 
 static void startSender(void); // defined below setup(), with drawEye()
 
+// Why the board last reset, when that was not on purpose.  Power-on, a reset
+// button and a restart the firmware asked for -- an update, a WiFi change --
+// say nothing.  A crash, a watchdog or a brownout goes through health.h, so
+// it reaches the console, the API and the control page rather than only a
+// serial line printed before anybody was listening.
+static void reportResetReason(void) {
+  const char *why = NULL;
+  switch (esp_reset_reason()) {
+  case ESP_RST_PANIC:
+    why = "a crash";
+    break;
+  case ESP_RST_INT_WDT:
+  case ESP_RST_TASK_WDT:
+  case ESP_RST_WDT:
+    why = "a watchdog";
+    break;
+  case ESP_RST_BROWNOUT:
+    why = "a brownout: the supply dipped too low";
+    break;
+  default:
+    return;
+  }
+  healthNote("the board restarted after %s", why);
+}
+
 HardwareSerial SerialIn(1);
 
 // Four centred lines on both panels.  Used whenever the eyes are not running
@@ -973,6 +998,7 @@ void setup(void) {
                (unsigned)getCpuFrequencyMhz(), (unsigned)ESP.getFreeHeap());
   DEBUG_PRINTF("[creeper-eyes] SPI SCK=%u MISO=%u MOSI=%u | eyes=%u\n",
                SCLK_PIN, MISO_PIN, MOSI_PIN, (unsigned)NUM_EYES);
+  reportResetReason();
   // SerialIn.begin(9600, SERIAL_8N1, UART_RX_PIN); // disabled
   randomSeed(analogRead(A3)); // Seed random() from floating analog input
 
