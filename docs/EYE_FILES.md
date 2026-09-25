@@ -12,7 +12,7 @@ can go in the slot without rebuilding anything.
    release.
 2. On the control page, in the **Eye** card, choose the file under
    **load an eye file** and press **load**.
-3. The panels read `EYE LOADING` for a few seconds, then the new design comes
+3. The panels read `EYE LOADING` for five to eight seconds, then the new design comes
    up and joins the eye list after the built-in ones.
 
 Loading another file replaces the design already in the slot. **remove**
@@ -153,8 +153,11 @@ immediate because web requests and console commands are both handled inside
 the render loop, between frames, so nothing is mid-draw.
 
 **The eyes stop while it loads.** Requests are served from the render loop, so
-the few seconds of erasing and writing are a few seconds without animation. The
-panels say `EYE LOADING` so a frozen eye doesn't look like a crash.
+the upload is time without animation: 5–8 seconds over WiFi, measured on a
+DevKit. Most of that is receiving 158 KB rather than writing it, and a file the
+board refuses takes about as long, because the web server reads the whole body
+before its handler can answer. The panels say `EYE LOADING` so a frozen eye
+doesn't look like a crash.
 
 ### Security
 

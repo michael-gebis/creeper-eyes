@@ -302,10 +302,14 @@ def do_save(port: str, path: str) -> int:
         print("WARNING: %d entries failed their checksum and are listed as "
               "damaged.\n  The board ignores those itself; the raw image "
               "still has them exactly as read." % decoded["damaged"])
-    wifi: list[str] = [n for n in ns if "net80211" in n]
-    print("wifi credentials present: %s"
+    # The radio's namespace exists as soon as it has run at all; what matters
+    # is whether a network is stored in it.  A board on its built-in network
+    # (secrets.h) has the namespace and no network, and a restore would not
+    # bring one back.
+    wifi: list[str] = [n for n in ns if "net80211" in n and "sta.ssid" in ns[n]]
+    print("wifi network stored: %s"
           % ("yes, in " + wifi[0] if wifi else
-             "NOT FOUND -- has this board ever joined a network?"))
+             "NO -- this board is on its built-in network, or has none"))
     return 0
 
 
