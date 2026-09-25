@@ -135,8 +135,8 @@ bool webRebootPending(void);
 
 // The REST API, in api.cpp.  Hangs its routes off the server the web
 // module owns, rather than owning one of its own.
-class WebServer;
-void apiRegister(WebServer &s);
+class AuthWebServer;
+void apiRegister(AuthWebServer &s);
 
 #endif // NETWORK
 #endif // NET_H

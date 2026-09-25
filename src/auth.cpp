@@ -49,7 +49,54 @@ static bool tokenMatches(const String &header) {
 
 #endif // AUTH_TOKEN
 
-void authBegin(WebServer &s) {
+// 128 random bits as hex, from the hardware RNG -- which is truly random
+// once the radio is up, and this is only ever called after it is.
+static String randomHex(void) {
+  char buf[33];
+  for (uint8_t i = 0; i < 4; i++)
+    snprintf(buf + i * 8, 9, "%08lx", (unsigned long)esp_random());
+  return String(buf);
+}
+
+void AuthWebServer::expireNonce(void) {
+  if (_snonce.length() &&
+      millis() - nonceBornMs < (uint32_t)AUTH_NONCE_S * 1000UL)
+    return;
+  _snonce = randomHex();
+  _sopaque = randomHex();
+  nonceBornMs = millis();
+}
+
+// The nonce="..." a request's Authorization header carries, or "".
+static String requestNonce(WebServer &s) {
+  if (!s.hasHeader("Authorization"))
+    return "";
+  const String h = s.header("Authorization");
+  if (!h.startsWith("Digest "))
+    return "";
+  int at = h.indexOf("nonce=\"");
+  if (at < 0)
+    return "";
+  at += 7;
+  int end = h.indexOf('"', at);
+  return end < 0 ? String() : h.substring(at, end);
+}
+
+// requestAuthentication(), less the fresh nonce on every call and plus the
+// stale flag -- see auth.h.
+void AuthWebServer::digestChallenge(const char *realm, const char *message) {
+  expireNonce();
+  _srealm = realm;
+  const String theirs = requestNonce(*this);
+  const bool stale = theirs.length() && theirs != _snonce;
+  sendHeader("WWW-Authenticate",
+             String("Digest realm=\"") + _srealm + "\", qop=\"auth\", nonce=\"" +
+                 _snonce + "\", opaque=\"" + _sopaque + "\"" +
+                 (stale ? ", stale=TRUE" : ""));
+  send(401, "text/plain", message);
+}
+
+void authBegin(AuthWebServer &s) {
 #if AUTH_TOKEN
   // Authorization is collected by the server regardless -- it reserves the
   // first slot for it -- but asking explicitly documents the dependency and
@@ -65,7 +112,7 @@ void authBegin(WebServer &s) {
 // What the checks make of a request, before anything is said about it.
 enum Verdict { ALLOW, WRONG_HOST, NEED_DIGEST, NEED_TOKEN };
 
-static Verdict judge(WebServer &s) {
+static Verdict judge(AuthWebServer &s) {
 #if AUTH_HOST_CHECK
   if (!hostIsOurs(s.hostHeader()))
     return WRONG_HOST;
@@ -77,6 +124,7 @@ static Verdict judge(WebServer &s) {
 #endif
 
 #if AUTH_HTTP
+  s.expireNonce(); // an expired nonce must fail here, not be accepted
   if (!s.authenticate(credGet(CRED_USER), credGet(CRED_PASS)))
     return NEED_DIGEST;
 #endif
@@ -89,9 +137,9 @@ static Verdict judge(WebServer &s) {
   return ALLOW;
 }
 
-bool authPermits(WebServer &s) { return judge(s) == ALLOW; }
+bool authPermits(AuthWebServer &s) { return judge(s) == ALLOW; }
 
-bool authCheck(WebServer &s) {
+bool authCheck(AuthWebServer &s) {
   switch (judge(s)) {
   case ALLOW:
     return true;
@@ -102,8 +150,7 @@ bool authCheck(WebServer &s) {
   case NEED_DIGEST:
     // Digest, so the password itself never crosses the wire.  The browser
     // handles the challenge and asks the user once.
-    s.requestAuthentication(DIGEST_AUTH, WIFI_HOSTNAME,
-                            "authentication required\n");
+    s.digestChallenge(WIFI_HOSTNAME, "authentication required\n");
     return false;
   case NEED_TOKEN:
     s.send(401, "text/plain", "a bearer token is required\n");

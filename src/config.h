@@ -413,6 +413,13 @@
 #define AUTH_HOST_CHECK 0
 #endif
 
+// How long one digest nonce lasts, in seconds.  Past this a browser is told
+// its nonce is stale and retries with a fresh one, without asking anybody
+// for the password; it bounds how long a captured request could be replayed.
+#ifndef AUTH_NONCE_S
+#define AUTH_NONCE_S 300
+#endif
+
 // A password on over-the-air updates.  No switch: defining OTA_PASSWORD in
 // secrets.h is enough.  A password set but not used because a flag was
 // forgotten has no upside worth the extra knob.

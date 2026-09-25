@@ -559,7 +559,16 @@ function renderTimeStatus(t) {
     (detail ? `<div class=d>${detail}</div>` : '') + `</td></tr>`).join('');
 }
 
-async function refresh() { render(await api('/state')); }
+// One at a time: the poll, a tab coming back into view and every action all
+// ask for one, and two in flight are two requests queued behind a server that
+// answers one client at a time -- and, while a password prompt is up, two
+// prompts.  A second caller gets the refresh already under way.
+let refreshing = null;
+function refresh() {
+  if (!refreshing)
+    refreshing = api('/state').then(render).finally(() => { refreshing = null; });
+  return refreshing;
+}
 
 // --- eye --------------------------------------------------------------------
 $('#eye').onchange = e => act(() => api('/eye', 'PUT', {index: +e.target.value}));

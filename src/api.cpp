@@ -34,7 +34,7 @@
 // it.
 #define API "/api/v1"
 
-static WebServer *S = nullptr;
+static AuthWebServer *S = nullptr;
 
 // --------------------------------------------------------------- plumbing --
 
@@ -1265,7 +1265,7 @@ static void postSettings(void) {
 
 // Read-only and mutable routes are registered separately so a wrong method
 // gets a 405 from the framework rather than a confusing 404.
-void apiRegister(WebServer &s) {
+void apiRegister(AuthWebServer &s) {
   S = &s;
 
 #if AUTH_HTTP || AUTH_TOKEN || OTA_AUTH

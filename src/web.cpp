@@ -28,7 +28,7 @@
 // leisurely once a second.
 
 // Not static: api.cpp hangs its routes off this one.
-WebServer server(80);
+AuthWebServer server(80);
 
 #if WEB_CMD_ENDPOINT && COMMANDS
 
