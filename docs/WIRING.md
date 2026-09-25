@@ -152,9 +152,12 @@ round, and `save` keeps it. See [Eyes](EYES.md#if-a-panel-is-upside-down).
 
 ### The frame rate will not change
 
-The serial heartbeat reports roughly `fps=20` on colour panels and `fps=30` to
-`fps=40` on grayscale — the range depends on what else the build is doing,
-since the web server is polled from the same loop, which is why the figures in
+The serial heartbeat reports roughly `fps=40` on colour panels, and more on
+grayscale — counted per eye drawn, and the two eyes take turns, so each eye
+is updated half that often. Beside it, `draw`, `send` and `other` split each
+frame's time into computing the pixels, sending them, and everything else;
+on colour the send is most of it. The figures depend on what else the build is
+doing, since the web server is polled from the same loop, which is why those in
 [HTTP_LATENCY.md](HTTP_LATENCY.md) are lower. And it reports the same with
 **nothing connected at all**. The SPI peripheral clocks the same bytes out
 whether a panel is listening or not.
@@ -185,7 +188,7 @@ points at power, not at data wiring.
 | Both panels dark | Power, or `D27` held low. Check 3V3 and GND at the module pins, not at the rail. A panel held in reset stays black. |
 | One panel dark, one fine | That panel's `CS`, or its own power. Everything else is shared, so a shared-signal fault would take out both. |
 | Noise or garbage, not static | `DC` on `D33`, or clock integrity. Commands are being read as pixels, or the reverse. |
-| Flicker, tearing, speckle | Breadboard signal integrity. Shorten the `CLK` and `DIN` jumpers, keep them away from the power runs, and lower `SSD1327_SPI_HZ` if you are on grayscale. |
+| Flicker, tearing, speckle | Breadboard signal integrity. Shorten the `CLK` and `DIN` jumpers, keep them away from the power runs, and lower the bus speed: `SSD1351_SPI_HZ` on colour, which runs at 16 MHz, or `SSD1327_SPI_HZ` on grayscale. |
 | Both panels show the same content | A `CS` line shorted or on the wrong row — both panels selected at once. |
 | Board resets when a panel connects | Brownout. Move to a powered hub or feed 5 V to `VIN`, and on the [carrier board](../hardware/README.md) fit C1. |
 | Board will not boot at all | Check nothing has crept onto `D12`. Held high at reset it stops the board starting. None of the eye signals use it. |

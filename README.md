@@ -205,7 +205,7 @@ and [the battery-backed clock](docs/WIRING_RTC.md).
 | **Both panels show white static** | Wrong controller. You have SSD1327 panels and built `esp32dev`, or vice versa. Confirm with `pio run -e probe1327 -t upload -t monitor` — if the panels respond to that, they are SSD1327; build `gray`. |
 | Both panels dark | Power, or `D27` (RST) not connected. Check 3V3 and GND at the module pins. |
 | One panel dark | That panel's `CS` wire. Everything else is shared, so a shared fault would take out both. |
-| Flicker or speckle | Bus integrity. Shorten the `CLK` and `DIN` jumpers, or lower `SSD1327_SPI_HZ`. |
+| Flicker or speckle | Bus integrity. Shorten the `CLK` and `DIN` jumpers, or lower the bus speed: `SSD1351_SPI_HZ` for colour, `SSD1327_SPI_HZ` for greyscale. |
 | Garbled serial output | `DEBUG_BAUD` and `monitor_speed` disagree, or a CH340 clone struggling above 115200. |
 | Board resets when a panel is connected | Brownout. Use a powered hub or feed 5 V to `VIN`. |
 | Board will not boot | Something on `D12`. Held high at reset it stops the ESP32 starting. No eye signal uses it. |

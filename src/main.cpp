@@ -460,6 +460,14 @@ static void forgetSettings(void) {
 // run between frames.  Reached through pendingEyeDesign, never directly from
 // an operation -- except dropLoadedDesign(), which explains why it cannot
 // wait.
+#if RAM_TABLES
+// The two tables drawEye() reads out of order -- the polar map and the iris
+// -- copied into RAM whenever the design changes, so a flash cache miss
+// cannot cost them; see RAM_TABLES.  Allocated once and kept.  If the
+// allocation fails the renderer simply reads flash, as it always did.
+static uint16_t *ramPolar = NULL, *ramIris = NULL;
+#endif
+
 static void setEyeDesign(uint8_t idx) {
   if (idx >= designCount())
     idx = 0;
@@ -469,6 +477,18 @@ static void setEyeDesign(uint8_t idx) {
   lower = d->lower;
   polar = d->polar;
   iris = d->iris;
+#if RAM_TABLES
+  if (!ramPolar) {
+    ramPolar = (uint16_t *)malloc(sizeof(uint16_t) * 80 * 80);
+    ramIris = (uint16_t *)malloc(sizeof(uint16_t) * IRIS_MAP_WIDTH * IRIS_MAP_HEIGHT);
+  }
+  if (ramPolar && ramIris) {
+    memcpy(ramPolar, d->polar, sizeof(uint16_t) * 80 * 80);
+    memcpy(ramIris, d->iris, sizeof(uint16_t) * IRIS_MAP_WIDTH * IRIS_MAP_HEIGHT);
+    polar = (const uint16_t(*)[80])ramPolar;
+    iris = (const uint16_t(*)[IRIS_MAP_WIDTH])ramIris;
+  }
+#endif
   eyeDesign = idx;
 #if COMMANDS
   settingsDirty = true;
@@ -506,6 +526,17 @@ public:
 };
 
 typedef SwappableSSD1351 displayType; // Using OLED display(s)
+
+// The colour panels' bus speed.  A colour frame is 32 KB, four times a
+// greyscale one, so this is most of the colour frame rate: at the library's
+// default of 8 MHz sending one eye took 33 ms of a 53 ms frame, and the
+// frame rate was 19.  16 MHz gives 28-29.  20 MHz, the SSD1351's rated
+// maximum, gave 30-31 but speckled one of frank-dev's two panels on the
+// carrier board, so the default stays a step below it; both divide the
+// ESP32's 80 MHz exactly.  Lower it if long jumpers speckle the image.
+#ifndef SSD1351_SPI_HZ
+#define SSD1351_SPI_HZ 16000000
+#endif
 #endif
 
 #define DISPLAY_DC 33    // Data/command pin for BOTH displays
@@ -966,7 +997,7 @@ void setup(void) {
     eye[e].display.fill(graySPI, 0x0);
 #else
     digitalWrite(eye[e].cs, LOW); // Select one eye for init
-    eye[e].display.begin();
+    eye[e].display.begin(SSD1351_SPI_HZ); // kept for every transfer after
     digitalWrite(eye[e].cs, HIGH); // Deselect
 #endif
   }
@@ -1007,6 +1038,12 @@ void setup(void) {
 }
 
 // EYE-RENDERING FUNCTION --------------------------------------------------9
+// Where a frame's time goes, summed over the heartbeat's interval and
+// reported with it: computing the pixels, and sending them.  The rest of the
+// interval is everything else the render loop does -- the web server, OTA,
+// the motion code.  Three micros() calls a frame, so it stays in.
+static uint32_t perfDrawUs = 0, perfSendUs = 0;
+
 void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
     uint8_t e,       // Eye array index; 0 or 1 for left/right
     uint32_t iScale, // Scale factor for iris
@@ -1028,6 +1065,7 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
   // the pupils pan in opposite directions and the eyes go cross-eyed.
   // Eyelids mirror; gaze does not.
   const bool mirrorLids = (e == 0);
+  const uint32_t tStart = micros();
   static uint16_t pBurst[SCREEN_WIDTH *
                          SCREEN_HEIGHT]; // Full frame buffer possible on ESP32
 
@@ -1146,11 +1184,13 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
   for (uint16_t i = 0, o = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i += 2, o++)
     gBurst[o] = (uint8_t)((rgb565ToGray4(pBurst[i]) << 4) |
                           rgb565ToGray4(pBurst[i + 1]));
+  const uint32_t tDrawn = micros();
 
   SPI.beginTransaction(graySPI);
   eye[e].display.pushFrame(gBurst);
   SPI.endTransaction();
 #else
+  const uint32_t tDrawn = micros();
   eye[e].display.startWrite();
   // The library's own window, which sends each bound as the one byte the
   // controller takes.  This used to send them by hand as 16-bit writes --
@@ -1162,6 +1202,8 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
   SPI.writePixels((uint8_t *)pBurst, sizeof(pBurst));
   eye[e].display.endWrite();
 #endif
+  perfDrawUs += tDrawn - tStart;
+  perfSendUs += micros() - tDrawn;
 }
 
 // EYE ANIMATION -----------------------------------------------------------
@@ -2659,7 +2701,18 @@ void frame(            // Process motion for a single frame of left or right eye
 #if DEBUG
       // Heartbeat: proves the render loop is alive even with no displays
       // wired, and the LED proves it without a serial cable.
-      DEBUG_PRINTF("[creeper-eyes] fps=%u heap=%u\n", (unsigned)fps,
+      // Per frame drawn, in tenths of a millisecond: drawing, sending, and
+      // the rest of the interval.  frames can be 0 (cards, sleep, off).
+      const uint32_t n = frames ? frames : 1;
+      const uint32_t drawT = perfDrawUs / n / 100, sendT = perfSendUs / n / 100;
+      const uint32_t spent = perfDrawUs + perfSendUs;
+      const uint32_t restT =
+          frames && elapsed * 1000UL > spent ? (elapsed * 1000UL - spent) / n / 100 : 0;
+      DEBUG_PRINTF("[creeper-eyes] fps=%u draw=%u.%ums send=%u.%ums "
+                   "other=%u.%ums heap=%u\n",
+                   (unsigned)fps, (unsigned)(drawT / 10), (unsigned)(drawT % 10),
+                   (unsigned)(sendT / 10), (unsigned)(sendT % 10),
+                   (unsigned)(restT / 10), (unsigned)(restT % 10),
                    (unsigned)ESP.getFreeHeap());
       digitalWrite(DEBUG_LED_PIN, !digitalRead(DEBUG_LED_PIN));
 #endif
@@ -2667,6 +2720,7 @@ void frame(            // Process motion for a single frame of left or right eye
       lastFps = fps;
 #endif
       frames = 0;
+      perfDrawUs = perfSendUs = 0;
       lastReport = now;
     }
   }

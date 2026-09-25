@@ -384,6 +384,19 @@
 #define SLEEP_WAKE_S 60
 #endif
 
+// RENDERING -----------------------------------------------------------------
+
+// Keep the current design's polar map and iris -- 45 KB -- in RAM rather
+// than reading them from flash.  drawEye() reads both out of order, so from
+// flash most reads missed the cache: measured on a colour build with the
+// flash at 80 MHz QIO, drawing an eye took 6.2 ms from flash and 4.5 ms from
+// RAM, 38 fps against 41.  The sclera and eyelids are read in order, which
+// the cache handles, and the sclera is too big to be worth it.  0 for a build
+// that needs the RAM for something else.
+#ifndef RAM_TABLES
+#define RAM_TABLES 1
+#endif
+
 // BRIGHTNESS ----------------------------------------------------------------
 //
 // The dimmer -- see src/dimmer.h and docs/BRIGHTNESS.md.  Always built: it is
