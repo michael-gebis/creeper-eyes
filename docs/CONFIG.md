@@ -26,7 +26,10 @@ and the flash at 80 MHz on four data lines (`board_build.f_flash`,
 `board_build.flash_mode`) instead of the board definition's 40 MHz on two, which
 roughly halved the time to draw an eye. Both only reach a board by a USB flash:
 the partition table is written only by one, and the flash speed is set by the
-bootloader, which is too.
+bootloader, which is too. The CPU runs at 160 MHz rather than 240
+(`board_build.f_cpu`): with `OVERLAP_SEND` frames wait on the SPI bus, not the
+CPU, so this costs two frames a second and saves enough current to matter — see
+[Frame rate](FRAME_RATE.md#brownouts-and-the-cpu-at-160-mhz).
 
 Two groups are **not** guarded and cannot be overridden this way. Three
 derived values — `CONTROLLABLE`, `FAVICON_FRANK` and `FAVICON_EYES` — are
@@ -200,6 +203,13 @@ same list under `warnings`, and `GET /api/v1/state` carries it as
   stored clkRate is 0, outside 1-3600; reset to the default
   the stored WiFi network was damaged and has been forgotten
 ```
+
+The same list reports a restart the board did not plan: after a crash, a
+watchdog or a brownout, it says so at the next boot, rather than leaving the
+reason in serial output nobody was watching. A brownout means the supply sagged
+too far — see [Frame rate](FRAME_RATE.md#brownouts-and-the-cpu-at-160-mhz).
+Power-on, the reset button and restarts the firmware asks for, for an update or
+a WiFi change, stay quiet.
 
 A saved eye design that is simply not on the board is reported but *not*
 removed. It may be a loaded design whose file is gone, and loading that file
