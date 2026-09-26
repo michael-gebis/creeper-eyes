@@ -1079,15 +1079,13 @@ void setup(void) {
 #endif
 }
 
-// EYE-RENDERING FUNCTION --------------------------------------------------9
 // SENDING FRAMES -----------------------------------------------------------
 //
 // With OVERLAP_SEND, a finished frame is handed to a small task on core 0,
 // which sends it while this core -- the render loop, on core 1 -- draws the
-// next into the other buffer.  The eyes take turns, so with two buffers each
-// eye's frame is always in one of them.  Handing a frame over waits for the
-// previous one to be off the wire, so a buffer is never drawn into while it
-// is being sent.
+// next into the other buffer.  Handing a frame over waits for the previous
+// one to be off the wire, so a buffer is never drawn into while it is being
+// sent.
 //
 // The two cores share the SPI bus safely without anything here: the Arduino
 // core's beginTransaction() takes a mutex and endTransaction() gives it
@@ -1095,6 +1093,17 @@ void setup(void) {
 // class's, a frame -- is one transaction.  A command from the render loop
 // simply waits while a frame goes out.  What the mutex cannot do is order
 // things, which is what displayQuiesce() is for.
+//
+// Both rest on assumptions worth stating.  The mutex is the Arduino core's,
+// there only while its HAL locks are built in -- the default, checked below.
+// And displayQuiesce() orders things only because the render loop is the one
+// task that draws: it queues every frame and draws every card, so once it
+// has waited out the frame in flight, nothing can be queued before its card.
+// Drawing from another task -- a web server moved into its own, say -- would
+// need a lock around the wait and the card together.
+#if OVERLAP_SEND && CONFIG_DISABLE_HAL_LOCKS
+#error "OVERLAP_SEND needs the SPI bus lock, which CONFIG_DISABLE_HAL_LOCKS removes"
+#endif
 
 // Where a frame's time goes, summed over the heartbeat's interval and
 // reported with it: drawing the pixels, waiting for the previous frame to be
@@ -1213,10 +1222,15 @@ static void startSender(void) {
 #endif
 }
 
+// EYE RENDERING ------------------------------------------------------------
+
 // The frame buffers: two with OVERLAP_SEND, so one can be drawn while the
 // other is sent.  Colour frames go out as drawn; greyscale ones are drawn in
 // RGB565 like colour, then packed to four bits a pixel, and it is the packed
 // frame that is sent -- so there, only the packed buffer needs a second copy.
+// drawEye() draws into pBurst either way: on greyscale it is the one scratch
+// buffer below, on colour a pointer to whichever colourFrames buffer is free,
+// so the drawing code is the same for both.
 #define FRAME_BUFFERS (OVERLAP_SEND ? 2 : 1)
 #if USE_SSD1327
 static uint16_t pBurst[SCREEN_WIDTH * SCREEN_HEIGHT];
@@ -1251,7 +1265,7 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
   const uint8_t buf = nextBuffer;
   nextBuffer = (uint8_t)((nextBuffer + 1) % FRAME_BUFFERS);
 #if !USE_SSD1327
-  uint16_t *const pBurst = colourFrames[buf]; // drawn and sent as it is
+  uint16_t *const pBurst = colourFrames[buf]; // the frame itself, sent as drawn
 #endif
 
   // Set up raw pixel dump to entire screen.  Although such writes can wrap

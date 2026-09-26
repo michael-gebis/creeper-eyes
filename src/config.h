@@ -399,12 +399,14 @@
 #endif
 
 // Send each eye's finished frame from the ESP32's other core while this one
-// draws the next.  Sending is most of a colour frame -- 18 ms of 24 at 16 MHz
-// -- and drawing is 4-5 ms, so doing them at once makes the frame as long as
-// the send alone instead of their sum.  Costs a second frame buffer (32 KB on
-// colour, 8 KB on greyscale) and a small task pinned to core 0.  0 sends from
-// the render loop, as before, which is also what happens -- with a line in
-// `warnings` -- if the task cannot be started.
+// draws the next, so a frame takes as long as the longer of the two instead
+// of their sum.  On colour that is the send: 18 ms of 24 at 16 MHz, against
+// 4-6 ms of drawing.  On greyscale the two are about even, 8-9 ms each at
+// 240 MHz, and at the 160 MHz the CPU runs at (platformio.ini) the drawing
+// is the longer.  See docs/FRAME_RATE.md.  Costs a second frame buffer
+// (32 KB on colour, 8 KB on greyscale) and a small task pinned to core 0.
+// 0 sends from the render loop, as before, which is also what happens --
+// with a line in `warnings` -- if the task cannot be started.
 #ifndef OVERLAP_SEND
 #define OVERLAP_SEND 1
 #endif

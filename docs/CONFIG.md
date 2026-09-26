@@ -55,7 +55,7 @@ not preference — change them only if you wire differently, and update
 | `SSD1327_SPI_HZ` | `8000000` | Grayscale bus speed. Lower it if long jumpers cause flicker. |
 | `SSD1351_SPI_HZ` | `16000000` | Colour bus speed. A colour frame is four times the data of a greyscale one, so sending an eye is most of a colour frame: 33 ms at the library's 8 MHz, 18 ms at 16. The SSD1351 is rated to 20 MHz, which speckled one panel on the carrier board. Lower it if long jumpers speckle the image. |
 | `RAM_TABLES` | `1` | Keep the current design's polar map and iris, 45 KB, in RAM rather than flash. Drawing reads both out of order, so from flash they miss the cache: an eye took 6.2 ms to draw from flash and 4.5 ms from RAM. `0` gives the RAM back. |
-| `OVERLAP_SEND` | `1` | Send each eye's frame from the ESP32's other core while the render loop draws the next, so a frame takes as long as the send alone instead of drawing plus sending: 41 fps to 53 on colour. Costs a second frame buffer, 32 KB on colour and 8 KB on greyscale. See [Frame rate](FRAME_RATE.md). |
+| `OVERLAP_SEND` | `1` | Send each eye's frame from the ESP32's other core while the render loop draws the next, so a frame takes as long as the longer of the two instead of both together: 41 fps to 53 on colour, and 55 to 101 on greyscale, both at 240 MHz. At the default 160 MHz they come to 51 and 75. Costs a second frame buffer, 32 KB on colour and 8 KB on greyscale. See [Frame rate](FRAME_RATE.md). |
 | `STARTLE_WINDUP_MS` | `1400` | Slow constrict before the startle jolt. |
 | `CLOCK` | `1` | Analogue clock face. `0` compiles it out. |
 | `CLOCK_*_LEN` / `CLOCK_*_HW` | — | Hand lengths and half-widths, in pixels from the iris centre. |
