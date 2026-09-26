@@ -139,7 +139,21 @@ speckled one panel here) or fewer bytes per frame would go further. Driving the
 bus by DMA instead of the FIFO would free core 0 from busy-waiting, but would not
 make frames faster.
 
-The greyscale panels should gain the most, and have not been measured. A
-greyscale frame sends 8 KB at 8 MHz, about 9 ms, so with the flash, the RAM
-tables and the overlap, a greyscale frame should be close to that. Frank will
-show it when he is next powered and flashed over USB.
+## Greyscale
+
+Frank, with greyscale panels, measured with `main` flashed over USB — the
+flash settings and the RAM tables, but not the overlap:
+
+| build | fps | draw | send | other |
+| :-- | --: | --: | --: | --: |
+| As it was: flash at 40 MHz DIO | 33 | — | — | — |
+| Flash at 80 MHz QIO, `RAM_TABLES` | 55 | 8.3 ms | 8.5 ms | 1.0 ms |
+
+A greyscale frame is 8 KB, sent at 8 MHz in about 8.5 ms, so here the drawing
+and the sending take about as long as each other. Drawing takes longer than on
+colour, 8.3 ms against 4.5; greyscale's draw time includes packing the finished
+frame down to 4-bit grey, two pixels a byte. With the two about equal, the
+overlap should help greyscale most: hiding the send would leave a frame of about
+9.5 ms at 240 MHz. At 160 MHz the drawing slows by about half, to roughly 12 ms,
+so it is the drawing rather than the send that would set the pace. The overlap
+on greyscale has not been measured.
