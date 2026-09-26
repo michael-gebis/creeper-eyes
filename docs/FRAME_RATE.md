@@ -127,8 +127,8 @@ That is a margin, not a cure. A board that browns out at 240 MHz is running
 close to its supply's limit, and C1 — as large as the 5 mm footprint takes,
 typically 22 or 47 µF, rather than 10 — or a stronger supply is the real fix.
 Greyscale pays more for it, because there the drawing sets the pace: 75 fps
-where 240 MHz should give about 100 (see [Greyscale](#greyscale)). With C1
-fitted, 240 MHz is worth trying again.
+where 240 MHz gives 101 (see [Greyscale](#greyscale)). With C1 fitted, 240 MHz
+is worth trying again.
 
 The board now reports any restart caused by a crash, a watchdog or a brownout
 as a [warning](CONFIG.md#if-stored-settings-are-damaged), on the control page
@@ -152,6 +152,7 @@ settings and the RAM tables — and then with this branch:
 | As it was: flash at 40 MHz DIO | 33 | — | — | — |
 | Flash at 80 MHz QIO, `RAM_TABLES` | 55 | 8.3 ms | 8.5 ms | 1.0 ms |
 | `OVERLAP_SEND`, CPU at 160 MHz | 73.5 | 12.0 ms | 8.8 ms | 1.4 ms |
+| `OVERLAP_SEND`, CPU at 240 MHz | 101 | 8.3 ms | 8.6 ms | 1.5 ms |
 
 A greyscale frame is 8 KB, sent at 8 MHz in about 8.5 ms, so here the drawing
 and the sending take about as long as each other. Drawing takes longer than on
@@ -160,9 +161,21 @@ frame down to 4-bit grey, two pixels a byte. With the two about equal, the
 overlap should help greyscale most: hiding the send would leave a frame of about
 9.5 ms at 240 MHz. At 160 MHz the drawing slows by about half, to 12 ms, so on
 greyscale it is the drawing rather than the send that sets the pace: `wait` is
-0, the send finishing before the next frame is ready. Ten minutes of it ran at
-71 to 78 fps, median 75, with no restart, on a board without C1.
+0, the send finishing before the next frame is ready. At 240 MHz the drawing
+is back to 8.3 ms, the send sets the pace again, and Frank runs at 101 fps.
 
-At 240 MHz a greyscale frame should come to about 100 fps. That is the one
-place the CPU speed still matters, and it was not tried: 240 MHz is what
-browned out the colour board.
+Frank browns out as frank-dev did, and not only at 240 MHz. He was soaked the
+same way — the API suite over and over, eye-file uploads included — on his own
+USB supply, without C1, ten minutes at each speed:
+
+| CPU | fps under load | brownouts |
+| --: | --: | --: |
+| 240 MHz | up to 111 | 1 |
+| 160 MHz | up to 81 | 0 |
+
+The one at 240 came as the render loop climbed back to full speed after the
+address cards. But a minute after the 160 MHz soak, erasing his eye slot was
+followed by another: the board reported it at the next boot, and the timing
+puts it just after the erase, the same step from paused to flat out. So on
+Frank 160 MHz narrows the window rather than closing it, and 240 MHz waits on
+C1 like everything else here.
