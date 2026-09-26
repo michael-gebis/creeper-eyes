@@ -193,6 +193,27 @@ room and up in a bright one.
   eyes' own glow; how much smoothing, so a passing shadow does not flicker the
   eyes; and whether it should only ever dim, never brighten past the setting.
 
+## A restart command in the API
+
+There is no way to restart the board over the network. The firmware restarts
+itself after an update or a WiFi change, and the BOOT button's factory reset
+ends in one, but nothing asks for a plain restart. A sealed head can only be
+power-cycled, and `tools/load_test.py` cannot check that it notices a restart
+without a USB cable to pull the reset line with.
+
+- **Where it goes.** An `op` of `restart` on `POST /api/v1/action`, beside
+  `blink`, and behind the same authentication as everything else. A `restart`
+  console command to match, and perhaps a button on the control page, behind a
+  confirmation.
+- **Reply first.** Answer the request, then restart a moment later, so the
+  caller gets a 200 rather than a dropped connection it cannot tell from a
+  crash.
+- **Stays quiet.** It is a restart the firmware asked for, so the warnings
+  list should say nothing afterwards — `reportResetReason()` already treats
+  a software restart that way.
+- **Open question.** Settings that are changed but not saved are lost on a
+  restart. Refuse, save first, or say so in the reply?
+
 ## Three pictures
 
 The only photograph in the repository is a screenshot, and it is out of
