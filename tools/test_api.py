@@ -387,15 +387,19 @@ def test_validation(res: Result, api: Api, start: Json) -> None:
 
 def settle_shown(api: Api, want: int, within: float = 2.0) -> Any:
     """Poll dim.shown until it reaches `want` or time runs out; a fade takes
-    DIM_FADE_MS for the whole range, so this allows it several times over."""
+    DIM_FADE_MS for the whole range, so this allows it several times over.
+
+    Only a reading asked for after the deadline may be the last word.  A reply
+    can arrive seconds after the board wrote it, on a slow link, and one
+    reading taken as the fade began and delivered after the deadline used to
+    fail the test with the fade half done."""
     deadline: float = time.time() + within
-    got: Any = None
-    while time.time() < deadline:
-        got = api.json("/dim").get("shown")
-        if got == want:
-            break
+    while True:
+        asked: float = time.time()
+        got: Any = api.json("/dim").get("shown")
+        if got == want or asked >= deadline:
+            return got
         time.sleep(0.2)
-    return got
 
 
 def test_dim(res: Result, api: Api, start: Json) -> None:
@@ -1136,8 +1140,12 @@ def test_sleep(res: Result, api: Api) -> None:
     else:
         res.fail("the countdown", "changesInMinutes=%r changesToAsleep=%r"
                  % (r.get("changesInMinutes"), r.get("changesToAsleep")))
+    # Read second, so the minute may have ticked over in between: one less
+    # is the same countdown.
     st: Json = api.json("/state").get("sleep", {})
-    if (st.get("changesInMinutes") == r.get("changesInMinutes")
+    if (r.get("changesInMinutes") is not None
+            and st.get("changesInMinutes") in (r["changesInMinutes"],
+                                               r["changesInMinutes"] - 1)
             and st.get("changesToAsleep") == r.get("changesToAsleep")):
         res.ok("/state carries the same countdown")
     else:
