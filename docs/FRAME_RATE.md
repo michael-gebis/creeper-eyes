@@ -179,5 +179,20 @@ The one at 240 came as the render loop climbed back to full speed after the
 address cards. But a minute after the 160 MHz soak, erasing his eye slot was
 followed by another: the board reported it at the next boot, and the timing
 puts it just after the erase, the same step from paused to flat out. So on
-Frank 160 MHz narrows the window rather than closing it, and 240 MHz waits on
-C1 like everything else here.
+Frank 160 MHz narrows the window rather than closing it.
+
+Then 45 minutes at 160 MHz with `tools/load_test.py`, before C1 and after, on
+the same firmware. A timed-out upload still finished on the board, so the
+count that matters is how often the eyes came back to full speed after a
+pause, from the serial log:
+
+| Frank, 160 MHz | minutes | uploads | resumes from a pause | brownouts |
+| :-- | --: | --: | --: | --: |
+| Without C1 | 46.6 | 42 | 68 | 1 |
+| With C1 | 48.1 | 34 | 55 | 0 |
+
+Encouraging, and not yet proof. The two runs alone are one brownout against
+none, which chance gives easily. Counting all three Frank had at 160 MHz
+without C1 that day — about an hour of load in all — a clean 48 minutes with
+C1 would happen by chance about one time in ten. A longer run with C1 is what
+would settle it, and after that 240 MHz is worth trying again.
