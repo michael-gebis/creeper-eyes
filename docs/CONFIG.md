@@ -27,9 +27,10 @@ and the flash at 80 MHz on four data lines (`board_build.f_flash`,
 roughly halved the time to draw an eye. Both only reach a board by a USB flash:
 the partition table is written only by one, and the flash speed is set by the
 bootloader, which is too. The CPU runs at 160 MHz rather than 240
-(`board_build.f_cpu`): with `OVERLAP_SEND` frames wait on the SPI bus, not the
-CPU, so this costs two frames a second and saves enough current to matter — see
-[Frame rate](FRAME_RATE.md#brownouts-and-the-cpu-at-160-mhz).
+(`board_build.f_cpu`), which saves enough current to matter. With
+`OVERLAP_SEND` colour frames wait on the SPI bus, not the CPU, so it costs them
+two frames a second; greyscale frames wait on the drawing and pay more, about a
+quarter — see [Frame rate](FRAME_RATE.md#brownouts-and-the-cpu-at-160-mhz).
 
 Two groups are **not** guarded and cannot be overridden this way. Three
 derived values — `CONTROLLABLE`, `FAVICON_FRANK` and `FAVICON_EYES` — are

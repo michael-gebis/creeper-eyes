@@ -117,15 +117,18 @@ and sending, while WiFi answers the request. The ESP32's brownout detector is
 already at its most lenient setting, about 2.4 V, so the 3.3 V rail really was
 sagging that far.
 
-With the overlap the frame waits on the send, not the CPU, so 160 MHz costs two
-frames a second. It also cuts the current by enough that the same 45 minutes
-passed clean. With four brownouts expected at the old rate, a clean run by
+With the overlap a colour frame waits on the send, not the CPU, so 160 MHz
+costs two frames a second. It also cuts the current by enough that the same 45
+minutes passed clean. With four brownouts expected at the old rate, a clean run by
 chance would be about a 2% likelihood. So the CPU runs at 160 MHz
 (`board_build.f_cpu` in `platformio.ini`).
 
 That is a margin, not a cure. A board that browns out at 240 MHz is running
 close to its supply's limit, and C1 — as large as the 5 mm footprint takes,
 typically 22 or 47 µF, rather than 10 — or a stronger supply is the real fix.
+Greyscale pays more for it, because there the drawing sets the pace: 75 fps
+where 240 MHz should give about 100 (see [Greyscale](#greyscale)). With C1
+fitted, 240 MHz is worth trying again.
 
 The board now reports any restart caused by a crash, a watchdog or a brownout
 as a [warning](CONFIG.md#if-stored-settings-are-damaged), on the control page
@@ -141,19 +144,25 @@ make frames faster.
 
 ## Greyscale
 
-Frank, with greyscale panels, measured with `main` flashed over USB — the
-flash settings and the RAM tables, but not the overlap:
+Frank, with greyscale panels, flashed over USB with `main` — the flash
+settings and the RAM tables — and then with this branch:
 
 | build | fps | draw | send | other |
 | :-- | --: | --: | --: | --: |
 | As it was: flash at 40 MHz DIO | 33 | — | — | — |
 | Flash at 80 MHz QIO, `RAM_TABLES` | 55 | 8.3 ms | 8.5 ms | 1.0 ms |
+| `OVERLAP_SEND`, CPU at 160 MHz | 73.5 | 12.0 ms | 8.8 ms | 1.4 ms |
 
 A greyscale frame is 8 KB, sent at 8 MHz in about 8.5 ms, so here the drawing
 and the sending take about as long as each other. Drawing takes longer than on
 colour, 8.3 ms against 4.5; greyscale's draw time includes packing the finished
 frame down to 4-bit grey, two pixels a byte. With the two about equal, the
 overlap should help greyscale most: hiding the send would leave a frame of about
-9.5 ms at 240 MHz. At 160 MHz the drawing slows by about half, to roughly 12 ms,
-so it is the drawing rather than the send that would set the pace. The overlap
-on greyscale has not been measured.
+9.5 ms at 240 MHz. At 160 MHz the drawing slows by about half, to 12 ms, so on
+greyscale it is the drawing rather than the send that sets the pace: `wait` is
+0, the send finishing before the next frame is ready. Ten minutes of it ran at
+71 to 78 fps, median 75, with no restart, on a board without C1.
+
+At 240 MHz a greyscale frame should come to about 100 fps. That is the one
+place the CPU speed still matters, and it was not tried: 240 MHz is what
+browned out the colour board.
