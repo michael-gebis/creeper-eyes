@@ -15,7 +15,8 @@ Two witnesses to a restart, because either alone can miss one:
 
 - The board's own.  Between runs, an uptime that has fallen behind the clock
   means it restarted, and its warnings list then says why -- a brownout, a
-  crash, a watchdog (health.h).
+  crash, a watchdog (health.h).  At most one per run, though: the list only
+  knows the latest.
 - The serial port, with --port.  The brownout detector's own message and the
   ROM's reset line, with the lines before them, and the heartbeat's fps.
   Opened without resetting the board.
