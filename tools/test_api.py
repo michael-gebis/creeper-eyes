@@ -763,6 +763,15 @@ def test_ntp(res: Result, api: Api) -> None:
 
     if ntp.get("enabled") and ntp.get("linkUp"):
         before: Any = ntp.get("lastSyncSeconds")
+        # The timezone tests just before restart the client, which asks a
+        # server at once, so a sync has often only just landed.  Asking again
+        # straight away proves nothing: from 0 the counter has nowhere to fall,
+        # and a server may ignore a second request that close.  So let the
+        # last one age first.
+        settle: float = time.time() + 15
+        while before is not None and before < 8 and time.time() < settle:
+            time.sleep(1)
+            before = api.json("/ntp").get("ntp", {}).get("lastSyncSeconds")
         expect(res, api, "PUT /ntp sync now", "/ntp", "PUT", {"op": "sync"})
         # A pool server has to be resolved and then asked over the internet,
         # which is not bounded by any particular number of seconds -- so wait
