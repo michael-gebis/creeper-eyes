@@ -212,6 +212,20 @@ too far — see [Frame rate](FRAME_RATE.md#brownouts-and-the-cpu-at-160-mhz).
 Power-on, the reset button and restarts the firmware asks for, for an update or
 a WiFi change, stay quiet.
 
+And it reports a speed-up that could not be set up for want of memory: the
+task that sends frames from the other core (`OVERLAP_SEND`), or the copy of the
+eye tables in RAM (`RAM_TABLES`). The eyes still run, drawn the slower way, so
+without the warning the lower frame rate would look like the normal one.
+
+```
+> warnings
+  the frame sender could not start; frames are slower
+  no memory for the eye tables in RAM; frames are slower
+```
+
+A failed RAM copy is tried again at each change of eye design, and reported
+only the first time.
+
 A saved eye design that is simply not on the board is reported but *not*
 removed. It may be a loaded design whose file is gone, and loading that file
 again should bring the setting back.

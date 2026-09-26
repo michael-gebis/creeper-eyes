@@ -392,7 +392,8 @@
 // flash at 80 MHz QIO, drawing an eye took 6.2 ms from flash and 4.5 ms from
 // RAM, 38 fps against 41.  The sclera and eyelids are read in order, which
 // the cache handles, and the sclera is too big to be worth it.  0 for a build
-// that needs the RAM for something else.
+// that needs the RAM for something else.  Without the memory for them the
+// tables are read from flash, and `warnings` says so.
 #ifndef RAM_TABLES
 #define RAM_TABLES 1
 #endif
@@ -402,7 +403,8 @@
 // -- and drawing is 4-5 ms, so doing them at once makes the frame as long as
 // the send alone instead of their sum.  Costs a second frame buffer (32 KB on
 // colour, 8 KB on greyscale) and a small task pinned to core 0.  0 sends from
-// the render loop, as before.
+// the render loop, as before, which is also what happens -- with a line in
+// `warnings` -- if the task cannot be started.
 #ifndef OVERLAP_SEND
 #define OVERLAP_SEND 1
 #endif

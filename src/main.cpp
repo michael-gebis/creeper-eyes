@@ -459,8 +459,10 @@ static void forgetSettings(void) {
 // cannot cost them; see RAM_TABLES.  Allocated at the first design change and
 // kept.  Both or neither: if either allocation fails, both are freed and the
 // renderer reads flash, as it always did, until the next design change tries
-// again.
+// again.  The first failure is a warning, since it costs frames; the retries
+// are not, or every design change would add another.
 static uint16_t *ramPolar = NULL, *ramIris = NULL;
+static bool ramTablesNoted = false;
 #endif
 
 // Repoints the five artwork pointers at another design.  drawEye() reads them
@@ -485,6 +487,9 @@ static void setEyeDesign(uint8_t idx) {
       free(ramPolar);
       free(ramIris);
       ramPolar = ramIris = NULL;
+      if (!ramTablesNoted)
+        healthNote("no memory for the eye tables in RAM; frames are slower");
+      ramTablesNoted = true;
     }
   }
   if (ramPolar) {
@@ -843,14 +848,13 @@ static void reportResetReason(void) {
 
 HardwareSerial SerialIn(1);
 
-// Four centred lines on both panels.  Used whenever the eyes are not running
-// and the head would otherwise sit there dark with no explanation: the setup
-// portal, and OTA progress.  Not behind STARTUP_SPLASH -- the boot cards are
-// optional, this is not.
 // Four centred lines, drawn once and pushed to whichever panels the caller
-// wants.  `which` of -1 means all of them, which is the usual case; the setup
-// portal passes a single index because the other eye is showing a QR code and
-// would be wiped by a broadcast.
+// wants.  Used whenever the eyes are not running and the head would otherwise
+// sit there dark with no explanation: the setup portal, and OTA progress.  Not
+// behind STARTUP_SPLASH -- the boot cards are optional, this is not.  `which`
+// of -1 means all of them, which is the usual case; the setup portal passes a
+// single index because the other eye is showing a QR code and would be wiped
+// by a broadcast.
 void showMessageOn(int8_t which, const char *l1, const char *l2,
                    const char *l3, const char *l4) {
   GFXcanvas1 canvas(SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -1196,7 +1200,7 @@ static void startSender(void) {
       xTaskCreatePinnedToCore(senderTask, "panels", 3072, NULL, 1, NULL, 0) !=
           pdPASS) {
     // Without the task, frames are sent from the render loop as before.
-    DEBUG_PRINTF("[creeper-eyes] frame sender did not start; sending inline\n");
+    healthNote("the frame sender could not start; frames are slower");
     if (sendJobs)
       vQueueDelete(sendJobs);
     if (sendIdle)
@@ -2108,8 +2112,7 @@ static void cmdHelp(Print &out) {
                  "  wifi                      the network, and how to change "
                  "it\n"
                  "  version                   firmware version and commit\n"
-                 "  warnings                  damaged settings, unplanned "
-                 "restarts\n"
+                 "  warnings                  problems found at boot\n"
 #if NETWORK
                  "  ntp [on|off|sync]         use a time server, or stop\n"
 #endif
@@ -2146,9 +2149,8 @@ static void cmdDim(Print &out) {
              s.dimTrim[0], s.dimTrim[1], s.dimSweeping ? " (sweeping)" : "");
 }
 
-// What the board found at boot: damaged stored data and what it did about
-// each, and a restart it did not plan -- see health.h.  The control page
-// shows the same list.
+// What the board found wrong at boot -- see health.h for what that covers.
+// The control page shows the same list.
 static void cmdWarnings(Print &out) {
   if (!healthCount()) {
     out.println(F("no warnings"));

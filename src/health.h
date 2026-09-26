@@ -1,5 +1,6 @@
 // What the board found wrong at boot, kept for whoever looks: problems in its
-// own stored data, and a restart it did not plan.
+// own stored data, a restart it did not plan, and anything that left it
+// running slower than it should.
 //
 // Everything loaded from flash is checked as it is read -- see nvsread.h for
 // the settings and credentials, eyestore.h for the eye slot, net.cpp for the
@@ -13,6 +14,10 @@
 // too, by reportResetReason() in main.cpp.  Its reason is only known at the
 // next boot, and printed to serial alone it would scroll past before anyone
 // was listening; here it waits on the control page instead.
+//
+// So is a speed-up that could not be set up for want of memory -- the frame
+// sender task, or the eye tables in RAM.  The eyes still run, only slower,
+// which is otherwise easy to mistake for how fast they are.
 //
 // Boot-time by nature, so the list only grows; it is cleared by a restart.
 

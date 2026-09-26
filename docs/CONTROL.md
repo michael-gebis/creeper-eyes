@@ -93,7 +93,7 @@ Open `pio device monitor` and type `help`. Commands are line-based at 115200.
 | `tz [zone]` | Timezone by name or POSIX string |
 | `splash` | Re-show the panel name cards |
 | `status` | Current eye, gaze, dilation, heap, uptime, frame rate |
-| `warnings` | What the board found at boot: damaged settings and what was done about them, and a restart it did not plan — see [Configuring](CONFIG.md#if-stored-settings-are-damaged) |
+| `warnings` | What the board found at boot: damaged settings and what was done about them, a restart it did not plan, and a speed-up it had no memory for — see [Configuring](CONFIG.md#if-stored-settings-are-damaged) |
 | `sleep` | What the sleep window is set to, and what it is doing |
 | `sleep on\|off` | Enable or disable it |
 | `sleep HH:MM HH:MM` | The window: when to sleep, then when to wake |
