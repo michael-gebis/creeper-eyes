@@ -130,7 +130,7 @@
 const uint16_t (*sclera)[SCLERA_WIDTH];
 const uint8_t (*upper)[SCREEN_WIDTH];
 const uint8_t (*lower)[SCREEN_WIDTH];
-const uint16_t (*polar)[80];
+const uint16_t (*polar)[IRIS_WIDTH];
 const uint16_t (*iris)[IRIS_MAP_WIDTH];
 
 // Registry of the designs compiled in.  Order here is the order the console
@@ -140,7 +140,7 @@ typedef struct {
   const uint16_t (*sclera)[SCLERA_WIDTH];
   const uint8_t (*upper)[SCREEN_WIDTH];
   const uint8_t (*lower)[SCREEN_WIDTH];
-  const uint16_t (*polar)[80];
+  const uint16_t (*polar)[IRIS_WIDTH];
   const uint16_t (*iris)[IRIS_MAP_WIDTH];
 } EyeDesign;
 
@@ -263,7 +263,7 @@ static void adoptLoadedDesign(void) {
   loadedDesign.sclera = (const uint16_t(*)[SCLERA_WIDTH])a.sclera;
   loadedDesign.upper = (const uint8_t(*)[SCREEN_WIDTH])a.upper;
   loadedDesign.lower = (const uint8_t(*)[SCREEN_WIDTH])a.lower;
-  loadedDesign.polar = (const uint16_t(*)[80])a.polar;
+  loadedDesign.polar = (const uint16_t(*)[IRIS_WIDTH])a.polar;
   loadedDesign.iris = (const uint16_t(*)[IRIS_MAP_WIDTH])a.iris;
 }
 
@@ -453,21 +453,21 @@ static void forgetSettings(void) {
   settingsDirty = false;
 }
 
-// Repoints the five artwork pointers at another design.  Call between
-// frames: drawEye() reads all five as it scans, so changing them underneath
-// it would tear a frame.  Out-of-range falls back to the first design.
-// Swaps five pointers that drawEye() dereferences per pixel, so this must
-// run between frames.  Reached through pendingEyeDesign, never directly from
-// an operation -- except dropLoadedDesign(), which explains why it cannot
-// wait.
 #if RAM_TABLES
 // The two tables drawEye() reads out of order -- the polar map and the iris
 // -- copied into RAM whenever the design changes, so a flash cache miss
-// cannot cost them; see RAM_TABLES.  Allocated once and kept.  If the
-// allocation fails the renderer simply reads flash, as it always did.
+// cannot cost them; see RAM_TABLES.  Allocated at the first design change and
+// kept.  Both or neither: if either allocation fails, both are freed and the
+// renderer reads flash, as it always did, until the next design change tries
+// again.
 static uint16_t *ramPolar = NULL, *ramIris = NULL;
 #endif
 
+// Repoints the five artwork pointers at another design.  drawEye() reads them
+// per pixel, so this must run between frames or it tears one.  Reached
+// through pendingEyeDesign, never directly from an operation -- except
+// dropLoadedDesign(), which explains why it cannot wait.  Out-of-range falls
+// back to the first design.
 static void setEyeDesign(uint8_t idx) {
   if (idx >= designCount())
     idx = 0;
@@ -479,13 +479,18 @@ static void setEyeDesign(uint8_t idx) {
   iris = d->iris;
 #if RAM_TABLES
   if (!ramPolar) {
-    ramPolar = (uint16_t *)malloc(sizeof(uint16_t) * 80 * 80);
+    ramPolar = (uint16_t *)malloc(sizeof(uint16_t) * IRIS_WIDTH * IRIS_HEIGHT);
     ramIris = (uint16_t *)malloc(sizeof(uint16_t) * IRIS_MAP_WIDTH * IRIS_MAP_HEIGHT);
+    if (!ramPolar || !ramIris) {
+      free(ramPolar);
+      free(ramIris);
+      ramPolar = ramIris = NULL;
+    }
   }
-  if (ramPolar && ramIris) {
-    memcpy(ramPolar, d->polar, sizeof(uint16_t) * 80 * 80);
+  if (ramPolar) {
+    memcpy(ramPolar, d->polar, sizeof(uint16_t) * IRIS_WIDTH * IRIS_HEIGHT);
     memcpy(ramIris, d->iris, sizeof(uint16_t) * IRIS_MAP_WIDTH * IRIS_MAP_HEIGHT);
-    polar = (const uint16_t(*)[80])ramPolar;
+    polar = (const uint16_t(*)[IRIS_WIDTH])ramPolar;
     iris = (const uint16_t(*)[IRIS_MAP_WIDTH])ramIris;
   }
 #endif
@@ -1192,6 +1197,10 @@ static void startSender(void) {
           pdPASS) {
     // Without the task, frames are sent from the render loop as before.
     DEBUG_PRINTF("[creeper-eyes] frame sender did not start; sending inline\n");
+    if (sendJobs)
+      vQueueDelete(sendJobs);
+    if (sendIdle)
+      vSemaphoreDelete(sendIdle);
     sendJobs = NULL;
     sendIdle = NULL;
     return;
@@ -2099,7 +2108,8 @@ static void cmdHelp(Print &out) {
                  "  wifi                      the network, and how to change "
                  "it\n"
                  "  version                   firmware version and commit\n"
-                 "  warnings                  problems found in stored settings\n"
+                 "  warnings                  damaged settings, unplanned "
+                 "restarts\n"
 #if NETWORK
                  "  ntp [on|off|sync]         use a time server, or stop\n"
 #endif
@@ -2136,8 +2146,9 @@ static void cmdDim(Print &out) {
              s.dimTrim[0], s.dimTrim[1], s.dimSweeping ? " (sweeping)" : "");
 }
 
-// What the board found wrong with its own stored data at boot, and what it
-// did about each -- see health.h.  The control page shows the same list.
+// What the board found at boot: damaged stored data and what it did about
+// each, and a restart it did not plan -- see health.h.  The control page
+// shows the same list.
 static void cmdWarnings(Print &out) {
   if (!healthCount()) {
     out.println(F("no warnings"));
@@ -2872,8 +2883,12 @@ void frame(            // Process motion for a single frame of left or right eye
       const uint32_t n = frames ? frames : 1;
       const uint32_t drawT = perfDrawUs / n / 100, waitT = perfWaitUs / n / 100;
       const uint32_t sendT = sendUs / n / 100;
-      const uint32_t restT = frames && elapsed * 1000UL > perfEyeUs
-                                 ? (elapsed * 1000UL - perfEyeUs) / n / 100
+      // In 64 bits: the interval has no upper bound, and in microseconds 32
+      // bits wrap at 71 minutes.  The perf counters stay 32-bit because they
+      // only grow while frames are drawn and sent, which a stall stops.
+      const uint64_t elapsedUs = (uint64_t)elapsed * 1000;
+      const uint32_t restT = frames && elapsedUs > perfEyeUs
+                                 ? (uint32_t)((elapsedUs - perfEyeUs) / n / 100)
                                  : 0;
       DEBUG_PRINTF("[creeper-eyes] fps=%u draw=%u.%ums wait=%u.%ums "
                    "send=%u.%ums other=%u.%ums heap=%u\n",

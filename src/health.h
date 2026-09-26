@@ -1,4 +1,5 @@
-// Problems the board found in its own stored data, kept for whoever looks.
+// What the board found wrong at boot, kept for whoever looks: problems in its
+// own stored data, and a restart it did not plan.
 //
 // Everything loaded from flash is checked as it is read -- see nvsread.h for
 // the settings and credentials, eyestore.h for the eye slot, net.cpp for the
@@ -7,6 +8,11 @@
 // where each of those says what it found and what it did, so the control
 // page and the console can show it rather than the board quietly behaving
 // differently from how it was set up.
+//
+// An unplanned restart -- a crash, a watchdog, a brownout -- is noted here
+// too, by reportResetReason() in main.cpp.  Its reason is only known at the
+// next boot, and printed to serial alone it would scroll past before anyone
+// was listening; here it waits on the control page instead.
 //
 // Boot-time by nature, so the list only grows; it is cleared by a restart.
 
