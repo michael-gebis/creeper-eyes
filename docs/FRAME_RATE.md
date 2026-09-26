@@ -1,8 +1,9 @@
 # Frame rate
 
-How the colour eyes went from 19 frames a second to 53, measured one change
+How the colour eyes went from 19 frames a second to 51, measured one change
 at a time on frank-dev: a DevKit on the rev A carrier board, two SSD1351 colour
-panels, WiFi up, the default eye.
+panels, WiFi up, the default eye. The greyscale ones, on Frank, went from 33 to
+75; see [Greyscale](#greyscale).
 
 ## Reading the numbers
 
@@ -98,8 +99,9 @@ It costs a second frame buffer: 32 KB on colour, 8 KB on greyscale.
 ## Brownouts, and the CPU at 160 MHz
 
 Soaking is the API test suite run against the board over and over, with the
-serial port watched throughout. The runs include eye-file uploads, which write
-flash and pause both cores. The first short soaks of the overlap passed, apart
+serial port watched throughout — [`tools/load_test.py`](../tools/load_test.py),
+described in [Testing](TESTING.md). The runs include eye-file uploads, which
+write flash and pause both cores. The first short soaks of the overlap passed, apart
 from one software reset that nothing explained. So the board was taught to
 report why it last restarted (below), and the soaks were made longer. Same
 board, same single USB-C supply, C1 not fitted, 45 minutes each:

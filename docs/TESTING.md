@@ -1,8 +1,9 @@
 # Testing it, and the tools that come with it
 
 There is a test suite that runs against a real board over HTTP, a soak harness
-for comparing two builds over hours, and a handful of scripts that build the
-artwork, the page and the firmware stamp.
+for comparing two builds over hours, a load test that catches a board
+restarting, and a handful of scripts that build the artwork, the page and the
+firmware stamp.
 
 None of it is needed to use the head. It is here because measuring this
 project turned up several things that were not what anyone assumed — see
@@ -38,6 +39,26 @@ that moves on its own: the first comparison run on this project concluded a
 change was catastrophically worse, while RSSI drifted from −48 to −56 dBm
 underneath it. Timings without the conditions they were taken in are not
 evidence.
+
+[`tools/load_test.py`](../tools/load_test.py) is for power. It runs the suite
+against one board over and over and reports every time the board restarted,
+and why. A board on a marginal supply browns out when its current steps up,
+and the biggest step it takes is the eyes coming back to full speed after a
+pause — which an eye-file upload makes, stalling both cores while flash is
+written. So pass one through to the suite:
+
+```sh
+python tools/load_test.py --host frank.local --minutes 45 --port COM3 \
+    -- --eye-file dist/eyes/dragon.bin
+```
+
+It notices a restart two ways. Between runs, an uptime that has fallen behind
+the clock means the board restarted, and its warnings then name the reason —
+a brownout, a crash, a watchdog. With `--port` it also watches the serial
+port, without resetting the board, and prints what led up to each restart.
+Everything after `--` goes to `test_api.py` unchanged; like the suite, it
+leaves the eye file loaded. The numbers in
+[Frame rate](FRAME_RATE.md#brownouts-and-the-cpu-at-160-mhz) came from it.
 
 It reports latency as percentiles and a histogram rather than an average,
 because on this board the tail is the interesting part — a mean of 60 ms hides
@@ -100,8 +121,8 @@ firmware, [`tools/git_rev.py`](../tools/git_rev.py) stamps the build with its
 commit, and [`tools/nvs_backup.py`](../tools/nvs_backup.py) saves everything the
 board remembers to a JSON file and puts it back — including the WiFi network,
 which the radio keeps in a namespace of its own. That one is USB only, and
-[Configuring](CONFIG.md) explains what is in there. [`tools/test_api.py`](../tools/test_api.py) and
-[`tools/soak.py`](../tools/soak.py) are described under
+[Configuring](CONFIG.md) explains what is in there. [`tools/test_api.py`](../tools/test_api.py),
+[`tools/soak.py`](../tools/soak.py) and [`tools/load_test.py`](../tools/load_test.py) are described under
 [Testing it](#testing-it).
 
 All are type-annotated: every parameter, every return type, and every local
