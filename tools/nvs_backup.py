@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Save and restore everything the board remembers.
 
-    python tools/nvs_backup.py save    --port COM3 backup.json
-    python tools/nvs_backup.py restore --port COM3 backup.json
+    uv run tools/nvs_backup.py save    --port COM3 backup.json
+    uv run tools/nvs_backup.py restore --port COM3 backup.json
 
 This is the NVS partition: the eye design, the timezone, the clock colours,
 the credentials -- and the WiFi network and password, which the radio keeps in
@@ -78,21 +78,11 @@ PRIMITIVE_FORMATS = {
 
 # ------------------------------------------------------------------ esptool --
 
-def esptool_path() -> str:
-    p: str = os.path.expanduser(
-        "~/.platformio/packages/tool-esptoolpy/esptool.py")
-    if not os.path.exists(p):
-        raise SystemExit("esptool.py not found; is PlatformIO installed?")
-    return p
-
-
-def python_path() -> str:
-    p: str = os.path.expanduser("~/.platformio/penv/Scripts/python.exe")
-    return p if os.path.exists(p) else sys.executable
-
-
 def esptool(port: str, *args: str) -> str:
-    cmd: list[str] = [python_path(), esptool_path(),
+    """esptool, from this project's own environment (pyproject.toml), run by
+    the interpreter running this script -- not the copy inside PlatformIO,
+    whose location and Python are PlatformIO's business."""
+    cmd: list[str] = [sys.executable, "-m", "esptool",
                       "--port", port, "--chip", "esp32"]
     cmd += list(args)
     r: subprocess.CompletedProcess[bytes] = subprocess.run(
@@ -111,7 +101,7 @@ def read_region(port: str, offset: int, size: int) -> bytes:
     fd, path = tempfile.mkstemp(suffix=".bin")
     os.close(fd)
     try:
-        esptool(port, "read_flash", hex(offset), hex(size), path)
+        esptool(port, "read-flash", hex(offset), hex(size), path)
         with open(path, "rb") as f:
             return f.read()
     finally:
@@ -379,7 +369,7 @@ def do_restore(port: str, path: str, yes: bool) -> int:
     try:
         with open(tmp, "wb") as f:
             f.write(image)
-        esptool(port, "write_flash", hex(live["offset"]), tmp)
+        esptool(port, "write-flash", hex(live["offset"]), tmp)
     finally:
         os.unlink(tmp)
 

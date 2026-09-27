@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the API suite against a board over and over, and catch it restarting.
 
-    python tools/load_test.py --host frank.local --minutes 45 --port COM3 \\
+    uv run tools/load_test.py --host frank.local --minutes 45 --port COM3 \\
         -- --eye-file dist/eyes/dragon.bin
 
 What it is for: brownouts.  A board on a marginal supply browns out when its

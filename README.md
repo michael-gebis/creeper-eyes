@@ -137,7 +137,7 @@ line this page uses, so nothing below is closed off by starting there.
 page covers all three systems; the short version is:
 
 ```sh
-pipx install platformio          # or: pip install --user platformio
+uv tool install platformio       # or: pipx install platformio
 ```
 
 ### Environments
@@ -210,7 +210,7 @@ and [the battery-backed clock](docs/WIRING_RTC.md).
 | Garbled serial output | `DEBUG_BAUD` and `monitor_speed` disagree, or a CH340 clone struggling above 115200. |
 | Board resets when a panel is connected | Brownout. Use a powered hub or feed 5 V to `VIN`. |
 | Board will not boot | Something on `D12`. Held high at reset it stops the ESP32 starting. No eye signal uses it. |
-| The web page lags, or an update fails | Almost certainly the radio. Check the signal on the Wi-Fi card — the page says what the number means. Every delay and every failed update measured on this project traced back to packet loss, not to the firmware. `python tools/test_api.py --host frank.local --decompose 200` takes the guesswork out of it. |
+| The web page lags, or an update fails | Almost certainly the radio. Check the signal on the Wi-Fi card — the page says what the number means. Every delay and every failed update measured on this project traced back to packet loss, not to the firmware. `uv run tools/test_api.py --host frank.local --decompose 200` takes the guesswork out of it. |
 
 Frame rate is **not** a useful signal for whether panels are connected — the
 SPI writes happen either way, so the rate is the same with nothing attached.

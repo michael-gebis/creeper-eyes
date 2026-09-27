@@ -7,9 +7,11 @@
 # Real credentials -- see include/secrets.h.example
 include/secrets.h
 
-# Python bytecode from the tools
+# Python bytecode from the tools, and uv's environment for them if it is
+# made here -- see docs/TESTING.md for keeping it out of a synced folder
 __pycache__/
 *.pyc
+.venv/
 
 # KiCad's own scratch: per-user view state, backups, the fab files that
 # hardware/make_outputs.py regenerates.  The zip it produces is kept, so a

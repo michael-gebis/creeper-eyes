@@ -1,0 +1,14 @@
+# The Python tools in tools/, run with `uv run tools/<script>.py` -- see
+# docs/TESTING.md.  Not the firmware, which PlatformIO builds; and not
+# tools/git_rev.py and tools/gen_page.py, which are PlatformIO build hooks and
+# run on PlatformIO's own Python, nor hardware/*.py, which run on KiCad's.
+[project]
+name = "creeper-eyes"
+version = "0.1.0"
+description = "Tools for the creeper-eyes firmware: API tests, OTA, eye files, NVS backup"
+requires-python = ">=3.14"
+dependencies = [
+    "esptool>=5.4.0",
+    "pillow>=12.3.0",
+    "pyserial>=3.5",
+]

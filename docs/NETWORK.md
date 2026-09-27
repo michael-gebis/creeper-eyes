@@ -194,8 +194,8 @@ The control page says the same thing on the clock card.
 Use [`tools/ota.py`](../tools/ota.py):
 
 ```sh
-python tools/ota.py --host frank.local
-python tools/ota.py --host 192.168.1.50 --env gray_rtc_ota
+uv run tools/ota.py --host frank.local
+uv run tools/ota.py --host 192.168.1.50 --env gray_rtc_ota
 ```
 
 It builds, uploads, and then asks the board whether the update took. Progress

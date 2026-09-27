@@ -18,9 +18,9 @@ trip but not a reboot, a verb that returns the wrong status only when the body
 is malformed.
 
 ```sh
-python tools/test_api.py --host frank.local
-python tools/test_api.py --host 192.168.1.50 --token ...
-python tools/test_api.py --host frank.local --user frank --password ...
+uv run tools/test_api.py --host frank.local
+uv run tools/test_api.py --host 192.168.1.50 --token ...
+uv run tools/test_api.py --host frank.local --user frank --password ...
 ```
 
 [`tools/soak.py`](../tools/soak.py) is for comparing two builds over hours. It
@@ -30,7 +30,7 @@ their weather, which was enough to invert a conclusion twice before this
 existed. See [docs/HTTP_LATENCY.md](HTTP_LATENCY.md).
 
 ```sh
-python tools/soak.py --hours 3 --a "-DCLOCK=1" --b "-DCLOCK=0"
+uv run tools/soak.py --hours 3 --a "-DCLOCK=1" --b "-DCLOCK=0"
 ```
 
 Each row of the CSV carries the signal strength at the time it was taken, and
@@ -48,7 +48,7 @@ pause — which an eye-file upload makes, stalling both cores while flash is
 written. So pass one through to the suite:
 
 ```sh
-python tools/load_test.py --host frank.local --minutes 45 --port COM3 \
+uv run tools/load_test.py --host frank.local --minutes 45 --port COM3 \
     -- --eye-file dist/eyes/dragon.bin
 ```
 
@@ -66,7 +66,7 @@ a request that took eight seconds. `--latency N` skips the tests and times N
 requests per endpoint instead, which is how you tell whether a change helped:
 
 ```sh
-python tools/test_api.py --host frank.local --latency 20
+uv run tools/test_api.py --host frank.local --latency 20
 ```
 
 `--decompose N` goes one level further and splits each request into its
@@ -74,7 +74,7 @@ handshake, its wait, and its transfer, using a raw socket because `urllib`
 returns a single number for the whole exchange:
 
 ```sh
-python tools/test_api.py --host frank.local --decompose 200
+uv run tools/test_api.py --host frank.local --decompose 200
 ```
 
 This is what finally explained where the time goes, and the answer was not the
@@ -137,6 +137,31 @@ returns, say — the names are declared on their own lines just above. And `Any`
 parsed NVS values really are of unknown type, and claiming otherwise would
 be worse than saying so.
 
-All run on Python 3.9, the oldest interpreter PlatformIO is likely to hand
-them, and annotations are lazy (`from __future__ import annotations`), so the
-modern generic syntax works there too.
+### Running them
+
+The tools run on Python 3.14 through [uv](https://docs.astral.sh/uv/), which
+the repository is set up for. `pyproject.toml` names the three packages they
+need — Pillow for `gen_eyes.py`, pyserial for `load_test.py --port`, esptool
+for `nvs_backup.py` — and `uv.lock` pins them. `uv run tools/<script>.py`
+fetches Python and the packages the first time, and runs the script; nothing
+is installed anywhere else.
+
+uv keeps that environment in `.venv` inside the repository unless
+`UV_PROJECT_ENVIRONMENT` points elsewhere. Point it elsewhere if the
+repository lives in a synced folder — Google Drive, Dropbox, OneDrive — or
+the environment is uploaded along with it:
+
+```sh
+export UV_PROJECT_ENVIRONMENT=~/.cache/uv-envs/creeper-eyes
+```
+
+(`$env:UV_PROJECT_ENVIRONMENT = "..."` in PowerShell.)
+
+Four scripts are not run that way. [`tools/git_rev.py`](../tools/git_rev.py)
+and [`tools/gen_page.py`](../tools/gen_page.py) are PlatformIO build hooks, run
+by whatever Python PlatformIO itself runs on — 3.14 for a
+`uv tool install platformio`, 3.11 inside the VS Code extension — so they use
+the standard library only, and no syntax newer than 3.11.
+[`hardware/gen_board.py`](../hardware/gen_board.py) and
+`hardware/make_outputs.py` need KiCad's `pcbnew` and run on the Python inside
+KiCad; the [hardware README](../hardware/README.md) says how.

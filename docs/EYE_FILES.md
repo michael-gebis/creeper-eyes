@@ -33,8 +33,8 @@ ok slot empty; eye=0 default
 ### Building eye files
 
 ```sh
-python tools/make_eye.py dragon        # one design -> dist/eyes/dragon.bin
-python tools/make_eye.py --all         # every header in include/ -> dist/eyes/
+uv run tools/make_eye.py dragon        # one design -> dist/eyes/dragon.bin
+uv run tools/make_eye.py --all         # every header in include/ -> dist/eyes/
 ```
 
 `--all` includes `default.bin`, which the board refuses because a design by

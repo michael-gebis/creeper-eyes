@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Update the board over WiFi, and confirm it actually took.
 
-    python tools/ota.py --host frank.local
-    python tools/ota.py --host 192.168.1.50 --env gray_rtc_ota
+    uv run tools/ota.py --host frank.local
+    uv run tools/ota.py --host 192.168.1.50 --env gray_rtc_ota
 
 Why this exists rather than `pio run -t upload`: espota.py reports failure for
 updates that have already succeeded, and it does so most of the time on a
@@ -46,6 +46,7 @@ import json
 import os
 import re
 import select
+import shutil
 import socket
 import subprocess
 import sys
@@ -57,6 +58,17 @@ from typing import Optional
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 SECRETS = os.path.join(ROOT, "include", "secrets.h")
+
+
+def default_pio() -> str:
+    """PlatformIO's command: `pio` on the PATH -- a standalone install, such as
+    `uv tool install platformio` -- or else the copy inside the VS Code
+    extension's own environment, for someone who has only the extension."""
+    found: Optional[str] = shutil.which("pio")
+    if found:
+        return found
+    return os.path.expanduser("~/.platformio/penv/Scripts/pio.exe" if os.name == "nt"
+                              else "~/.platformio/penv/bin/pio")
 
 
 def from_secrets(name: str) -> Optional[str]:
@@ -376,8 +388,8 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--api-password")
     ap.add_argument("--retries", type=int, default=3)
     ap.add_argument("--no-build", action="store_true")
-    ap.add_argument("--pio", default=os.path.expanduser(
-        "~/.platformio/penv/Scripts/pio.exe"))
+    ap.add_argument("--pio", default=default_pio(),
+                    help="PlatformIO's command (default: pio on the PATH)")
     args: argparse.Namespace = ap.parse_args(argv[1:])
 
     ota_pw: str = args.password or from_secrets("OTA_PASSWORD") or ""

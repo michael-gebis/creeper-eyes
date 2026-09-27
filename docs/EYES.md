@@ -111,8 +111,7 @@ The converted headers are generated, and the generator is checked in:
 
 ```sh
 git clone --depth 1 https://github.com/chrismiller/TeensyEyes.git
-pip install pillow
-python tools/gen_eyes.py TeensyEyes/resources/eyes/240x240
+uv run tools/gen_eyes.py TeensyEyes/resources/eyes/240x240
 ```
 
 That writes `include/eyes/*.h` and the gallery images. Then add an `EYE_FOO`
@@ -236,6 +235,5 @@ pupils are reconstructed from the source `slitRadius`.
 To regenerate, or to add a design TeensyEyes gains later:
 
 ```sh
-pip install pillow
-python tools/gen_eyes.py            # writes include/eyes/ and docs/images/eyes/
+uv run tools/gen_eyes.py            # writes include/eyes/ and docs/images/eyes/
 ```

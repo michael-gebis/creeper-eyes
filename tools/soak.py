@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compare two firmware configurations over hours, fairly.
 
-    python tools/soak.py --hours 3 --token ... \\
+    uv run tools/soak.py --hours 3 --token ... \\
         --a "-DHTTP_TASK=1" --b "-DHTTP_TASK=0"
 
 The problem this exists to solve: a WiFi link is not a stable measuring
@@ -36,6 +36,7 @@ import urllib.request
 from typing import Any, Optional, TextIO
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from ota import default_pio  # noqa: E402
 from test_api import Api, Json, Result, percentile  # noqa: E402
 
 # A request slower than this is the thing being counted: not a slow reply but
@@ -159,8 +160,8 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--user")
     ap.add_argument("--password")
     ap.add_argument("--csv", default="soak.csv")
-    ap.add_argument("--pio", default=os.path.expanduser(
-        "~/.platformio/penv/Scripts/pio.exe"))
+    ap.add_argument("--pio", default=default_pio(),
+                    help="PlatformIO's command (default: pio on the PATH)")
     ap.add_argument("--build-dir", default="")
     args: argparse.Namespace = ap.parse_args(argv[1:])
 

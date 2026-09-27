@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Turn a compiled-in eye design into an eye file for the board's eye slot.
 
-    python tools/make_eye.py dragon             # -> dist/eyes/dragon.bin
-    python tools/make_eye.py dragon skull newt
-    python tools/make_eye.py --all              # every design in include/
-    python tools/make_eye.py --check dist/eyes/dragon.bin
+    uv run tools/make_eye.py dragon             # -> dist/eyes/dragon.bin
+    uv run tools/make_eye.py dragon skull newt
+    uv run tools/make_eye.py --all              # every design in include/
+    uv run tools/make_eye.py --check dist/eyes/dragon.bin
 
 The source is the same C headers the firmware compiles in, so an eye file
 and a built-in design with the same name show the same thing.  The format is

@@ -26,7 +26,7 @@ Uploading then needs it. [`tools/ota.py`](../tools/ota.py) reads it from
 `secrets.h`, or takes `--password`:
 
 ```sh
-python tools/ota.py --host frank.local --env gray_rtc_ota
+uv run tools/ota.py --host frank.local --env gray_rtc_ota
 ```
 
 That sets the initial one. It can be changed later from the control page
