@@ -173,7 +173,7 @@ def main(argv: list[str]) -> int:
     runs: int = 0
     failed: int = 0
     restarts: list[str] = []
-    while time.time() < deadline:
+    while runs == 0 or time.time() < deadline:  # at least one, however short
         ok: bool
         summary: str
         ok, summary = suite(args.host, creds, extra)
