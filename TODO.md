@@ -193,6 +193,28 @@ room and up in a bright one.
   eyes' own glow; how much smoothing, so a passing shadow does not flicker the
   eyes; and whether it should only ever dim, never brighten past the setting.
 
+## An unexplained watchdog reset on frank-dev
+
+On 2026-09-27 frank-dev, the colour board, reported "the board restarted after
+a watchdog". Its uptime put the reset about half an hour after it was updated
+over the air to the `overlap-send` branch (8f75d4f) on 2026-09-25, late in
+the evening with nothing testing it; it then ran 36 hours without another.
+It has no C1, runs at 160 MHz, and has sleep mode off.
+
+- **Why it matters.** `OVERLAP_SEND` keeps core 0 busy sending frames, and the
+  task watchdog watches core 0's idle task. The sender steps aside for one
+  tick a second so that the idle task runs; if something defeats that, this
+  is what it would look like. But it could as well be the interrupt watchdog,
+  or another, and at the time the report did not say which.
+- **What now records it.** Since 482ea55 the report names the watchdog, and
+  for the task watchdog the task that kept core 0 busy, sampled at every tick
+  (a forced test named the culprit correctly). frank-dev runs that firmware.
+- **Not reproduced.** 20 minutes of `tools/load_test.py` against it afterwards
+  passed without a restart; so did three 45-minute runs before the reset.
+- **Next time it happens,** the warning says which task. `panels` would point
+  at the sender's rest, which could step aside more often at a small cost in
+  frame rate.
+
 ## A restart command in the API
 
 There is no way to restart the board over the network. The firmware restarts

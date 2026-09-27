@@ -195,4 +195,10 @@ Encouraging, and not yet proof. The two runs alone are one brownout against
 none, which chance gives easily. Counting all three Frank had at 160 MHz
 without C1 that day — about an hour of load in all — a clean 48 minutes with
 C1 would happen by chance about one time in ten. A longer run with C1 is what
-would settle it, and after that 240 MHz is worth trying again.
+would settle it.
+
+240 MHz with C1 has had a first look. Frank ran it for about 21 hours, mostly
+idle, without a restart, then 12 minutes of load: 11 resumes from a pause and
+no brownout, against one in 19 resumes at 240 MHz without C1 the day before.
+Too little to move the default off 160 MHz, which is where the long runs
+have been.
