@@ -2,7 +2,7 @@
 """Compare two firmware configurations over hours, fairly.
 
     uv run tools/soak.py --hours 3 --token ... \\
-        --a "-DHTTP_TASK=1" --b "-DHTTP_TASK=0"
+        --a=-DHTTP_TASK=1 --b=-DHTTP_TASK=0
 
 The problem this exists to solve: a WiFi link is not a stable measuring
 instrument.  Measuring configuration A for ten minutes and then B for ten

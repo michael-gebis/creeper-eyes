@@ -30,8 +30,11 @@ their weather, which was enough to invert a conclusion twice before this
 existed. See [docs/HTTP_LATENCY.md](HTTP_LATENCY.md).
 
 ```sh
-uv run tools/soak.py --hours 3 --a "-DCLOCK=1" --b "-DCLOCK=0"
+uv run tools/soak.py --hours 3 --a=-DCLOCK=1 --b=-DCLOCK=0
 ```
+
+The `=` matters: written as `--a -DCLOCK=1`, the flag would be taken for
+another option and the command refused.
 
 Each row of the CSV carries the signal strength at the time it was taken, and
 each round prints it. That column is there because the radio is the variable
