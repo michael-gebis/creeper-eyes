@@ -207,7 +207,10 @@ same list under `warnings`, and `GET /api/v1/state` carries it as
 
 The same list reports a restart the board did not plan: after a crash, a
 watchdog or a brownout, it says so at the next boot, rather than leaving the
-reason in serial output nobody was watching. A brownout means the supply sagged
+reason in serial output nobody was watching. It says which watchdog, and for
+the task watchdog — which fires when core 0 has been kept too busy for five
+seconds — what each core was running at the time, which is the clue to what
+kept it busy. A brownout means the supply sagged
 too far — see [Frame rate](FRAME_RATE.md#brownouts-and-the-cpu-at-160-mhz).
 Power-on, the reset button and restarts the firmware asks for, for an update or
 a WiFi change, stay quiet.

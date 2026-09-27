@@ -821,19 +821,57 @@ static void loadSettings(void); // defined below setup(), with the settings
 
 static void startSender(void); // defined below setup(), with drawEye()
 
+// The task watchdog's last words.  It watches core 0's idle task, which only
+// runs when nothing else on that core wants to, so when it fires the question
+// is what was hogging the core -- and the panic that follows prints the
+// answer to a serial port nobody may be reading.  The watchdog calls this
+// hook from its interrupt just before it aborts, so it notes what each core
+// was running in RTC memory, which a reset leaves alone, and
+// reportResetReason() reads it at the next boot.  The hook is a weak symbol
+// of the core's; defining it is how it is used.
+#define WDT_CLUE_MAGIC 0x57444f47u // "WDOG": the clue below is this boot's
+static RTC_NOINIT_ATTR struct {
+  uint32_t magic;
+  char task[2][configMAX_TASK_NAME_LEN];
+} wdtClue;
+
+extern "C" void esp_task_wdt_isr_user_handler(void) {
+  for (int c = 0; c < 2; c++) {
+    const TaskHandle_t t = xTaskGetCurrentTaskHandleForCPU(c);
+    const char *name = t ? pcTaskGetName(t) : "?";
+    uint8_t i = 0;
+    for (; i < configMAX_TASK_NAME_LEN - 1 && name[i]; i++)
+      wdtClue.task[c][i] = name[i];
+    wdtClue.task[c][i] = '\0';
+  }
+  wdtClue.magic = WDT_CLUE_MAGIC;
+}
+
 // Why the board last reset, when that was not on purpose.  Power-on, a reset
 // button and a restart the firmware asked for -- an update, a WiFi change --
 // say nothing.  A crash, a watchdog or a brownout goes through health.h, so
 // it reaches the console, the API and the control page rather than only a
 // serial line printed before anybody was listening.
 static void reportResetReason(void) {
+  const bool clue = wdtClue.magic == WDT_CLUE_MAGIC;
+  wdtClue.magic = 0; // read once; a later reset must not find it
   const char *why = NULL;
   switch (esp_reset_reason()) {
   case ESP_RST_PANIC:
     why = "a crash";
     break;
-  case ESP_RST_INT_WDT:
   case ESP_RST_TASK_WDT:
+    if (clue) {
+      healthNote("the board restarted after the task watchdog; "
+                 "core 0 ran %.15s, core 1 %.15s",
+                 wdtClue.task[0], wdtClue.task[1]);
+      return;
+    }
+    why = "the task watchdog";
+    break;
+  case ESP_RST_INT_WDT:
+    why = "the interrupt watchdog";
+    break;
   case ESP_RST_WDT:
     why = "a watchdog";
     break;
