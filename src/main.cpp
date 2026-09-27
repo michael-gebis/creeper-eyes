@@ -43,6 +43,7 @@
 #include <ArduinoOTA.h>
 #endif
 #include <SPI.h>
+#include <esp_freertos_hooks.h> // the tick hook behind wdtClue
 
 // Which designs are built in -- see include/eyes_config.h.  The headers are
 // modified from Adafruit's originals so that several can be included at once,
@@ -823,27 +824,48 @@ static void startSender(void); // defined below setup(), with drawEye()
 
 // The task watchdog's last words.  It watches core 0's idle task, which only
 // runs when nothing else on that core wants to, so when it fires the question
-// is what was hogging the core -- and the panic that follows prints the
-// answer to a serial port nobody may be reading.  The watchdog calls this
-// hook from its interrupt just before it aborts, so it notes what each core
-// was running in RTC memory, which a reset leaves alone, and
-// reportResetReason() reads it at the next boot.  The hook is a weak symbol
-// of the core's; defining it is how it is used.
+// is what kept the core busy -- and the panic that follows prints only what
+// was running at that instant, to a serial port nobody may be reading.  That
+// instant is a poor witness: WiFi preempts everything for moments at a time,
+// and a forced test caught it there with the real culprit spinning beneath.
+//
+// So core 0 is sampled at every tick into a short ring, and the watchdog's
+// hook -- a weak symbol of the core's, called from its interrupt just before
+// it aborts -- names the task seen most often in the last 32 ms.  It goes in
+// RTC memory, which a reset leaves alone, for reportResetReason() to read at
+// the next boot.
+#define WDT_SAMPLES 32
+static TaskHandle_t core0Seen[WDT_SAMPLES];
+static uint8_t core0Next = 0;
+
+// From core 0's tick interrupt, which runs even while flash is busy: IRAM.
+static void IRAM_ATTR sampleCore0(void) {
+  core0Seen[core0Next++ % WDT_SAMPLES] = xTaskGetCurrentTaskHandle();
+}
+
 #define WDT_CLUE_MAGIC 0x57444f47u // "WDOG": the clue below is this boot's
 static RTC_NOINIT_ATTR struct {
   uint32_t magic;
-  char task[2][configMAX_TASK_NAME_LEN];
+  char task[configMAX_TASK_NAME_LEN];
 } wdtClue;
 
 extern "C" void esp_task_wdt_isr_user_handler(void) {
-  for (int c = 0; c < 2; c++) {
-    const TaskHandle_t t = xTaskGetCurrentTaskHandleForCPU(c);
-    const char *name = t ? pcTaskGetName(t) : "?";
-    uint8_t i = 0;
-    for (; i < configMAX_TASK_NAME_LEN - 1 && name[i]; i++)
-      wdtClue.task[c][i] = name[i];
-    wdtClue.task[c][i] = '\0';
+  TaskHandle_t busiest = NULL;
+  uint8_t most = 0;
+  for (uint8_t i = 0; i < WDT_SAMPLES; i++) {
+    uint8_t n = 0;
+    for (uint8_t j = 0; j < WDT_SAMPLES; j++)
+      n += core0Seen[j] == core0Seen[i];
+    if (core0Seen[i] && n > most) {
+      most = n;
+      busiest = core0Seen[i];
+    }
   }
+  const char *name = busiest ? pcTaskGetName(busiest) : "?";
+  uint8_t i = 0;
+  for (; i < configMAX_TASK_NAME_LEN - 1 && name[i]; i++)
+    wdtClue.task[i] = name[i];
+  wdtClue.task[i] = '\0';
   wdtClue.magic = WDT_CLUE_MAGIC;
 }
 
@@ -863,8 +885,8 @@ static void reportResetReason(void) {
   case ESP_RST_TASK_WDT:
     if (clue) {
       healthNote("the board restarted after the task watchdog; "
-                 "core 0 ran %.15s, core 1 %.15s",
-                 wdtClue.task[0], wdtClue.task[1]);
+                 "core 0 was busy with %.15s",
+                 wdtClue.task);
       return;
     }
     why = "the task watchdog";
@@ -1046,6 +1068,7 @@ void setup(void) {
   DEBUG_PRINTF("[creeper-eyes] SPI SCK=%u MISO=%u MOSI=%u | eyes=%u\n",
                SCLK_PIN, MISO_PIN, MOSI_PIN, (unsigned)NUM_EYES);
   reportResetReason();
+  esp_register_freertos_tick_hook_for_cpu(sampleCore0, 0); // see wdtClue
   // SerialIn.begin(9600, SERIAL_8N1, UART_RX_PIN); // disabled
   randomSeed(analogRead(A3)); // Seed random() from floating analog input
 
