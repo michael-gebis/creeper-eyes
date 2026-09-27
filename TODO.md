@@ -236,6 +236,37 @@ without a USB cable to pull the reset line with.
 - **Open question.** Settings that are changed but not saved are lost on a
   restart. Refuse, save first, or say so in the reply?
 
+## The CPU speed as a setting
+
+The CPU runs at 160 MHz on every board because frank-dev browned out at 240
+without C1 ([Frame rate](docs/FRAME_RATE.md#brownouts-and-the-cpu-at-160-mhz)).
+That costs greyscale a quarter of its frame rate: Frank gives 75 fps at 160 and
+100 at 240. A board with C1, or a better supply, could have the speed its
+supply allows, set per board rather than per build.
+
+- **No restart needed.** The core sets the speed at boot with
+  `setCpuFrequencyMhz(F_CPU / 1000000)`, and the firmware can call it again.
+  Between 160 and 240 MHz only the CPU clock moves; the peripheral clock stays
+  at 80 MHz, so the SPI bus, the serial port and the timers are untouched, and
+  the core updates the FreeRTOS tick itself. So a change could apply between
+  frames.
+  Worth confirming on a board: the heartbeat's `draw` should go from 12 ms to
+  8.3 on Frank with nothing else disturbed.
+- **The setting.** 160 or 240, stored and checked on load like the rest, with
+  `board_build.f_cpu` still the default and the speed a board boots at. 80 MHz
+  exists but would double the drawing time; not worth offering.
+- **Where it goes.** A CPU-speed control on the control page, a
+  `cpu [160|240]` console command, an API endpoint, and the current speed in
+  `/state`; saved with `save` like everything else.
+- **A way back from a brownout.** A board set to 240 whose last restart was a
+  brownout boots at 160 instead and says so under `warnings` — "running at
+  160 MHz because the last restart was a brownout" — so a head sealed in a
+  prop cannot get stuck browning out. `reportResetReason()` already knows the
+  reason. Testable with a temporary build that fakes one, as the watchdog
+  report was.
+- **Company.** The per-panel SPI bus speed, a control that was discussed but
+  not built, would belong on the same card.
+
 ## Three pictures
 
 The only photograph in the repository is a screenshot, and it is out of
