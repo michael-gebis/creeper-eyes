@@ -31,6 +31,9 @@ bootloader, which is too. The CPU runs at 160 MHz rather than 240
 `OVERLAP_SEND` colour frames wait on the SPI bus, not the CPU, so it costs them
 two frames a second; greyscale frames wait on the drawing and pay more, about a
 quarter — see [Frame rate](FRAME_RATE.md#brownouts-and-the-cpu-at-160-mhz).
+That is only the speed a board starts at: one with the supply for it can be
+set to 240 without a rebuild, and keeps it as a
+[saved setting](#remembering-settings).
 
 Two groups are **not** guarded and cannot be overridden this way. Three
 derived values — `CONTROLLABLE`, `FAVICON_FRANK` and `FAVICON_EYES` — are
@@ -144,6 +147,12 @@ radio in its own part of NVS, not by `save`, and `forget` does not clear
 them. `wifi forget` does. The control page says the same thing on each card,
 so you never have to come back here to find out what a control will do.
 
+The **CPU speed** is stored differently too. `cpu 240`, the buttons on the
+control page and `PUT /api/v1/cpu` store it at once rather than waiting for
+`save`, because it only takes effect when the board restarts, so there is
+nothing to try out first. `forget` clears it with everything else, and the
+build's speed applies again from the next boot.
+
 Gaze and dilation are deliberately transient — they are things you drive,
 not things you configure.
 
@@ -211,8 +220,18 @@ reason in serial output nobody was watching. It says which watchdog, and for
 the task watchdog — which fires when core 0 has been kept too busy for five
 seconds — which task had been keeping it busy. A brownout means the supply sagged
 too far — see [Frame rate](FRAME_RATE.md#brownouts-and-the-cpu-at-160-mhz).
-Power-on, the reset button and restarts the firmware asks for, for an update or
-a WiFi change, stay quiet.
+Power-on, the reset button and restarts the firmware asks for, for an update, a
+WiFi change or the `restart` command, stay quiet.
+
+A board set to 240 MHz that browns out comes back at 160, stores that, and
+says so in the same list, so a head sealed in a prop browns out once rather
+than every time it is switched on:
+
+```
+> warnings
+  the board restarted after a brownout: the supply dipped too low
+  dropped to 160 MHz after the brownout; set 240 again to retry
+```
 
 And it reports a speed-up that could not be set up for want of memory: the
 task that sends frames from the other core (`OVERLAP_SEND`), or the copy of the

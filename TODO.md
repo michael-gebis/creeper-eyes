@@ -215,57 +215,14 @@ It has no C1, runs at 160 MHz, and has sleep mode off.
   at the sender's rest, which could step aside more often at a small cost in
   frame rate.
 
-## A restart command in the API
+## The panel bus speed as a setting
 
-There is no way to restart the board over the network. The firmware restarts
-itself after an update or a WiFi change, and the BOOT button's factory reset
-ends in one, but nothing asks for a plain restart. A sealed head can only be
-power-cycled, and `tools/load_test.py` cannot check that it notices a restart
-without a USB cable to pull the reset line with.
-
-- **Where it goes.** An `op` of `restart` on `POST /api/v1/action`, beside
-  `blink`, and behind the same authentication as everything else. A `restart`
-  console command to match, and perhaps a button on the control page, behind a
-  confirmation.
-- **Reply first.** Answer the request, then restart a moment later, so the
-  caller gets a 200 rather than a dropped connection it cannot tell from a
-  crash.
-- **Stays quiet.** It is a restart the firmware asked for, so the warnings
-  list should say nothing afterwards — `reportResetReason()` already treats
-  a software restart that way.
-- **Open question.** Settings that are changed but not saved are lost on a
-  restart. Refuse, save first, or say so in the reply?
-
-## The CPU speed as a setting
-
-The CPU runs at 160 MHz on every board because frank-dev browned out at 240
-without C1 ([Frame rate](docs/FRAME_RATE.md#brownouts-and-the-cpu-at-160-mhz)).
-That costs greyscale a quarter of its frame rate: Frank gives 75 fps at 160 and
-100 at 240. A board with C1, or a better supply, could have the speed its
-supply allows, set per board rather than per build.
-
-- **No restart needed.** The core sets the speed at boot with
-  `setCpuFrequencyMhz(F_CPU / 1000000)`, and the firmware can call it again.
-  Between 160 and 240 MHz only the CPU clock moves; the peripheral clock stays
-  at 80 MHz, so the SPI bus, the serial port and the timers are untouched, and
-  the core updates the FreeRTOS tick itself. So a change could apply between
-  frames.
-  Worth confirming on a board: the heartbeat's `draw` should go from 12 ms to
-  8.3 on Frank with nothing else disturbed.
-- **The setting.** 160 or 240, stored and checked on load like the rest, with
-  `board_build.f_cpu` still the default and the speed a board boots at. 80 MHz
-  exists but would double the drawing time; not worth offering.
-- **Where it goes.** A CPU-speed control on the control page, a
-  `cpu [160|240]` console command, an API endpoint, and the current speed in
-  `/state`; saved with `save` like everything else.
-- **A way back from a brownout.** A board set to 240 whose last restart was a
-  brownout boots at 160 instead and says so under `warnings` — "running at
-  160 MHz because the last restart was a brownout" — so a head sealed in a
-  prop cannot get stuck browning out. `reportResetReason()` already knows the
-  reason. Testable with a temporary build that fakes one, as the watchdog
-  report was.
-- **Company.** The per-panel SPI bus speed, a control that was discussed but
-  not built, would belong on the same card.
+The CPU speed is a setting now; the speed of the SPI bus each panel is driven
+at is still a build option, `SSD1351_SPI_HZ` or `SSD1327_SPI_HZ`. It was
+discussed beside the CPU speed and not built. Lowering it is the cure for a
+panel that flickers or speckles, so as a setting it would let a sealed head be
+turned down without a rebuild. It would belong on the same card as the CPU
+speed.
 
 ## Three pictures
 

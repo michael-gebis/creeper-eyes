@@ -132,6 +132,16 @@ Greyscale pays more for it, because there the drawing sets the pace: 75 fps
 where 240 MHz gives 101 (see [Greyscale](#greyscale)). With C1 fitted, 240 MHz
 is worth trying again.
 
+So the speed is a setting, chosen per board rather than per build. 160 MHz is
+what a board starts at; `cpu 240`, the CPU buttons on the control page or
+`PUT /api/v1/cpu` move one with the supply for it to 240 from its next restart,
+and it keeps that. It is not switched live. 160 and 240 come from different PLL
+frequencies, and re-locking the PLL with the radio up took the network away for
+8.5 seconds each time it was tried, so the speed is set at boot, before WiFi
+starts. And a board set to 240 that browns out comes back at 160, stores that,
+and says so under warnings — so a head sealed in a prop browns out once, not
+every time it is switched on.
+
 The board now reports any restart caused by a crash, a watchdog or a brownout
 as a [warning](CONFIG.md#if-stored-settings-are-damaged), on the control page
 and the console. The brownouts above were how it was confirmed: each one showed
@@ -201,4 +211,5 @@ would settle it.
 idle, without a restart, then 12 minutes of load: 11 resumes from a pause and
 no brownout, against one in 19 resumes at 240 MHz without C1 the day before.
 Too little to move the default off 160 MHz, which is where the long runs
-have been.
+have been — though a board with C1 can now be set to 240 on its own, as
+above.

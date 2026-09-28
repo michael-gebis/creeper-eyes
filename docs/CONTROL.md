@@ -13,7 +13,7 @@ If you are not sure which you want: open `http://frank.local/` in a browser.
 **http://frank.local/** — a control page for everything the console can do:
 eye design (and [eye files](EYE_FILES.md)), gaze, dilation, pupil, panel swap and flip,
 [brightness](BRIGHTNESS.md), clock and hand colours, the time and its sources, sleep,
-passwords, Wi-Fi, and the address details — and, above the cards, anything wrong
+passwords, Wi-Fi, the address details, the CPU speed and a restart button — and, above the cards, anything wrong
 the board [found in its stored settings](CONFIG.md#if-stored-settings-are-damaged).
 It polls the device once a second,
 so two browsers looking at it stay in step with each other and with anything
@@ -78,8 +78,10 @@ Open `pio device monitor` and type `help`. Commands are line-based at 115200.
 | `swap [on\|off]` | Swap which physical panel is which eye |
 | `dim [0-100]` | Brightness; 0 is off. Also `dim gamma <1.0-4.0>`, `dim trim left\|right <-50..50>`, `dim sweep [off]` — see [Brightness](BRIGHTNESS.md) |
 | `flip left\|right [on\|off]` | Turn one panel's image through 180°, for a panel fitted upside down. Your left and right, facing the head |
+| `cpu [160\|240]` | The CPU speed. Stored at once, and used from the next restart. 240 draws faster and draws more current — see [Frame rate](FRAME_RATE.md#brownouts-and-the-cpu-at-160-mhz) |
 | `save` | Persist every setting tagged persistent — see [Configuring](CONFIG.md#remembering-settings) |
 | `forget` | Clear saved settings |
+| `restart` | Restart the board a second from now. Unsaved changes are lost, and it says so |
 | `net [quiet]` | Address info, on the panels too — one eye shows a code that opens this page |
 | `net off` | Dismiss the address cards early |
 | `wifi` | The network, and how to change it |
@@ -92,7 +94,7 @@ Open `pio device monitor` and type `help`. Commands are line-based at 115200.
 | `rtc sync` | Store the current time in it |
 | `tz [zone]` | Timezone by name or POSIX string |
 | `splash` | Re-show the panel name cards |
-| `status` | Current eye, gaze, dilation, heap, uptime, frame rate |
+| `status` | Current eye, gaze, dilation, CPU speed, heap, uptime, frame rate |
 | `warnings` | What the board found at boot: damaged settings and what was done about them, a restart it did not plan, and a speed-up it had no memory for — see [Configuring](CONFIG.md#if-stored-settings-are-damaged) |
 | `sleep` | What the sleep window is set to, and what it is doing |
 | `sleep on\|off` | Enable or disable it |
@@ -131,11 +133,12 @@ can drive the device; with one, cross-origin pages are not invited.
 | `GET` `PUT` | `/api/v1/swap` | `{"on":true}` — swaps left and right panels |
 | `GET` `PUT` | `/api/v1/dim` | `{"percent":40}`, `{"gamma":2.8}`, `{"trim":{"left":-15}}`, `{"sweep":true}` — any of them |
 | `GET` `PUT` | `/api/v1/flip` | `{"left":true}`, `{"right":false}` or both — a panel fitted upside down |
+| `GET` `PUT` | `/api/v1/cpu` | `{"mhz":240}` or `160`, stored at once and used from the next restart. Answers with `mhz`, the speed now, and `setting` |
 | `GET` `PUT` | `/api/v1/clock` | `on`, `seconds`, `rate`, `time`, `colors` — any subset |
 | `GET` `PUT` | `/api/v1/netinfo` | `{"on":true}` — address cards on the panels |
 | `GET` `PUT` | `/api/v1/wifi` | `{"ssid":…,"pass":…}`, `{"op":"forget"}`, `{"op":"portal"}` |
 | `GET` `PUT` | `/api/v1/tz` | `{"tz":"pacific"}` or any POSIX string |
-| `POST` | `/api/v1/action` | `{"action":"blink"}` — also `startle`, `splash`, `netinfo` |
+| `POST` | `/api/v1/action` | `{"action":"blink"}` — also `startle`, `splash`, `netinfo`, `restart` |
 | `POST` | `/api/v1/settings` | `{"op":"save"}` or `{"op":"forget"}` |
 | `GET` `PUT` | `/api/v1/sleep` | `enabled`, `start`, `stop`, `level` — needs `SLEEP` |
 | `GET` `PUT` | `/api/v1/credentials` | Which credentials are set, and changing them — see below |
@@ -172,6 +175,12 @@ credential without presenting the current one.
 Every write to `/wifi` answers first and then reboots the board, so the reply
 arrives but the connection it arrived over does not survive. `GET /wifi`
 never returns a password.
+
+`{"action":"restart"}` answers first too, and restarts the board a second
+later, so a caller gets its `200` rather than a dropped connection it cannot
+tell from a crash. Unsaved settings are lost; `system.settingsDirty` in
+`/state` says whether there are any, and the control page asks before it
+restarts. The board is back in about ten seconds with the same address.
 
 Gaze runs `0`–`1023` on each axis with **`y=1023` at the top**, the way a
 joystick reads rather than the way a screen does. `512 512` is centre. The

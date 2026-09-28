@@ -96,11 +96,15 @@ It adapts to the firmware it finds: `GET /api/v1/info` says which features are
 compiled in, so a build without an RTC or without authentication has those
 groups skipped rather than failed. It captures the board's state at the start
 and puts it back at the end. Nothing reboots the board or writes flash unless
-you pass `--wifi` or `--settings`. The same goes for `--eye-file
+you pass `--wifi`, `--settings` or `--restart`. The same goes for `--eye-file
 dist/eyes/NAME.bin`, which fills the [eye slot](EYE_FILES.md), damages an
 upload on purpose, and removes it again. The uploads the board refuses
 *before* erasing anything are tested on every run, and checked to have left
 the slot alone.
+
+`--restart` restarts the board twice: once to move the CPU speed to its other
+setting, and once to move it back. It checks that the new speed took, and that
+a restart the board was asked for leaves no warning behind.
 
 A group called *refusing bad input* sends the API the kinds of values it
 once accepted wrongly: out-of-range numbers that a narrowing cast used to
