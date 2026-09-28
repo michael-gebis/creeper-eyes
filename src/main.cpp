@@ -858,9 +858,28 @@ static void startSender(void); // defined below setup(), with drawEye()
 static TaskHandle_t core0Seen[WDT_SAMPLES];
 static uint8_t core0Next = 0;
 
+// Core 0's idle task, counted from an idle hook -- the place the task
+// watchdog is fed from, so "idle ran" and "the watchdog was fed" are one
+// fact.  The tick hook turns it into the longest run of ticks core 0 went
+// without it since boot: the watchdog's own measure, fatal at 5000.
+static volatile uint32_t idle0Runs = 0;
+static uint32_t idle0Seen = 0, idle0Since = 0;
+static volatile uint32_t idle0MaxGap = 0;
+
+static bool IRAM_ATTR countIdle0(void) {
+  idle0Runs++;
+  return true; // and it may still wait for an interrupt
+}
+
 // From core 0's tick interrupt, which runs even while flash is busy: IRAM.
 static void IRAM_ATTR sampleCore0(void) {
   core0Seen[core0Next++ % WDT_SAMPLES] = xTaskGetCurrentTaskHandle();
+  if (idle0Runs != idle0Seen) {
+    idle0Seen = idle0Runs;
+    idle0Since = 0;
+  } else if (++idle0Since > idle0MaxGap) {
+    idle0MaxGap = idle0Since;
+  }
 }
 
 #define WDT_CLUE_MAGIC 0x57444f47u // "WDOG": the clue below is this boot's
@@ -1088,6 +1107,7 @@ void setup(void) {
   DEBUG_PRINTF("[creeper-eyes] SPI SCK=%u MISO=%u MOSI=%u | eyes=%u\n",
                SCLK_PIN, MISO_PIN, MOSI_PIN, (unsigned)NUM_EYES);
   reportResetReason();
+  esp_register_freertos_idle_hook_for_cpu(countIdle0, 0);  // see idle0Runs
   esp_register_freertos_tick_hook_for_cpu(sampleCore0, 0); // see wdtClue
   // SerialIn.begin(9600, SERIAL_8N1, UART_RX_PIN); // disabled
   randomSeed(analogRead(A3)); // Seed random() from floating analog input
@@ -1235,6 +1255,10 @@ static SemaphoreHandle_t sendIdle = NULL; // available while nothing is in hand
 // about a thousandth of the time.
 #define SENDER_REST_MS 1000
 
+// Rests taken, and rests in which the idle task still did not run because
+// something else on core 0 took the tick: for `status`.
+static volatile uint32_t senderRests = 0, senderRestsMissed = 0;
+
 static void senderTask(void *) {
   SendJob j;
   uint32_t lastRest = millis();
@@ -1246,7 +1270,11 @@ static void senderTask(void *) {
     xSemaphoreGive(sendIdle);
     if (millis() - lastRest >= SENDER_REST_MS) {
       lastRest = millis();
+      const uint32_t idleBefore = idle0Runs;
       vTaskDelay(1); // blocked, so core 0's idle task gets its turn
+      senderRests++;
+      if (idle0Runs == idleBefore)
+        senderRestsMissed++;
     }
   }
 }
@@ -2333,6 +2361,11 @@ void cmdStatus(Print &out) {
                 (unsigned)ESP.getFreeHeap(), (unsigned)(millis() / 1000));
 #if DEBUG
   out.printf(" fps=%u", lastFps);
+#endif
+  out.printf(" idle0gap=%ums", (unsigned)(idle0MaxGap * portTICK_PERIOD_MS));
+#if OVERLAP_SEND
+  out.printf(" rests=%u missed=%u", (unsigned)senderRests,
+             (unsigned)senderRestsMissed);
 #endif
   out.println();
 }
