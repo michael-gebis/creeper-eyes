@@ -281,6 +281,24 @@ static bool pupilOn = true;
 static bool eyesSwapped = false;
 static bool swapPending = false;
 
+// The CPU speed setting in MHz, 160 or 240: what the CPU is set to at the
+// next boot.  The build's board_build.f_cpu is the default; a stored setting
+// takes over when the settings load, which is before WiFi starts.  It is not
+// switched live, because 160 and 240 come from different PLL frequencies:
+// re-locking the PLL with the radio up cost 8.5 s of network every time it
+// was tried.  240 draws faster, and draws more current -- docs/FRAME_RATE.md.
+static uint8_t cpuSetting = F_CPU / 1000000;
+
+static bool cpuValid(long mhz) { return mhz == 160 || mhz == 240; }
+
+// A restart asked for over the console or the API.  Answered first and done
+// from the render loop a moment later, so the caller gets its reply rather
+// than a dropped connection it cannot tell from a crash.  A software restart,
+// so the warnings list says nothing about it afterwards.
+#define RESTART_DELAY_MS 1000
+static bool restartPending = false;
+static uint32_t restartAskedMs = 0;
+
 // Which panels were mounted upside down.  Indexed by chip-select slot --
 // 0 for SELECT_L_PIN, 1 for SELECT_R_PIN -- and NOT by eye, because it is
 // the panel that is the wrong way up, and it stays that way whichever eye
@@ -406,6 +424,7 @@ static bool settingsDirty = false;
 #define PREFS_KEY_DIM_GAMMA "dimGamma" // tenths: 22 is gamma 2.2
 #define PREFS_KEY_DIM_TRIM0 "dimTrim0" // SELECT_L_PIN's panel, -50..50
 #define PREFS_KEY_DIM_TRIM1 "dimTrim1" // SELECT_R_PIN's
+#define PREFS_KEY_CPU "cpuMHz" // written when it changes, not by save
 
 // The clock's display preferences are saved; the time itself is not.
 // Restoring a time from whenever the power went off would be wrong by
@@ -452,6 +471,7 @@ static void forgetSettings(void) {
   prefs.clear();
   prefs.end();
   settingsDirty = false;
+  cpuSetting = F_CPU / 1000000; // the build's speed again, from the next boot
 }
 
 #if RAM_TABLES
@@ -1513,7 +1533,8 @@ static uint8_t eyeDesignByName(const char *name) {
 // Nothing read here is trusted: each value goes through nvsread.h, which
 // checks its type and range, and a bad one is reported on the control page,
 // removed, and replaced by the built-in default.  Opened read-write for that
-// removal only -- nothing else is written.
+// removal, and for the CPU speed's brownout fallback below -- nothing else is
+// written.
 static void loadSettings(void) {
   if (!prefs.begin(PREFS_NAMESPACE, false)) {
     healthNote("settings storage could not be opened; using the defaults");
@@ -1561,7 +1582,25 @@ static void loadSettings(void) {
              nvsReadU8(prefs, PREFS_KEY_DIM_GAMMA, DIM_GAMMA_X10, DIM_GAMMA_MIN,
                        DIM_GAMMA_MAX),
              trims);
+
+  // nvsReadU8 checks the span; only its two ends are speeds.  And a board
+  // that restarted after a brownout comes back at 160 and keeps it: at 240
+  // both cores flat out draw enough to sag a marginal supply, and a head
+  // sealed in a prop should brown out once, not every time it is powered up.
+  uint8_t mhz = nvsReadU8(prefs, PREFS_KEY_CPU, cpuSetting, 160, 240);
+  if (!cpuValid(mhz)) {
+    nvsReject(prefs, PREFS_KEY_CPU, "is not 160 or 240");
+    mhz = cpuSetting;
+  }
+  if (mhz > 160 && esp_reset_reason() == ESP_RST_BROWNOUT) {
+    mhz = 160;
+    prefs.putUChar(PREFS_KEY_CPU, mhz);
+    healthNote("dropped to 160 MHz after the brownout; set 240 again to retry");
+  }
+  cpuSetting = mhz;
   prefs.end();
+  if (getCpuFrequencyMhz() != cpuSetting) // before WiFi starts: see cpuSetting
+    setCpuFrequencyMhz(cpuSetting);
 
 #if CLOCK
   clockSetColor(0, c0);
@@ -1593,10 +1632,11 @@ static void loadSettings(void) {
   // modified since the store was read, so start clean.
   settingsDirty = false;
 
-  DEBUG_PRINTF("[creeper-eyes] settings: eye=%s swap=%s flip=%s%s pupil=%s\n",
+  DEBUG_PRINTF("[creeper-eyes] settings: eye=%s swap=%s flip=%s%s pupil=%s "
+               "cpu=%u MHz\n",
                designAt(eyeDesign).name, eyesSwapped ? "yes" : "no",
                panelFlip[0] ? "L" : "-", panelFlip[1] ? "R" : "-",
-               pupilOn ? "on" : "off");
+               pupilOn ? "on" : "off", (unsigned)getCpuFrequencyMhz());
 #if CLOCK
   DEBUG_PRINTF("[creeper-eyes] clock: %s rate=%ux seconds=%s (time not restored)\n",
                clockOn ? "on" : "off", (unsigned)clockRate,
@@ -1811,6 +1851,8 @@ void stateGet(DeviceState &o) {
   o.clockColor[0] = o.clockColor[1] = o.clockColor[2] = 0;
 #endif
 
+  o.cpuMhz = getCpuFrequencyMhz();
+  o.cpuSetting = cpuSetting;
   o.settingsDirty = settingsDirty;
   o.fps = lastFps;
   o.freeHeap = ESP.getFreeHeap();
@@ -1974,6 +2016,28 @@ void stateSetSwap(bool sw) {
   eyesSwapped = sw;
   swapPending = true; // applied between frames
   settingsDirty = true;
+}
+
+// Stored at once rather than by save, since it cannot be tried out live
+// first -- see cpuSetting for why it waits for a restart.  Forget clears it
+// with everything else.
+bool stateSetCpu(long mhz) {
+  if (!cpuValid(mhz))
+    return false;
+  LOCKED;
+  if (!prefs.begin(PREFS_NAMESPACE, false))
+    return false;
+  const bool stored = prefs.putUChar(PREFS_KEY_CPU, (uint8_t)mhz) == 1;
+  prefs.end();
+  if (stored)
+    cpuSetting = (uint8_t)mhz;
+  return stored;
+}
+
+void stateRestart(void) {
+  LOCKED;
+  restartPending = true;
+  restartAskedMs = millis();
 }
 
 bool stateSetFlip(uint8_t e, bool flipped) {
@@ -2202,6 +2266,9 @@ static void cmdHelp(Print &out) {
                  "  dim gamma <1.0-4.0>       the brightness curve\n"
                  "  dim trim left|right <n>   even out two panels, -50..50\n"
                  "  dim sweep [off]           slow full-range sweep\n"
+                 "  cpu [160|240]             CPU speed, from the next "
+                 "restart\n"
+                 "  restart                   restart the board\n"
                  "  flip left|right [on|off]  turn a panel mounted upside "
                  "down\n"
                  "  save                      remember settings across "
@@ -2257,7 +2324,10 @@ void cmdStatus(Print &out) {
                 NUM_EYES > 1 && panelFlip[flipSlot(eye[NUM_EYES - 1].cs)]
                     ? "R" : "-",
                 settingsDirty ? " (unsaved)" : "");
-  out.printf(" dim=%u%%", (unsigned)dimmerPercent());
+  out.printf(" dim=%u%% cpu=%uMHz", (unsigned)dimmerPercent(),
+             (unsigned)getCpuFrequencyMhz());
+  if (cpuSetting != getCpuFrequencyMhz())
+    out.printf("(%u at restart)", (unsigned)cpuSetting);
   out.printf(" panel=%s heap=%u up=%us",
                 USE_SSD1327 ? "ssd1327" : "ssd1351",
                 (unsigned)ESP.getFreeHeap(), (unsigned)(millis() / 1000));
@@ -2651,6 +2721,25 @@ void handleCommand(char *line, Print &out) {
     settingsDirty = true;
     out.printf("ok pupil=%s%s\n", pupilOn ? "on" : "off",
                   pupilOn ? "" : " (full iris disc; dilate has no effect)");
+  } else if (!strcmp(cmd, "cpu")) {
+    char *arg = strtok(NULL, " \t");
+    long mhz;
+    if (arg && (!parseLong(arg, 0, 1000, mhz) || !cpuValid(mhz))) {
+      out.println(F("usage: cpu [160|240]"));
+      return;
+    }
+    if (arg && !stateSetCpu(mhz)) {
+      out.println(F("error: the setting could not be stored"));
+      return;
+    }
+    out.printf("%scpu=%u MHz", arg ? "ok " : "", (unsigned)getCpuFrequencyMhz());
+    if (cpuSetting != getCpuFrequencyMhz())
+      out.printf(", %u MHz after a restart", (unsigned)cpuSetting);
+    out.println();
+  } else if (!strcmp(cmd, "restart")) {
+    out.println(settingsDirty ? F("ok restarting; unsaved changes are lost")
+                              : F("ok restarting"));
+    stateRestart();
   } else if (!strcmp(cmd, "swap")) {
     char *arg = strtok(NULL, " \t");
     bool want = !eyesSwapped;
@@ -2898,6 +2987,10 @@ void frame(            // Process motion for a single frame of left or right eye
   if (flipPending) { // after the swap: see applyFlips()
     flipPending = false;
     applyFlips();
+  }
+  if (restartPending && millis() - restartAskedMs >= RESTART_DELAY_MS) {
+    showMessage("RESTART", NULL, NULL, NULL);
+    ESP.restart();
   }
 
   pollStartle();

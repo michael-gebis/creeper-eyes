@@ -325,6 +325,8 @@ static void getState(void) {
   }
 #endif
   sys["fps"] = s.fps;
+  sys["cpuMhz"] = s.cpuMhz;
+  sys["cpuSetting"] = s.cpuSetting;
   sys["freeHeap"] = s.freeHeap;
   sys["uptimeSeconds"] = s.uptimeSec;
   sys["settingsDirty"] = s.settingsDirty;
@@ -715,6 +717,32 @@ static void putSwap(void) {
   getSwap();
 }
 
+static void getCpu(void) {
+  DeviceState s;
+  stateGet(s);
+  JsonDocument d;
+  d["mhz"] = s.cpuMhz;         // running now
+  d["setting"] = s.cpuSetting; // from the next restart
+  sendJson(200, d);
+}
+
+// Stored at once; takes effect at the next restart -- see stateSetCpu().
+static void putCpu(void) {
+  JsonDocument b;
+  if (!readBody(b))
+    return;
+  const long mhz = b["mhz"].is<long>() ? b["mhz"].as<long>() : 0;
+  if (mhz != 160 && mhz != 240) {
+    sendError(400, "expected mhz: 160 or 240");
+    return;
+  }
+  if (!stateSetCpu(mhz)) {
+    sendError(500, "the setting could not be stored");
+    return;
+  }
+  getCpu();
+}
+
 static void getClock(void) {
   DeviceState s;
   stateGet(s);
@@ -1033,8 +1061,10 @@ static void postAction(void) {
     stateSplash();
   else if (!strcmp(a, "netinfo"))
     netShow(); // synonym for PUT /netinfo {"on":true}
+  else if (!strcmp(a, "restart"))
+    stateRestart(); // a moment after this reply, which is the point
   else {
-    sendError(400, "action must be blink, startle, splash or netinfo");
+    sendError(400, "action must be blink, startle, splash, netinfo or restart");
     return;
   }
   sendOk();
@@ -1408,6 +1438,10 @@ void apiRegister(AuthWebServer &s) {
   s.on(API "/swap", HTTP_PUT, guarded<putSwap>);
   s.on(API "/swap", HTTP_OPTIONS, handleOptions);
   s.on(API "/swap", HTTP_ANY, notAllowed);
+  s.on(API "/cpu", HTTP_GET, guarded<getCpu>);
+  s.on(API "/cpu", HTTP_PUT, guarded<putCpu>);
+  s.on(API "/cpu", HTTP_OPTIONS, handleOptions);
+  s.on(API "/cpu", HTTP_ANY, notAllowed);
   s.on(API "/dim", HTTP_GET, guarded<getDim>);
   s.on(API "/dim", HTTP_PUT, guarded<putDim>);
   s.on(API "/dim", HTTP_OPTIONS, handleOptions);

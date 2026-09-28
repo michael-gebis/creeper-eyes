@@ -296,6 +296,17 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
       <button id=netinfo>show address</button>
       <span class=tag>momentary</span>
     </div>
+    <div class=row>
+      <button id=cpu160>CPU 160 MHz</button><button id=cpu240>CPU 240 MHz</button>
+      <span class="tag saved">persistent</span>
+    </div>
+    <p class=note id=cpuNote></p>
+    <p class=note>240 draws the eyes faster, and draws more current. It takes
+      effect when the board restarts. A board that browns out at 240 drops
+      back to 160 by itself, and says so above.</p>
+    <div class=row>
+      <button id=restart class=danger>restart</button>
+    </div>
     <hr>
     <table id=about></table>
     <p class=note id=project></p>
@@ -483,6 +494,10 @@ function render(s) {
   $('#eye').value = s.eye.index;
   $('#pupil').classList.toggle('on', s.pupil.on);
   $('#swap').classList.toggle('on', s.swap.on);
+  $('#cpu160').classList.toggle('on', s.system.cpuSetting === 160);
+  $('#cpu240').classList.toggle('on', s.system.cpuSetting === 240);
+  $('#cpuNote').textContent = s.system.cpuSetting !== s.system.cpuMhz
+    ? `Running at ${s.system.cpuMhz} MHz until the board restarts.` : '';
   const dm = s.dim;
   if (!held($('#bright'))) $('#bright').value = dm.percent;
   $('#brightTxt').textContent = (dm.percent ? dm.percent + '%' : 'off') +
@@ -655,6 +670,34 @@ $('#eye').onchange = e => act(() => api('/eye', 'PUT', {index: +e.target.value})
 $('#eyeNext').onclick = () => act(() => api('/eye', 'PUT', {next: true}));
 $('#pupil').onclick = () => act(() => api('/pupil', 'PUT', {on: !st.pupil.on}));
 $('#swap').onclick = () => act(() => api('/swap', 'PUT', {on: !st.swap.on}));
+$('#cpu160').onclick = () => act(() => api('/cpu', 'PUT', {mhz: 160}));
+$('#cpu240').onclick = () => act(() => api('/cpu', 'PUT', {mhz: 240}));
+
+// A restart keeps the address, unlike the WiFi changes below, so rather than
+// asking for a reload the page waits for the board to answer again -- with a
+// smaller uptime than it had, which is what tells a restart from a hiccup --
+// and carries on.
+$('#restart').onclick = async () => {
+  const dirty = st && st.system.settingsDirty;
+  if (!confirm('Restart the board? The eyes go dark for about fifteen ' +
+               'seconds.' + (dirty ? '\n\nUnsaved changes will be lost.' : '')))
+    return;
+  const upBefore = st ? st.system.uptimeSeconds : Infinity;
+  halted = true;
+  $('#banner').style.display = 'block';
+  $('#banner').textContent = 'Restarting. The page carries on when the board is back.';
+  await api('/action', 'POST', {action: 'restart'}).catch(() => {});
+  const nap = ms => new Promise(r => setTimeout(r, ms));
+  await nap(4000);
+  for (let i = 0; i < 45; i++) {
+    const s = await api('/state').catch(() => null);
+    if (s && s.system.uptimeSeconds < upBefore) break;
+    await nap(2000);
+  }
+  $('#banner').style.display = 'none';
+  halted = false;
+  refresh();
+};
 // Live while dragging: the board fades to each value as it arrives.  The
 // trims share one endpoint, so each sends the pair and neither loses the other.
 $('#bright').oninput = e => {

@@ -64,6 +64,8 @@ struct DeviceState {
   uint32_t clockSecOfDay;  // current time as seconds past midnight
   uint32_t clockColor[3];  // 0xRRGGBB, hour / minute / second
 
+  uint16_t cpuMhz;     // what the CPU runs at
+  uint16_t cpuSetting; // what it will run at from the next boot: 160 or 240
   bool settingsDirty; // live settings differ from what is stored
 
   uint16_t fps;
@@ -134,6 +136,18 @@ void stateSetSwap(bool swapped);
 // but the setting attaches to the panel that eye is on and stays with it
 // through a later swap.  False if there is no such eye.  Between frames.
 bool stateSetFlip(uint8_t eye, bool flipped);
+
+// ---------------------------------------------------------------- CPU speed --
+
+// 160 or 240 MHz, stored at once and applied at the next boot: switching
+// live re-locks the PLL, which took the network down for seconds.  False if
+// the value is neither, or it could not be stored.  A board that restarts
+// after a brownout comes back at 160 and stores that -- see loadSettings().
+bool stateSetCpu(long mhz);
+
+// Restarts the board a moment from now, after the caller has answered.
+// Unsaved settings are lost; the reply is the place to say so.
+void stateRestart(void);
 
 // -------------------------------------------------------------- brightness --
 // See dimmer.h.  0 is off; changes fade.  Each false if out of range.

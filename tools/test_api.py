@@ -16,10 +16,11 @@ failed -- `GET /api/v1/info` says which features are compiled in, and the
 suite believes it.
 
 Nothing here reboots the board or writes to flash unless you ask: --wifi
-covers the credential endpoints, which reboot, and --settings covers save and
-forget, which write NVS.  Neither runs by default.  Nor does --eye-file,
-which fills the eye slot; the uploads the board refuses before erasing
-anything are tested every time.
+covers the credential endpoints, which reboot; --settings covers save and
+forget, which write NVS; and --restart restarts the board twice, moving the
+CPU speed setting across a restart and back.  None runs by default.  Nor does
+--eye-file, which fills the eye slot; the uploads the board refuses before
+erasing anything are tested every time.
 
 The board's own state is captured at the start and put back at the end, so a
 run leaves the eyes as it found them.
@@ -1256,6 +1257,83 @@ def test_wifi(res: Result, api: Api) -> None:
 
 # --------------------------------------------------------------------- driver --
 
+def test_cpu(res: Result, api: Api) -> None:
+    """The CPU speed, read-only: a change is stored at once and takes effect at
+    the next restart, so changing it is left to --restart."""
+    res.heading("CPU speed")
+    code, _ = api.raw("/cpu")
+    if code == 404:
+        res.skip("GET /cpu", "this firmware has no CPU speed setting")
+        return
+    r: Json = expect(res, api, "GET /cpu", "/cpu")
+    for key in ("mhz", "setting"):
+        if r.get(key) not in (160, 240):
+            res.fail("%s is 160 or 240" % key, "got %r" % r.get(key))
+    st: Json = api.json("/state").get("system", {})
+    same(res, "/state carries the speed", st.get("cpuMhz"), r.get("mhz"))
+    same(res, "/state carries the setting", st.get("cpuSetting"),
+         r.get("setting"))
+    # Refused before anything is stored, so none of these writes flash.
+    for label, body in (("200 MHz", {"mhz": 200}),
+                        ("80 MHz", {"mhz": 80}),
+                        ("a string", {"mhz": "fast"}),
+                        ("a fraction", {"mhz": 160.5}),
+                        ("a missing body", {})):
+        expect(res, api, "/cpu rejects %s" % label, "/cpu", "PUT", body,
+               status=400)
+
+
+def wait_for_restart(api: Api, up_before: float, within: float = 90.0) -> Any:
+    """The board's uptime once it answers again with less than it had, or
+    None if it does not within the time."""
+    deadline: float = time.time() + within
+    time.sleep(4)  # it answers for up to RESTART_DELAY_MS first
+    while time.time() < deadline:
+        up: Any = api.json("/state").get("system", {}).get("uptimeSeconds")
+        if up is not None and up < up_before:
+            return up
+        time.sleep(2)
+    return None
+
+
+def restart(res: Result, api: Api, label: str) -> bool:
+    before: Any = api.json("/state").get("system", {}).get("uptimeSeconds")
+    expect(res, api, "POST /action restart (%s)" % label, "/action", "POST",
+           {"action": "restart"})
+    up: Any = wait_for_restart(api, before if before is not None else 10 ** 9)
+    if up is None:
+        res.fail("back after the restart (%s)" % label, "not within 90 s")
+        return False
+    res.ok("back after the restart (%s)" % label, "up %ss" % up)
+    return True
+
+
+def test_restart(res: Result, api: Api) -> None:
+    """A restart, and the CPU speed across one.  Reboots twice and writes the
+    setting to flash, and puts it back."""
+    res.heading("restart and CPU speed (reboots, writes flash)")
+    r: Json = api.json("/cpu")
+    was: Any = r.get("setting")
+    if was not in (160, 240):
+        res.skip("the CPU speed across a restart", "no CPU speed setting")
+        return
+    other: int = 400 - was  # 160 <-> 240
+    r = expect(res, api, "PUT /cpu %d" % other, "/cpu", "PUT", {"mhz": other})
+    same(res, "stored", r.get("setting"), other)
+    same(res, "not applied until the restart", r.get("mhz"), was)
+    if not restart(res, api, "to %d" % other):
+        return
+    r = api.json("/cpu")
+    same(res, "running at %d" % other, r.get("mhz"), other)
+    st: Json = api.json("/state").get("system", {})
+    res.ok("drawing", "%s fps at %s MHz" % (st.get("fps"), r.get("mhz")))
+    same(res, "a planned restart leaves no warning",
+         [w for w in st.get("warnings", []) if "restarted" in w], [])
+    expect(res, api, "PUT /cpu back", "/cpu", "PUT", {"mhz": was})
+    if restart(res, api, "back to %d" % was):
+        same(res, "running at %d again" % was, api.json("/cpu").get("mhz"), was)
+
+
 def restore(api: Api, start: Json) -> None:
     """Put back what the run changed."""
     api.raw("/eye", "PUT", {"index": start.get("eye", {}).get("index", 0)})
@@ -1637,6 +1715,9 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--eye-file", metavar="FILE",
                     help="also upload FILE to the eye slot, remove it and put "
                          "it back; writes flash, and leaves FILE loaded")
+    ap.add_argument("--restart", action="store_true",
+                    help="also restart the board, and move the CPU speed "
+                         "across a restart and back; writes flash")
     ap.add_argument("--wifi", action="store_true",
                     help="also test the wifi endpoints (read-only parts)")
     ap.add_argument("--latency", type=int, metavar="N",
@@ -1681,6 +1762,7 @@ def main(argv: list[str]) -> int:
     test_gaze_burst(res, api)
     test_dilate(res, api)
     test_toggles(res, api, start)
+    test_cpu(res, api)
     test_clock(res, api, start, info)
     test_time(res, api)
     test_ntp(res, api)
@@ -1702,6 +1784,12 @@ def main(argv: list[str]) -> int:
     else:
         res.heading("saving")
         res.skip("save and forget", "pass --settings to include them")
+    if args.restart:
+        test_restart(res, api)
+    else:
+        res.heading("restart")
+        res.skip("restarting, and the CPU speed across it",
+                 "pass --restart to include them")
 
     print("\n== putting the board back ==")
     restore(api, start)
