@@ -214,6 +214,13 @@ It has no C1, runs at 160 MHz, and has sleep mode off.
 - **Next time it happens,** the warning says which task. `panels` would point
   at the sender's rest, which could step aside more often at a small cost in
   frame rate.
+- **It happened again, and it was `panels`.** On 2026-09-28 frank-dev said
+  "the board restarted after the task watchdog; core 0 was busy with panels".
+  Its uptime puts the reset at about 10:50 that morning. It was running
+  adc17e1, updated over the air the afternoon before, and had C1 fitted by
+  then. `panels` is the frame sender, so the evidence now points at the
+  sender's rest: `SENDER_REST_MS`, and the `vTaskDelay(1)` it gives the idle
+  task once a second.
 
 ## The panel bus speed as a setting
 
