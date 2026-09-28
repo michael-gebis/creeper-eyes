@@ -865,6 +865,7 @@ static uint8_t core0Next = 0;
 static volatile uint32_t idle0Runs = 0;
 static uint32_t idle0Seen = 0, idle0Since = 0;
 static volatile uint32_t idle0MaxGap = 0;
+static bool idle0Counted = false; // the hook is in; senderTask() relies on it
 
 static bool IRAM_ATTR countIdle0(void) {
   idle0Runs++;
@@ -1107,7 +1108,8 @@ void setup(void) {
   DEBUG_PRINTF("[creeper-eyes] SPI SCK=%u MISO=%u MOSI=%u | eyes=%u\n",
                SCLK_PIN, MISO_PIN, MOSI_PIN, (unsigned)NUM_EYES);
   reportResetReason();
-  esp_register_freertos_idle_hook_for_cpu(countIdle0, 0);  // see idle0Runs
+  idle0Counted = // see idle0Runs
+      esp_register_freertos_idle_hook_for_cpu(countIdle0, 0) == ESP_OK;
   esp_register_freertos_tick_hook_for_cpu(sampleCore0, 0); // see wdtClue
   // SerialIn.begin(9600, SERIAL_8N1, UART_RX_PIN); // disabled
   randomSeed(analogRead(A3)); // Seed random() from floating analog input
@@ -1251,12 +1253,24 @@ static SemaphoreHandle_t sendIdle = NULL; // available while nothing is in hand
 // for it, aborts the board: it did, after about 25 seconds.  Dropping to the
 // idle task's own priority halved the send rate instead, because the idle
 // task takes its whole tick.  The watchdog only needs the idle task to run
-// once in its five seconds, so the sender steps aside for one tick a second:
-// about a thousandth of the time.
+// once in its five seconds, so the sender steps aside once a second: about a
+// thousandth of the time.
+//
+// Stepping aside for one tick is not always enough.  Anything else on core 0
+// that wants that tick gets it first -- WiFi, the TCP/IP stack, mDNS at the
+// sender's own priority -- and on colour, where the sender never waits for
+// work, those rests are nearly the idle task's only chance.  On frank-dev,
+// idle on a quiet network, about one rest in twelve went to something else,
+// two in a row within six minutes, and five in a row is the watchdog: it
+// fired twice in three days.  So the sender rests until the idle task has
+// actually run, a tick at a time.  It gives up after
+// SENDER_REST_MAX_TICKS, because by then core 0 is being kept busy by
+// something other than the sender, which resting longer would not help.
 #define SENDER_REST_MS 1000
+#define SENDER_REST_MAX_TICKS 50
 
-// Rests taken, and rests in which the idle task still did not run because
-// something else on core 0 took the tick: for `status`.
+// Rests taken, and rests whose first tick went to something else, so that
+// the sender had to wait longer: for `status`.
 static volatile uint32_t senderRests = 0, senderRestsMissed = 0;
 
 static void senderTask(void *) {
@@ -1269,11 +1283,15 @@ static void senderTask(void *) {
     addSendTime(micros() - t0);
     xSemaphoreGive(sendIdle);
     if (millis() - lastRest >= SENDER_REST_MS) {
-      lastRest = millis();
       const uint32_t idleBefore = idle0Runs;
-      vTaskDelay(1); // blocked, so core 0's idle task gets its turn
+      uint32_t extra = 0;
+      do {
+        vTaskDelay(1); // blocked, so core 0's idle task can have its turn
+      } while (idle0Counted && idle0Runs == idleBefore &&
+               ++extra < SENDER_REST_MAX_TICKS);
+      lastRest = millis();
       senderRests++;
-      if (idle0Runs == idleBefore)
+      if (extra)
         senderRestsMissed++;
     }
   }
