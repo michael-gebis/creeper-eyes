@@ -84,14 +84,44 @@ at the three places where order matters:
 - **Before a swap,** which moves the chip select that a frame in flight is using.
 - **Before a flip,** which changes state the send reads.
 
-It took three tries to keep the task watchdog happy. Sending busy-waits on the
+It took four tries to keep the task watchdog happy. Sending busy-waits on the
 SPI FIFO, and the render loop always has the next frame ready, so the sender
 kept core 0 busy without a break. Core 0's idle task never ran, and the task
 watchdog, which listens for it, aborted the board after about 25 seconds.
 Running the sender at the idle task's own priority fixed that but halved the
 send rate, because the idle task then took its whole tick. The watchdog needs
-the idle task only once in five seconds, so the sender now steps aside for one
+the idle task only once in five seconds, so the sender stepped aside for one
 tick every second: about a thousandth of its time.
+
+That was not quite enough: frank-dev restarted after the task watchdog twice
+in three days, with nothing testing it. Stepping
+aside for a tick does not hand the tick to the idle task. Anything else on
+core 0 that wants it gets it first: WiFi, the TCP/IP stack, and mDNS at the
+sender's own priority. On colour the sender never waits for work, so those
+rests are nearly the idle task's only chance. Counting them on frank-dev, on a
+quiet network: 351 rests in six minutes, and 28 of them went to something
+else. Two in a row did, leaving core 0 without its idle task for 3.0 seconds.
+Five in a row is the watchdog. Greyscale at 160 MHz is out of reach, because
+there the drawing is slower than the send, so the sender waits for work every
+frame and the idle task runs then. At 240 MHz the drawing is quicker than the
+send (8.3 ms against 8.6), which would expose greyscale the same way. The soaks
+did not catch it either. They keep pausing the
+eyes, for uploads and address cards, and a sender with nothing to send leaves
+core 0 to the idle task: ten minutes of `tools/load_test.py` lost one rest in
+twenty, against one in twelve left alone.
+
+So now the sender steps aside a tick at a time until the idle task has
+actually run, and gives up after 50 ticks, by which point something other
+than the sender is keeping core 0 busy. On the same board the longest core 0
+then went without its idle task was 1.03 seconds, through 13 minutes left
+alone and 11 of the load test, against 3.0 s in six minutes before. A rest that
+loses its first tick costs one more millisecond, and the frame rate did not
+move.
+
+`status` reports both: `idle0gap` is the longest core 0 has gone without its
+idle task since boot, which the watchdog allows five seconds of, and
+`rests` / `missed` count the sender's rests and those that needed more than a
+tick.
 
 It costs a second frame buffer: 32 KB on colour, 8 KB on greyscale.
 `OVERLAP_SEND=0` puts everything back in the render loop.
