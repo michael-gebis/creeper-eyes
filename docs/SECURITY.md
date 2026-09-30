@@ -48,6 +48,17 @@ bounds how long a captured request could be replayed. (The web server library
 made a fresh nonce for every challenge and never said `stale`, so one script
 being challenged sent every open control page to a password prompt.)
 
+An answer is also held to the request it was computed for. Digest names the
+address it covers inside the header, and the web server library checked the
+answer against that address without comparing it with the request actually
+made. So one header seen on the network opened every route taking the same
+method, `/cmd` included. The page's own once-a-second poll would have
+supplied one. The board now requires the path and query named in the header
+to be the request's own. What that cannot stop is the same request being sent
+again within the nonce's five minutes. Nor, since digest covers no body, can
+it stop a captured `PUT` or `POST` being resent with a different body.
+Closing that takes TLS; see below.
+
 `-DAUTH_TOKEN=1` adds a bearer token as an alternative, for scripts that
 would rather not do digest:
 
@@ -61,8 +72,20 @@ two — make it long and random. Either may be used on its own or both together.
 
 `-DAUTH_HOST_CHECK=1` refuses requests whose `Host` header does not name this
 device. That is the defence against **DNS rebinding**, which authentication
-alone does not stop: a page you visit can make your own browser call
-`192.168.x.x`, and a browser holding cached credentials will attach them.
+alone does not stop. A page you visit points its own name at `192.168.x.x`,
+so your browser calls the board and attaches the credentials it has cached.
+
+The same page can simply call `frank.local` or the board's address instead.
+Those requests do name this device, so the Host check cannot tell them from
+the page's own. So whenever a credential is required, the board refuses any
+request the browser says **another site sent**: `Sec-Fetch-Site` on current
+browsers, `Origin` or `Referer` on older ones. Following a link to the
+control page from somewhere else still opens it; anything else another site
+sends gets a 403. The page also tells browsers never to show it inside
+another site's frame, where its one-click controls could be clicked on your
+behalf. A very old browser that sends none of those headers can still be
+made to follow a plain link to `/cmd`. Current Chrome, Firefox and Safari all
+send them.
 
 Uploading an [eye file](EYE_FILES.md#security) is the one request whose body
 arrives before its handler runs, so it makes the same check itself before a
@@ -70,9 +93,12 @@ byte reaches flash.
 
 Turning on `AUTH_HTTP` without `AUTH_USER`/`AUTH_PASS`, or `AUTH_TOKEN`
 without `AUTH_TOKEN_VALUE`, **fails the build** rather than producing a device
-that looks protected and is not. `AUTH_HOST_CHECK` needs no secret and builds
-on its own. Any of the three with `NETWORK=0` also fails, there being nothing
-to authenticate.
+that looks protected and is not. So does either of them without
+`OTA_PASSWORD`, for the same reason: a password on the web interface and none
+on updates would leave the firmware open to anything on the network. An empty
+string counts as missing. `AUTH_HOST_CHECK` needs no secret and builds on its
+own. Any of the three with `NETWORK=0` also fails, there being nothing to
+authenticate.
 
 ## Changing the passwords
 
@@ -170,6 +196,13 @@ close enough to see the network can compute.
 `PORTAL_PASSWORD=0` restores the open portal. `QR_CODES=0` sets it to `0` on
 its own, deliberately: a password the panels cannot show is one nobody can
 get past.
+
+Nor is the portal a way to install firmware. WiFiManager, the library that
+serves it, comes with an update page of its own. That page takes a firmware
+file from anyone who has joined the setup network, with no password, which
+would make the portal a way round `OTA_PASSWORD`. The firmware answers those
+addresses itself before the library can, so no upload reaches it, and it
+removes the page from the portal's menu.
 
 The portal opens when the head has no network it recognises. The BOOT reset
 above does not clear the stored network, so a head keeps its WiFi through one;

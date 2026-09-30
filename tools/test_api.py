@@ -918,6 +918,20 @@ def test_cors(res: Result, api: Api, info: Json) -> None:
     else:
         res.fail("allowed methods advertised", repr(methods))
 
+    # The page refuses to be framed by anyone, on every build.
+    req = urllib.request.Request(api.root + "/")
+    if api.token:
+        req.add_header("Authorization", "Bearer " + api.token)
+    try:
+        with api.opener.open(req, timeout=api.timeout) as r:
+            xfo: Optional[str] = r.headers.get("X-Frame-Options")
+            csp: Optional[str] = r.headers.get("Content-Security-Policy")
+    except Exception as e:  # noqa: BLE001
+        res.fail("the page's framing headers", repr(e)[:50])
+        return
+    same(res, "the page refuses framing (X-Frame-Options)", xfo, "DENY")
+    same(res, "the page refuses framing (CSP)", csp, "frame-ancestors 'none'")
+
 
 def test_auth(res: Result, api: Api, info: Json, host: str) -> None:
     res.heading("credentials")
@@ -940,6 +954,65 @@ def test_auth(res: Result, api: Api, info: Json, host: str) -> None:
             res.ok("%s without a credential is 401" % path, "401")
         else:
             res.fail("%s without a credential is 401" % path, "got %s" % code)
+
+    # A request the browser says another site sent is refused before any
+    # credential is considered; the same credential works without it.  Every
+    # request here is a GET of /state or of the page, so nothing changes.
+    for label, hdrs in (
+            ("Sec-Fetch-Site cross-site", {"Sec-Fetch-Site": "cross-site"}),
+            ("Sec-Fetch-Site same-site", {"Sec-Fetch-Site": "same-site"}),
+            ("an Origin of another site", {"Origin": "http://example.com"}),
+            ("a Referer from another site",
+             {"Referer": "http://example.com/page"})):
+        code, _ = api.raw("/state", headers=hdrs)
+        same(res, "refused with %s" % label, code, 403)
+    for label, hdrs in (
+            ("Sec-Fetch-Site same-origin", {"Sec-Fetch-Site": "same-origin"}),
+            ("Sec-Fetch-Site none", {"Sec-Fetch-Site": "none"}),
+            ("this device's own Origin", {"Origin": api.root})):
+        code, _ = api.raw("/state", headers=hdrs)
+        same(res, "allowed with %s" % label, code, 200)
+    link: dict[str, str] = {"Sec-Fetch-Site": "cross-site",
+                            "Sec-Fetch-Dest": "document"}
+    code, _ = api.raw("/", headers=link, full=True)
+    same(res, "a link from another site still opens the page", code, 200)
+    code, _ = api.raw("/", headers=dict(link, **{"Sec-Fetch-Dest": "iframe"}),
+                      full=True)
+    same(res, "another site cannot frame the page", code, 403)
+
+    # A digest answer opens only the request it was computed for.  The
+    # library checked it against the uri the header names, whatever the
+    # request actually was, so one header seen on the network opened every
+    # route with the same method.
+    if not (api.user and api.password):
+        res.skip("a digest answer is bound to its request",
+                 "needs --user and --password")
+        return
+    probe: str = "/api/v1/state?probe=1"
+    header: Optional[str] = digest_header(host, probe, api.user, api.password)
+    if header is None:
+        res.fail("a digest answer is bound to its request", "no challenge")
+        return
+
+    def status_with(path: str) -> Optional[int]:
+        req: urllib.request.Request = urllib.request.Request(
+            "http://%s%s" % (host, path))
+        req.add_header("Authorization", header)
+        try:
+            with urllib.request.build_opener().open(
+                    req, timeout=api.timeout) as r:
+                return r.status
+        except urllib.error.HTTPError as e:
+            return e.code
+        except Exception:  # noqa: BLE001
+            return None
+
+    same(res, "a digest answer works for its own request",
+         status_with(probe), 200)
+    same(res, "... and is refused on another path",
+         status_with("/api/v1/info"), 401)
+    same(res, "... and with another query",
+         status_with("/api/v1/state?probe=2"), 401)
 
 
 def test_credentials(res: Result, api: Api, info: Json, args) -> None:

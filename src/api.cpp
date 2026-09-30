@@ -1140,8 +1140,8 @@ static void putCredentials(void) {
   // not quite the same thing: a browser holds digest credentials for the
   // realm and will attach them to whatever asks, so without this a page you
   // merely visited could change the password on a board you are logged into.
-  // AUTH_HOST_CHECK closes most of that, but it is optional and this is one
-  // field.
+  // judge() now refuses requests another site sent, but that rests on what
+  // the browser reports, and this is one field.
   const char *current = b["current"] | "";
   if (!credMatches(CRED_PASS, current)) {
     sendError(403, "the current password does not match");

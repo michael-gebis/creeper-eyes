@@ -157,7 +157,7 @@ uv tool install platformio       # or: pipx install platformio
 | `qrtest` / `qrtest_rgb` | QR codes on the panels, grey / colour, no network | Measuring what a phone can read — [Codes on the eyes](docs/QR.md) |
 
 `gray_rtc` is the only environment that requires anything of you before it
-will build: `AUTH_USER`, `AUTH_PASS` and `AUTH_TOKEN_VALUE` in
+will build: `AUTH_USER`, `AUTH_PASS`, `AUTH_TOKEN_VALUE` and `OTA_PASSWORD` in
 `include/secrets.h`. It stops with an error naming them rather than producing
 an open device. Use `gray_rtc_open` to skip that.
 

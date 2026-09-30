@@ -88,6 +88,11 @@ void webHandleCmd(void) {
 void webHandleRoot(void) {
   if (!authCheck(server))
     return;
+  // Never inside another site's frame.  Framed, the page's one-click controls
+  // would send same-origin requests, with this browser's credentials, from
+  // clicks another site arranged.  Both headers, for older browsers too.
+  server.sendHeader("X-Frame-Options", "DENY");
+  server.sendHeader("Content-Security-Policy", "frame-ancestors 'none'");
   server.sendHeader("Content-Encoding", "gzip");
   server.send_P(200, "text/html", (PGM_P)PAGE_GZ, PAGE_GZ_LEN);
 }

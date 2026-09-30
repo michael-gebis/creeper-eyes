@@ -205,3 +205,7 @@ curl "http://frank.local/cmd?c=status"
 It returns plain text, not JSON, and it is a convenience rather than an
 interface — prefer the API for anything you are writing against. Set
 `WEB_CMD_ENDPOINT` to `0` to leave it out.
+
+With digest authentication the command must be in the URL, as above. A
+digest answer covers only the path and query it names, so a form-encoded
+body is refused.

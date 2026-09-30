@@ -23,6 +23,20 @@ static const char *const KEYS[CRED_COUNT] = {
     "otaHash",
 };
 
+// config.h refuses to build a switch without its secret; an empty string
+// would pass that and ship a blank password, so refuse it here, where the
+// values are strings the compiler can measure.
+#if AUTH_HTTP
+static_assert(sizeof(AUTH_USER) > 1 && sizeof(AUTH_PASS) > 1,
+              "AUTH_USER and AUTH_PASS must not be empty");
+#endif
+#if AUTH_TOKEN
+static_assert(sizeof(AUTH_TOKEN_VALUE) > 1, "AUTH_TOKEN_VALUE must not be empty");
+#endif
+#if OTA_AUTH
+static_assert(sizeof(OTA_PASSWORD) > 1, "OTA_PASSWORD must not be empty");
+#endif
+
 // What the firmware was built with.  Each may be absent: a build without
 // AUTH_HTTP has no AUTH_USER, and one without OTA_PASSWORD has no hash to
 // fall back to.

@@ -287,6 +287,23 @@ void setupNetwork(void) {
   // WiFiManager owns the CPU until it is done and the head sits on one static
   // card for the whole timeout, with no sign of how long is left.
   wm.setConfigPortalBlocking(false);
+
+  // No firmware updates from the setup network.  WiFiManager serves an
+  // upload page of its own (/update, posting to /u) with no password, which
+  // would make joining the portal a way round OTA_PASSWORD.  Its callback
+  // runs before it registers those routes, and the server takes the first
+  // handler that matches, so these answer instead; and a handler with no
+  // upload function never sees the file.  The menu entry and the info page's
+  // button go too.
+  wm.setWebServerCallback([&wm]() {
+    for (const char *uri : {"/update", "/u"})
+      wm.server->on(uri, HTTP_ANY, [&wm]() {
+        wm.server->send(404, "text/plain", "not available on the setup network\n");
+      });
+  });
+  const char *menu[] = {"wifi", "info", "exit"};
+  wm.setMenu(menu, sizeof(menu) / sizeof(menu[0]));
+  wm.setShowInfoUpdate(false);
 #if PORTAL_PASSWORD
   wm.startConfigPortal(WIFI_AP_NAME, apPass);
 #else

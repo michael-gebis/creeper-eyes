@@ -14,10 +14,16 @@
 // same question that does not cost that: the password is never sent, only a
 // hash of it with a server nonce.
 //
-// What that does not protect against, and what AUTH_HOST_CHECK is for: DNS
-// rebinding.  A page you visit can make your own browser issue requests to
-// 192.168.x.x, and a browser holding cached credentials will attach them.
-// Checking that the Host header names this device is the cheap defence.
+// What that does not protect against: a page you visit can make your own
+// browser issue requests to this device, and a browser holding cached
+// credentials will attach them.  Two ways in, two defences:
+//
+//  - DNS rebinding, where the page's own name is pointed at 192.168.x.x.
+//    AUTH_HOST_CHECK refuses a Host header that does not name this device.
+//  - A plain cross-site request to the device's real name or address, which
+//    the Host check cannot tell from the page's own requests.  Whenever a
+//    credential is required, a request whose browser says another site sent
+//    it -- Sec-Fetch-Site, or Origin, or Referer -- is refused.  See judge().
 
 #ifndef AUTH_H
 #define AUTH_H
@@ -53,6 +59,13 @@ public:
   // Replaces the nonce once it has lived AUTH_NONCE_S, or if there is none
   // yet.  Called before a request is judged, so an expired one fails.
   void expireNonce(void);
+
+  // Whether a digest response was computed for this request, and not for
+  // another one.  The library checks the response against the uri="..." the
+  // header carries and never compares that with the request, so one header
+  // seen on the network would open every route taking the same method, for
+  // as long as the nonce lives.  True for anything that is not digest.
+  bool digestMatchesRequest(void);
 
 private:
   uint32_t nonceBornMs = 0;

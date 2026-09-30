@@ -72,8 +72,8 @@ not preference — change them only if you wire differently, and update
 | `FAVICON` | `FAVICON_FRANK` | Tab icon. `FAVICON_EYES` is a generic alternative for a build that is not going into a Frankenstein. |
 | `OTA_REBOOT_DELAY_MS` | `1500` | How long after a successful update the board waits before rebooting into it, so the sender hears that it worked. `0` restores the library's behaviour. |
 | `OTA_TIMEOUT_MS` | `10000` | How long the board waits for the next block of an over-the-air update. The core's 1000 is shorter than the sender's patience. |
-| `AUTH_HTTP` | `0` | Digest authentication on the page, the API and `/cmd`. |
-| `AUTH_TOKEN` | `0` | A bearer token as an alternative credential, for scripts. |
+| `AUTH_HTTP` | `0` | Digest authentication on the page, the API and `/cmd`. Needs `OTA_PASSWORD` as well. Either this or `AUTH_TOKEN` also turns on the refusal of requests another site sent — see [Locking it down](SECURITY.md#the-web-interface). |
+| `AUTH_TOKEN` | `0` | A bearer token as an alternative credential, for scripts. Needs `OTA_PASSWORD` as well. |
 | `AUTH_HOST_CHECK` | `0` | Refuse requests whose `Host` is not this device — the DNS-rebinding defence. |
 | `AUTH_NONCE_S` | `300` | How long one digest nonce lasts. Past it, a browser is told its nonce is stale and retries without asking for the password — see [Locking it down](SECURITY.md#the-web-interface). |
 | `SLEEP` | `1` | Dark panels overnight. `0` compiles it out. |

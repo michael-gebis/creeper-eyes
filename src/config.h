@@ -492,6 +492,13 @@
 #if AUTH_TOKEN && !defined(AUTH_TOKEN_VALUE)
 #error "AUTH_TOKEN=1 needs AUTH_TOKEN_VALUE -- see include/secrets.h.example"
 #endif
+// The update password too, on any build that asks for a password at all.
+// Without it ArduinoOTA takes firmware from anything on the network while
+// the web interface demands a password: exactly the nominally protected,
+// actually open device described above.
+#if (AUTH_HTTP || AUTH_TOKEN) && !defined(OTA_PASSWORD)
+#error "AUTH_HTTP / AUTH_TOKEN need OTA_PASSWORD too, or anything on the network can replace the firmware -- see include/secrets.h.example"
+#endif
 #if (AUTH_HTTP || AUTH_TOKEN || AUTH_HOST_CHECK) && !NETWORK
 #error "authentication needs NETWORK=1; there is nothing to authenticate without it"
 #endif
