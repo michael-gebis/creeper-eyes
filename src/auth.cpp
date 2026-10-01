@@ -250,7 +250,12 @@ AuthWebServer::Arrival AuthWebServer::arrival(void) {
   bool streamed = false;
 
   if (headLen < 0) {
-    if (avail <= (unsigned long)n) // all there is, and not a whole head yet
+    // All there is, and not a whole head yet.  Or nothing seen at all: lwIP
+    // can count a segment's bytes before a peek can see them, so for a
+    // moment the peek fails (EAGAIN) while available() says hundreds of
+    // bytes are waiting.  Measured: five milliseconds later it saw them all.
+    // Either way, look again next frame.
+    if (n == 0 || avail <= (unsigned long)n)
       return n >= (int)sizeof(peekBuf) ? HEAD_TOO_BIG : late ? TOO_SLOW : WAITING;
 
     // More has arrived than the peek can see: a head too long for one
