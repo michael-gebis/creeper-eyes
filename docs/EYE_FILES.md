@@ -156,11 +156,17 @@ immediate because web requests and console commands are both handled inside
 the render loop, between frames, so nothing is mid-draw.
 
 **The eyes stop while it loads.** Requests are served from the render loop, so
-the upload is time without animation: 5–8 seconds over WiFi, measured on a
-DevKit. Most of that is receiving 158 KB rather than writing it, and a file the
-board refuses takes about as long, because the web server reads the whole body
-before its handler can answer. The panels say `EYE LOADING` so a frozen eye
-doesn't look like a crash.
+the upload is time without animation: about a second and a half over WiFi on
+frank-dev, writing the file included, measured with a digest login that sends
+it twice. A file the board refuses still has to be received before the refusal
+can be sent, about 0.6 s. The panels say `EYE LOADING` so a frozen eye doesn't
+look like a crash.
+
+It used to be 5–8 seconds, and most of that was waiting, not receiving. The
+web server reads a body 1436 bytes at a time and waits for each byte up to
+its read timeout, five seconds. The file is 158400 bytes, which leaves 440 for
+the last read. That read asked for a full 1436, got the 440, and waited out
+the timeout for the rest — every upload, refused or not.
 
 ### Security
 
@@ -173,10 +179,14 @@ with the usual `401` or `403` by the handler. Nothing is erased. This also
 covers a browser sending the body once without credentials and then again
 with them.
 
-An upload is also cut off after 30 seconds. The server reads a streamed body
-until its declared length arrives, waiting up to a second for each piece, so
-without a limit a sender trickling a byte a second could hold the render loop,
-and the eyes, for as long as it liked. A real upload takes a few seconds.
+An upload is also cut off after 30 seconds, and a refused one after 10. The
+board waits for each piece of the body itself, against that deadline, and
+only then lets the web server read it, so the server's reads never wait at
+all. Left to the server, a sender trickling one byte at a time could hold the
+render loop, and the eyes, for as long as it liked: the server's wait starts
+again with every byte. The cut-off that was meant to stop that never did. It
+closed a copy of the connection, which leaves the real one open. A real
+upload takes about a second.
 
 Nothing in the file is executed. Only the 64-byte header is parsed, and every
 field in it is checked against a fixed value or a fixed range. The payload is

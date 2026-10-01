@@ -46,6 +46,20 @@ than on a timer: the board serves one client at a time, so a timer would
 leave requests outstanding behind each other until the browser ran out of
 connections and the page stopped responding.
 
+A request is only taken once all of it has arrived. Taking one blocks the
+render loop until it has been read, and the web server would otherwise start
+on the first byte and wait for the rest, up to five seconds a byte, with no
+limit on the total. So the board looks at a waiting request once a frame and
+leaves it there, eyes still moving, until it is whole. Several requests are
+refused before any of it is read:
+
+- a head over 3 KB gets `431`;
+- a body over 2 KB, other than an eye file, gets `413`;
+- an unreadable `Content-Length` gets `400`;
+- a request that has not all arrived within five seconds is dropped.
+
+See [Configuring](CONFIG.md) for the three limits.
+
 WiFi modem sleep is turned off for the same reason. The default parks the
 radio between beacons, which measured at a **1.7 s median** for one small
 `GET`, with a tenth of them past eight seconds; with it off the same request

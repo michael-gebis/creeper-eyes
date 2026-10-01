@@ -45,6 +45,25 @@
 #define WEB_CMD_ENDPOINT 1
 #endif
 
+// The web server is served from the render loop, so a request is only
+// taken once all of it has arrived -- see AuthWebServer::handleClient().
+// The most a request's head may be, the most its body may be (the eye file,
+// which is streamed, aside), and how long all of it has to arrive.  Head
+// and body together must stay inside the TCP window, 5760 bytes, or a
+// request that is allowed could never arrive in full.
+#ifndef REQUEST_HEAD_MAX
+#define REQUEST_HEAD_MAX 3072
+#endif
+#ifndef REQUEST_BODY_MAX
+#define REQUEST_BODY_MAX 2048
+#endif
+#ifndef REQUEST_ARRIVE_MS
+#define REQUEST_ARRIVE_MS 5000
+#endif
+#if REQUEST_HEAD_MAX + REQUEST_BODY_MAX > 5760
+#error "REQUEST_HEAD_MAX + REQUEST_BODY_MAX must fit the TCP window (5760)"
+#endif
+
 // How long to wait on a known network before giving up and opening the
 // portal, and how long the portal itself stays up before the eyes carry on
 // regardless.  A prop with no network should still be a working prop.

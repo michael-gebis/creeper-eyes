@@ -398,12 +398,42 @@ static bool slotStreamed = false;
 static bool slotAllowed = false;
 static EyeLoadResult slotResult = EYE_LOAD_INCOMPLETE;
 
-// The server reads a streamed body until Content-Length is met, waiting up
-// to a second for each piece, so a sender trickling a byte a second would
-// hold the render loop -- and the eyes -- for as long as it liked.  A real
-// upload over a LAN takes a few seconds; past this it is cut off.
+// The library reads a streamed body HTTP_RAW_BUFLEN bytes at a time, on the
+// render loop, waiting for each byte up to the client's read timeout.  Two
+// things followed.  The eye file is 158400 bytes, 440 past a whole number of
+// 1436-byte reads, so the last read asked for more than was left and waited
+// out the timeout: five seconds of frozen eyes at the end of every upload,
+// ten when a digest login meant sending it twice.  And a sender trickling a
+// byte at a time kept every wait alive, so a deadline checked between reads
+// was never reached.
+//
+// So the bytes each read needs are waited for here, before it, a
+// millisecond at a time against a deadline, and the reads are told not to
+// wait: they find their bytes already there.  Past the deadline the request
+// is abandoned.  A refused upload is still read to the end -- its refusal
+// can only be sent once the body is gone, and a browser whose login went
+// stale sends the file again -- but it gets less time.  A real upload over
+// a LAN takes under a second.
 #define EYE_UPLOAD_MAX_MS 30000
+#define EYE_REFUSED_MAX_MS 10000
 static uint32_t slotStartedMs = 0;
+
+// False if the request was abandoned, in which case the library's next read
+// comes back empty and the stream ends RAW_ABORTED.
+static bool awaitNextRead(void) {
+  const HTTPRaw &r = S->raw();
+  const size_t left = S->clientContentLength() - r.totalSize;
+  const size_t want = left < HTTP_RAW_BUFLEN ? left : HTTP_RAW_BUFLEN;
+  const uint32_t limit = slotAllowed ? EYE_UPLOAD_MAX_MS : EYE_REFUSED_MAX_MS;
+  while (want && (size_t)S->pendingBytes() < want) {
+    if (millis() - slotStartedMs > limit || !S->clientConnected()) {
+      S->abortRequest();
+      return false;
+    }
+    delay(1);
+  }
+  return true;
+}
 
 static void eyeSlotBody(void) {
   HTTPRaw &r = S->raw();
@@ -415,14 +445,13 @@ static void eyeSlotBody(void) {
     slotResult = EYE_LOAD_INCOMPLETE;
     if (slotAllowed)
       stateEyeLoadBegin(S->clientContentLength());
+    S->setReadTimeoutMs(1); // every read finds its bytes waiting
+    awaitNextRead();
     break;
   case RAW_WRITE:
-    if (millis() - slotStartedMs > EYE_UPLOAD_MAX_MS) {
-      S->client().stop(); // the next read comes back empty: RAW_ABORTED
-      break;
-    }
     if (slotAllowed)
       stateEyeLoadChunk(r.buf, r.currentSize);
+    awaitNextRead();
     break;
   case RAW_END:
     if (slotAllowed)

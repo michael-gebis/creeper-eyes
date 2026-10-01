@@ -89,6 +89,8 @@ not preference — change them only if you wire differently, and update
 | `FIRMWARE_VERSION` | `1.0` | Bumped by hand, for features worth announcing. |
 | `PROJECT_URL` | this repository | Shown by `version` and on the control page. |
 | `WEB_CMD_ENDPOINT` | `1` | The `/cmd` escape hatch. `0` leaves only the REST API. Needs `COMMANDS`, since it is a passthrough to the console. |
+| `REQUEST_HEAD_MAX` / `REQUEST_BODY_MAX` | `3072` / `2048` | The largest request head, and body (the streamed eye file aside), the web server takes. Anything larger is refused with `431` or `413` before any of it is read. Together they must fit the TCP window, 5760 bytes, or an allowed request could never arrive whole — see [Driving it](CONTROL.md#web-interface). |
+| `REQUEST_ARRIVE_MS` | `5000` | How long a request has to arrive in full. It waits outside the render loop meanwhile, and is dropped after this. |
 | `WIFI_HOSTNAME` | `frank` | DHCP and mDNS name. |
 | `WIFI_AP_NAME` | `frank-setup` | The setup portal's own network name. |
 | `QR_CODES` | `NETWORK` | Codes on the panels: one that joins the setup network, one that opens the control page. `0` leaves plain text — see [Codes on the eyes](QR.md). |

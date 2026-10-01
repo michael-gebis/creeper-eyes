@@ -886,6 +886,71 @@ def test_errors(res: Result, api: Api) -> None:
         res.fail("errors carry a reason", repr(err)[:50])
 
 
+def raw_reply(host: str, data: bytes, wait: float = 10.0) -> tuple[Optional[int], float]:
+    """Send bytes on a fresh connection; return the reply's status (None if
+    the board closed without one) and how long that took.  For requests
+    urllib will not send: a malformed one, or one that never finishes."""
+    name, _, port = host.partition(":")
+    started: float = time.time()
+    reply: bytes = b""
+    try:
+        with socket.create_connection((name, int(port or 80)), timeout=wait) as s:
+            s.sendall(data)
+            while b"\r\n" not in reply:
+                chunk: bytes = s.recv(4096)
+                if not chunk:
+                    break
+                reply += chunk
+    except OSError:
+        pass
+    m: Optional[re.Match[bytes]] = re.match(rb"HTTP/1\.[01] (\d{3})", reply)
+    return (int(m.group(1)) if m else None, time.time() - started)
+
+
+def test_request_gate(res: Result, api: Api, host: str) -> None:
+    """A request is only taken once all of it has arrived, because taking it
+    blocks the render loop; one that cannot fit is refused unread.  None of
+    this reaches a credential check, so it needs none."""
+    res.heading("taking a request")
+    head: bytes = ("Host: %s\r\n" % host).encode()
+    code, _ = raw_reply(host, b"GET /api/v1/state HTTP/1.1\r\n" + head +
+                        b"X-Pad: " + b"a" * 4000 + b"\r\n\r\n")
+    same(res, "a request head too large is 431", code, 431)
+    code, _ = raw_reply(host, b"PUT /api/v1/dim HTTP/1.1\r\n" + head +
+                        b"Content-Type: application/json\r\n"
+                        b"Content-Length: 100000\r\n\r\n")
+    same(res, "a body too large is 413, before any of it is sent", code, 413)
+    code, _ = raw_reply(host, b"PUT /api/v1/dim HTTP/1.1\r\n" + head +
+                        b"Content-Length: lots\r\n\r\n")
+    same(res, "an unreadable Content-Length is 400", code, 400)
+
+    # A request that stops arriving partway is dropped, and the eyes keep
+    # moving while it waits -- before, the board waited on it from inside
+    # the render loop.
+    # The baseline has to be a rendering one: an earlier test may have left
+    # cards on the panels, which draw no frames.
+    before: int = 0
+    for _ in range(8):
+        before = api.json("/state").get("system", {}).get("fps") or 0
+        if before:
+            break
+        time.sleep(1)
+    code, took = raw_reply(host, b"GET /api/v1/state HTTP/1.1\r\n" + head)
+    if code is None and 3.0 <= took <= 8.0:
+        res.ok("a request that never finishes is dropped", "after %.1fs" % took)
+    else:
+        res.fail("a request that never finishes is dropped",
+                 "status %r after %.1fs" % (code, took))
+    after: Any = api.json("/state").get("system", {}).get("fps")
+    if not before:
+        res.skip("the eyes kept moving while it waited",
+                 "the eyes are not drawing (sleep, off, or cards)")
+    elif isinstance(after, int) and after >= before * 0.8:
+        res.ok("the eyes kept moving while it waited", "%s -> %s fps" % (before, after))
+    else:
+        res.fail("the eyes kept moving while it waited", "%r -> %r fps" % (before, after))
+
+
 def test_cors(res: Result, api: Api, info: Json) -> None:
     res.heading("cross-origin")
     code, _ = api.raw("/eye", "OPTIONS")
@@ -1843,6 +1908,7 @@ def main(argv: list[str]) -> int:
     test_netinfo(res, api)
     test_actions(res, api)
     test_errors(res, api)
+    test_request_gate(res, api, args.host)
     test_cors(res, api, info)
     test_auth(res, api, info, args.host)
     test_credentials(res, api, info, args)

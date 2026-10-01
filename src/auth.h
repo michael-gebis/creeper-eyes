@@ -67,8 +67,34 @@ public:
   // as long as the nonce lives.  True for anything that is not digest.
   bool digestMatchesRequest(void);
 
+  // The library's, but a request is only taken once all of it has arrived,
+  // because taking it blocks the render loop until it has been read.  See
+  // auth.cpp.
+  void handleClient() override;
+
+  // For a body streamed to a handler -- the eye file -- which waits for its
+  // own bytes rather than let the library wait on the render loop.
+  int pendingBytes(void) { return _currentClient.available(); }
+  bool clientConnected(void) { return _currentClient.connected(); }
+  // How long the library's reads wait for each byte, in milliseconds.
+  void setReadTimeoutMs(unsigned long ms);
+  // Ends the request now: the library's next read comes back empty and the
+  // body is abandoned.  This stops the server's own connection.  Stopping
+  // the copy client() returns closes nothing: the copy only lets go of its
+  // share of the socket.
+  void abortRequest(void);
+
 private:
   uint32_t nonceBornMs = 0;
+
+  // handleClient()'s parts: whether the request has all arrived, and how a
+  // request is turned away before the library has read any of it.
+  enum Arrival { WAITING, READY, TOO_SLOW, HEAD_TOO_BIG, BODY_TOO_BIG, BAD_HEAD };
+  Arrival arrival(void);
+  bool routeOf(const char *buf, int len, HTTPMethod &method, bool &streamed);
+  void turnAway(int code, const char *reason);
+  long settledAvail = -1;  // bytes waiting when last looked, for a long head
+  uint32_t settledMs = 0;  // ...and when that count last changed
 };
 
 // True if the request may proceed.  When it may not, this has already

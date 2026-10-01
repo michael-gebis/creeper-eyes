@@ -113,6 +113,17 @@ one bad field beside a good one, which must leave the good one unapplied
 too. None of it changes the board, including the WiFi cases, each of which
 would reboot it if it were ever accepted.
 
+A group called *taking a request* sends four requests `urllib` will not
+send:
+
+- a head too large, which must get `431`;
+- a body too large, which must get `413`;
+- a broken `Content-Length`, which must get `400`;
+- a request that never finishes arriving, which must be dropped. While it
+  waits, the frame rate is checked to show the eyes kept moving.
+
+That last one costs five seconds a run.
+
 It also reports any request that took over a second, because on this board a
 slow request is a stalled render loop.
 

@@ -7,6 +7,7 @@
 #include <Arduino.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <lwip/sockets.h>
 
 #include "credentials.h"
 
@@ -138,6 +139,231 @@ void AuthWebServer::digestChallenge(const char *realm, const char *message) {
                  _snonce + "\", opaque=\"" + _sopaque + "\"" +
                  (stale ? ", stale=TRUE" : ""));
   send(401, "text/plain", message);
+}
+
+// TAKING A REQUEST ----------------------------------------------------------
+//
+// The library takes a request the moment its first byte arrives, then reads
+// the rest -- the request line, every header, the body -- waiting for each
+// byte as it comes.  This server runs on the render loop (web.cpp), so for as
+// long as a request takes to arrive the eyes are frozen and nobody else is
+// served, and nothing bounds that: a client sending a byte every few seconds
+// holds the loop for as long as it likes, before any credential has been
+// looked at.  What it reads it keeps, too -- a header line or a body of any
+// length -- on the heap the rest of the firmware shares.
+//
+// So a new client waits, at the cost of a peek each frame, until its whole
+// request is already in the socket: the head up to its blank line, and the
+// body by its Content-Length.  Then every read the library makes finds its
+// byte waiting, and the request is served at once.  A request that would not
+// fit is refused before any of it is read -- a head past REQUEST_HEAD_MAX, a
+// body past REQUEST_BODY_MAX -- and one that has not all arrived after
+// REQUEST_ARRIVE_MS is dropped.  The one body exempt is a route that streams
+// its body to a handler, the eye file, which bounds its own time instead
+// (api.cpp, eyeSlotBody).
+
+static char peekBuf[REQUEST_HEAD_MAX];
+
+// The library's method names, for finding the route a request will take.
+static HTTPMethod methodNamed(const char *s, int len) {
+  static const struct {
+    const char *name;
+    HTTPMethod method;
+  } known[] = {{"GET", HTTP_GET},         {"POST", HTTP_POST},
+               {"PUT", HTTP_PUT},         {"DELETE", HTTP_DELETE},
+               {"PATCH", HTTP_PATCH},     {"OPTIONS", HTTP_OPTIONS},
+               {"HEAD", HTTP_HEAD}};
+  for (const auto &k : known)
+    if ((int)strlen(k.name) == len && !strncmp(s, k.name, len))
+      return k.method;
+  return HTTP_ANY;
+}
+
+// Where a header's value starts in the head, or -1.  Case-insensitive, and
+// only at the start of a line.
+static int headerValueAt(const char *head, int len, const char *name) {
+  const int n = strlen(name);
+  for (int i = 0; i + 2 + n < len; i++) {
+    if (head[i] != '\r' || head[i + 1] != '\n' ||
+        strncasecmp(head + i + 2, name, n) || head[i + 2 + n] != ':')
+      continue;
+    int v = i + 3 + n;
+    while (v < len && head[v] == ' ')
+      v++;
+    return v;
+  }
+  return -1;
+}
+
+// How long a client must have stopped sending before a head too long to see
+// whole is taken -- see arrival().  Its segments come back to back.
+#ifndef REQUEST_SETTLE_MS
+#define REQUEST_SETTLE_MS 50
+#endif
+
+// From a request line at the start of buf: its method, and whether the route
+// the library will give it streams its body to a handler.  The first handler
+// that takes it, as the library chooses, on the path without its query.
+// False if there is no whole request line yet.
+bool AuthWebServer::routeOf(const char *buf, int len, HTTPMethod &method,
+                            bool &streamed) {
+  const char *eol = (const char *)memchr(buf, '\r', len);
+  const char *sp1 = (const char *)memchr(buf, ' ', eol ? eol - buf : len);
+  const char *sp2 = sp1 ? (const char *)memchr(sp1 + 1, ' ', (eol ? eol : buf + len) - sp1 - 1)
+                        : nullptr;
+  if (!sp2)
+    return false;
+  method = methodNamed(buf, sp1 - buf);
+  String path(sp1 + 1, sp2 - sp1 - 1); // String(const char *, unsigned int)
+  const int q = path.indexOf('?');
+  if (q >= 0)
+    path.remove(q);
+  streamed = false;
+  for (RequestHandler *h = _firstHandler; h; h = h->next())
+    if (h->canHandle(method, path)) {
+      streamed = h->canRaw(path);
+      break;
+    }
+  return true;
+}
+
+AuthWebServer::Arrival AuthWebServer::arrival(void) {
+  const int fd = _currentClient.fd();
+  if (fd < 0)
+    return TOO_SLOW;
+  // Nothing has been read from a new client, so its whole request so far is
+  // in the socket, and a peek sees it without taking any of it -- as far as
+  // the first segment that arrived, which is all lwIP will show a peek.
+  int n = recv(fd, peekBuf, sizeof(peekBuf), MSG_PEEK | MSG_DONTWAIT);
+  if (n < 0)
+    n = 0;
+  const unsigned long avail = _currentClient.available();
+  const bool late = millis() - _statusChange > REQUEST_ARRIVE_MS;
+
+  int headLen = -1;
+  for (int i = 0; i + 3 < n; i++)
+    if (!memcmp(peekBuf + i, "\r\n\r\n", 4)) {
+      headLen = i + 4;
+      break;
+    }
+  HTTPMethod method = HTTP_ANY;
+  bool streamed = false;
+
+  if (headLen < 0) {
+    if (avail <= (unsigned long)n) // all there is, and not a whole head yet
+      return n >= (int)sizeof(peekBuf) ? HEAD_TOO_BIG : late ? TOO_SLOW : WAITING;
+
+    // More has arrived than the peek can see: a head too long for one
+    // segment.  Its size is known only as what has arrived, so the limits
+    // apply to that.  Once the client stops sending, the library reads it
+    // without waiting for anything (see handleClient()), so a head that was
+    // not in fact whole fails at once instead of waiting on the render loop.
+    if (!routeOf(peekBuf, n, method, streamed))
+      return BAD_HEAD;
+    const bool bodiless = method == HTTP_GET || method == HTTP_HEAD ||
+                          method == HTTP_OPTIONS;
+    if (!streamed && avail > (unsigned long)REQUEST_HEAD_MAX +
+                                 (bodiless ? 0 : REQUEST_BODY_MAX))
+      return bodiless ? HEAD_TOO_BIG : BODY_TOO_BIG;
+    if ((long)avail != settledAvail) {
+      settledAvail = avail;
+      settledMs = millis();
+    } else if (millis() - settledMs >= REQUEST_SETTLE_MS) {
+      return READY;
+    }
+    return late ? TOO_SLOW : WAITING;
+  }
+
+  if (!routeOf(peekBuf, headLen, method, streamed))
+    return BAD_HEAD;
+  // A multipart body is never streamed: the library parses those itself.
+  const int ct = headerValueAt(peekBuf, headLen, "Content-Type");
+  if (ct >= 0 && !strncasecmp(peekBuf + ct, "multipart/", 10))
+    streamed = false;
+
+  unsigned long body = 0;
+  const int cl = headerValueAt(peekBuf, headLen, "Content-Length");
+  if (cl >= 0) {
+    int digits = 0;
+    for (int i = cl; i < headLen && isdigit((unsigned char)peekBuf[i]); i++, digits++)
+      body = body * 10 + (peekBuf[i] - '0');
+    if (!digits || digits > 9)
+      return BAD_HEAD;
+  }
+  if (streamed)
+    return READY; // its handler waits for the body itself
+  if (body > REQUEST_BODY_MAX)
+    return BODY_TOO_BIG;
+  if (avail >= headLen + body)
+    return READY;
+  return late ? TOO_SLOW : WAITING;
+}
+
+void AuthWebServer::turnAway(int code, const char *reason) {
+  _currentClient.printf("HTTP/1.1 %d %s\r\nContent-Type: text/plain\r\n"
+                        "Content-Length: %u\r\nConnection: close\r\n\r\n%s\n",
+                        code, reason, (unsigned)strlen(reason) + 1, reason);
+  // Take what has already arrived, so closing sends the client an end of
+  // stream after the reply rather than a reset, which some clients answer by
+  // throwing the reply away unread.
+  for (int n = _currentClient.available(); n > 0; n = _currentClient.available())
+    if (_currentClient.read((uint8_t *)peekBuf, n < (int)sizeof(peekBuf) ? n : sizeof(peekBuf)) <= 0)
+      break;
+  _currentClient = WiFiClient(); // lets go of the socket, which closes it
+  _currentStatus = HC_NONE;
+}
+
+void AuthWebServer::handleClient() {
+  if (_currentStatus == HC_NONE) {
+    _currentClient = _server.available();
+    if (!_currentClient) {
+      if (_nullDelay)
+        delay(1);
+      return;
+    }
+    _currentStatus = HC_WAIT_READ;
+    _statusChange = millis();
+    settledAvail = -1;
+  }
+  if (_currentStatus == HC_WAIT_READ && _currentClient.connected()) {
+    switch (arrival()) {
+    case WAITING:
+      return; // look again next frame; the eyes carry on meanwhile
+    case READY:
+      // Everything the library will read is already here, so its reads need
+      // not wait for anything.  They waited five seconds a byte before: the
+      // library sets that for sending each response, and WiFiClient's
+      // assignment does not copy the timeout, so every client after the first
+      // was read with it.  (A streamed body waits for its own bytes.)
+      setReadTimeoutMs(1);
+      break;
+    case TOO_SLOW:
+      _currentClient = WiFiClient();
+      _currentStatus = HC_NONE;
+      return;
+    case HEAD_TOO_BIG:
+      turnAway(431, "Request Header Fields Too Large");
+      return;
+    case BODY_TOO_BIG:
+      turnAway(413, "Payload Too Large");
+      return;
+    case BAD_HEAD:
+      turnAway(400, "Bad Request");
+      return;
+    }
+  }
+  WebServer::handleClient();
+}
+
+void AuthWebServer::setReadTimeoutMs(unsigned long ms) {
+  // Stream's, which is what the library's reads wait on.  WiFiClient's own
+  // setTimeout takes seconds and also sets the socket's send timeout.
+  static_cast<Stream &>(_currentClient).setTimeout(ms);
+}
+
+void AuthWebServer::abortRequest(void) {
+  setReadTimeoutMs(0);   // the library's next read gives up at once...
+  _currentClient.stop(); // ...and finds nothing there
 }
 
 #if AUTH_HTTP
