@@ -2,7 +2,7 @@
 """Compare two firmware configurations over hours, fairly.
 
     uv run tools/soak.py --hours 3 --token ... \\
-        --a=-DHTTP_TASK=1 --b=-DHTTP_TASK=0
+        --a=-DCLOCK=1 --b=-DCLOCK=0
 
 The problem this exists to solve: a WiFi link is not a stable measuring
 instrument.  Measuring configuration A for ten minutes and then B for ten
@@ -147,10 +147,12 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--host", default="frank.local")
     ap.add_argument("--port", default="COM3", help="serial port for flashing")
     ap.add_argument("--env", default="gray_rtc", help="platformio environment")
-    ap.add_argument("--a", default="-DHTTP_TASK=1", help="build flags for A")
-    ap.add_argument("--b", default="-DHTTP_TASK=0", help="build flags for B")
-    ap.add_argument("--a-name", default="task")
-    ap.add_argument("--b-name", default="loop")
+    # No defaults: the two builds are the whole question, and a default that
+    # names a flag main does not have compares a build with itself.
+    ap.add_argument("--a", required=True, help="build flags for A")
+    ap.add_argument("--b", required=True, help="build flags for B")
+    ap.add_argument("--a-name", default="a")
+    ap.add_argument("--b-name", default="b")
     ap.add_argument("--samples", type=int, default=60,
                     help="requests per configuration per round")
     ap.add_argument("--gap", type=float, default=0.2,

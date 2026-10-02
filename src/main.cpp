@@ -518,7 +518,7 @@ static void setEyeDesign(uint8_t idx) {
   }
 #endif
   eyeDesign = idx;
-#if COMMANDS
+#if CONTROLLABLE
   settingsDirty = true;
 #endif
 }
@@ -1140,7 +1140,7 @@ void setup(void) {
   eyeStoreBegin(); // before loadSettings(), which may name the loaded design
   adoptLoadedDesign();
 #endif
-#if COMMANDS
+#if CONTROLLABLE
   loadSettings(); // before the splash, so its labels are correct
 #endif
 #if RTC
@@ -1850,8 +1850,8 @@ void stateGet(DeviceState &o) {
   for (uint8_t e = 0; e < 2; e++)
     o.dimTrim[e] = e < NUM_EYES ? dimmerTrim(flipSlot(eye[e].cs)) : 0;
   o.dimSweeping = dimmerSweeping();
-#if CLOCK
   o.startleActive = (startleState != STARTLE_OFF);
+#if CLOCK
   o.clockOn = clockOn;
   o.clockSuppressed = clockOn && !timeSynced;
   o.clockSeconds = clockSeconds;
@@ -1860,7 +1860,6 @@ void stateGet(DeviceState &o) {
   for (uint8_t i = 0; i < 3; i++)
     o.clockColor[i] = clockRGB[i];
 #else
-  o.startleActive = false;
   o.clockOn = o.clockSeconds = o.clockSuppressed = false;
   o.clockRate = 0;
   o.clockSecOfDay = 0;
@@ -2005,18 +2004,14 @@ bool stateSetDilation(long pct) {
   LOCKED;
   if (pct < 0 || pct > 100)
     return false;
-#if CLOCK
   startleCancel(); // an explicit width wins over a running effect
-#endif
   setDilation((uint8_t)pct); // in range, so exact
   return true;
 }
 
 void stateDilationAuto(void) {
   LOCKED;
-#if CLOCK
   startleCancel(); // else it restores a commanded width a moment later
-#endif
   dilateCmdActive = false;
 }
 
@@ -2114,9 +2109,7 @@ void stateBlink(void) {
 
 void stateStartle(void) {
   LOCKED;
-#if CLOCK
   startleBegin();
-#endif
 }
 
 void stateSplash(void) {

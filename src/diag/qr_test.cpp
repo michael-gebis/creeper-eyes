@@ -29,8 +29,9 @@
 // A third, the WiFi join at ECC Q (version 4, 123 of 128 px), was measured
 // and dropped: the phone struggles to latch onto it.  See docs/QR.md.
 //
-// ECC L is deliberately absent: at 41 bytes it produces the same version 3 as
-// ECC M, so it would be the same picture with less redundancy.
+// ECC L is deliberately absent: at this length it produces the same
+// version 3 as ECC M, so it would be the same picture with less
+// redundancy.
 //
 // The code goes on the panel on your right -- Frank's left, where the real
 // ones go -- and the one on your left captions it, so a photograph of the
@@ -318,13 +319,15 @@ void setup(void) {
 }
 
 static void buildWifiPayload(char *out, size_t n) {
-  // The password the real feature would derive from the MAC: six bytes as
-  // twelve hex characters, so the payload length here is exactly what it
-  // would be in the field rather than a guess.
-  uint8_t mac[6];
-  esp_read_mac(mac, ESP_MAC_WIFI_STA);
-  snprintf(out, n, "WIFI:T:WPA;S:%s;P:%02X%02X%02X%02X%02X%02X;;", AP_NAME,
-           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  // A password like the setup portal's: eight random characters from the
+  // same alphabet (see setupNetwork() in net.cpp), so the payload is exactly
+  // as long as the one shown in the field rather than a guess.
+  static const char ALPHABET[] = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  char pass[9];
+  for (uint8_t i = 0; i < sizeof(pass) - 1; i++)
+    pass[i] = ALPHABET[esp_random() % (sizeof(ALPHABET) - 1)];
+  pass[sizeof(pass) - 1] = '\0';
+  snprintf(out, n, "WIFI:T:WPA;S:%s;P:%s;;", AP_NAME, pass);
 }
 
 void loop(void) {

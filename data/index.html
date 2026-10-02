@@ -417,6 +417,19 @@ function sendNewest(path, body) {
 const held = el => document.activeElement === el;
 
 const hex = n => '#' + n.toLowerCase();
+
+// Rows of [name, value], written as text rather than markup: a value can come
+// from a person -- the network's name, say -- and must never be read as HTML.
+function fillTable(table, rows) {
+  table.replaceChildren(...rows.map(([k, v]) => {
+    const tr = document.createElement('tr');
+    tr.insertCell().textContent = k;
+    const td = tr.insertCell();
+    td.className = 'v';
+    td.textContent = v;
+    return tr;
+  }));
+}
 const unhex = v => v.replace('#', '').toUpperCase();
 
 // Fixed for the life of the build, so it is read once rather than polled.
@@ -424,12 +437,12 @@ const unhex = v => v.replace('#', '').toUpperCase();
 // necessarily the tip of the branch it came from.
 async function fillInfo() {
   const i = await api('/info');
-  $('#about').innerHTML = [
+  fillTable($('#about'), [
     ['version', i.version + (i.dirty ? ' (modified)' : '')],
     ['commit', i.commit],
     ['built', i.built],
     ['api', i.api]
-  ].map(([k, v]) => `<tr><td>${k}</td><td class=v>${v}</td></tr>`).join('');
+  ]);
   $('#project').innerHTML =
     `<a href="${i.project}" target="_blank" rel="noreferrer">${i.project
       .replace('https://', '')}</a>`;
@@ -580,8 +593,7 @@ function render(s) {
     ['tz', s.net.tz], ['panel', `${s.system.panel} ×${s.system.panels}`],
     ['heap', (s.system.freeHeap / 1024 | 0) + ' KB'],
     ['uptime', s.system.uptimeSeconds + ' s']);
-  $('#info').innerHTML = rows
-    .map(([k, v]) => `<tr><td>${k}</td><td class=v>${v}</td></tr>`).join('');
+  fillTable($('#info'), rows);
 
   // Only worth explaining when there is an address on screen that does not
   // work.  With IPv6 compiled out there is nothing to explain away.

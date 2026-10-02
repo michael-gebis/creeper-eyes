@@ -41,14 +41,23 @@ def selected_favicon() -> str:
     with open(FAVICON_H, encoding="utf-8") as f:
         src: str = f.read()
 
-    # -DFAVICON=FAVICON_EYES arrives as a CPPDEFINES tuple or a bare string.
-    want: str = "FAVICON_FRANK"
-    for define in env.get("CPPDEFINES", []):  # noqa: F821
+    # This runs before PlatformIO has turned build_flags into CPPDEFINES, so
+    # they are parsed here.  -DFAVICON=FAVICON_EYES, or its value
+    # -DFAVICON=1, arrives as a pair; a bare -DFAVICON arrives as a string,
+    # and is 1 too.
+    defines: list[Any] = list(env.get("CPPDEFINES", []))  # noqa: F821
+    defines += env.ParseFlags(  # noqa: F821
+        env.get("BUILD_FLAGS", [])).get("CPPDEFINES", [])  # noqa: F821
+    eyes: bool = False
+    for define in defines:
         if isinstance(define, (list, tuple)) and len(define) == 2:
             if str(define[0]) == "FAVICON":
-                want = str(define[1])
+                value: str = str(define[1])
+                eyes = value.endswith("EYES") or value == "1"
+        elif str(define) == "FAVICON":
+            eyes = True
 
-    name: str = "FAVICON_URI_EYES" if want.endswith("EYES") else "FAVICON_URI_FRANK"
+    name: str = "FAVICON_URI_EYES" if eyes else "FAVICON_URI_FRANK"
     m: re.Match[str] | None = re.search(
         r"#define\s+" + name + r"\b(.*?)(?=\n#define|\n#if|\Z)",
         src, re.S)

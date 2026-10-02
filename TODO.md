@@ -20,26 +20,18 @@ leave this list as they are done.
 
 ### Bugs it found on the way
 
-- Startle is compiled only under `CLOCK`. With `-DCLOCK=0` it does nothing,
-  and the console and the API both still report success.
-- A `NETWORK=1, COMMANDS=0` build saves settings that it never loads at
-  boot, and it has no BOOT-button factory reset. Both are compiled under
-  `COMMANDS` only.
-- The control page writes the WiFi network name and the timezone into the
-  Device card as markup (`innerHTML`). A network name containing `<` breaks
-  the card.
 - With the pupil turned off, `PUPIL_OFF_SCALE` is applied before `frame()`
   remaps the scale. The arithmetic says a dot about 5 px across may remain.
   This hasn't been checked on a panel.
-- `tools/soak.py` compares `-DHTTP_TASK=1` against `-DHTTP_TASK=0` by
-  default. That flag exists only on the `http-task` branch, so on `main` the
-  default run compares a build with itself.
-- `tools/gen_page.py` treats `-DFAVICON=1`, which is `FAVICON_EYES`'s value,
-  as the Frank icon. Only a value ending in `EYES` is recognised.
-- `hardware/gen_board.py` labels the schematic "rev A" and the silkscreen
-  "rev B".
-- `src/diag/qr_test.cpp` sizes its test code for a 12-character password
-  derived from the MAC. The real setup portal uses a random 8-character one.
+- The `hardware/*/images/schematic.pdf` files still say rev A. The
+  schematics themselves say rev B now; the PDFs follow the next time
+  `make_outputs.py` runs in KiCad.
+
+**A decision rather than a bug.** A `NETWORK=1, COMMANDS=0` build has no
+BOOT button, so no factory reset, which is the only way back into a board
+whose password has been forgotten. `docs/CONFIG.md` says so on purpose:
+`COMMANDS` is the console *and* the button. The alternative is to compile
+the button whenever the board is controllable at all.
 
 ### Consistency and naming
 

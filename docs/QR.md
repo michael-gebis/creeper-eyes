@@ -21,6 +21,10 @@ rather than held conveniently on a bench. The feature is viable.
 | WiFi join, ECC Q | 41 bytes | 4 | 33×33 | 123 px | 2.5 px | reads, but the phone struggles to latch |
 | Address, ECC M | 23 bytes | 2 | 25×25 | 99 px | 14.5 px | **reliable** |
 
+The join codes were measured with a 12-character password. The setup portal's
+own password is 8 characters, which makes the code 37 bytes: still version 3
+at ECC M and version 4 at ECC Q, so the rows stand.
+
 Every one of them renders at **three pixels per module** — 128 divided by
 anything in this range is three. So module size is not the variable. What
 changes is how many modules there are and how much panel is left over.
