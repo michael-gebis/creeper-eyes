@@ -35,26 +35,18 @@ the button whenever the board is controllable at all.
 
 ### Consistency and naming
 
-- **`main.cpp` still uses the upstream C style:** `typedef struct`, a
-  lowercase type, a `#define` state machine and `boolean`. Elsewhere in the
-  code: `NULL` 70 times and `nullptr` twice, and unprefixed enumerators in
-  `auth.cpp` (`ALLOW`, `WAITING`, `READY`…).
-- **The console's replies** use `ok`, `err:` and `usage:`, with three
-  outliers (`error:`, `err: usage:`, and bare text).
-- **`platformio.ini`** repeats the same three OTA lines four times, and
-  respells inherited build flags. An `[ota]` section and `${…}`
-  interpolation would remove both.
 - **Names to change:**
-  - `eye[]` is the array of panels, so rename it `panels[]`, with
-    `NUM_EYES` → `PANEL_COUNT`. "Eye" already means a design and an API
-    resource, and the overlap has caused one bug already.
+  - `eye[]` is the array of panels, an anonymous struct, so make it
+    `panels[]` of a named `Panel`, with `NUM_EYES` → `PANEL_COUNT` and the
+    `displayType` typedef → `PanelDriver`. "Eye" already means a design and
+    an API resource, and the overlap has caused one bug already.
   - "Slot" is the eye-file slot and also a panel position (`flipSlot`,
     `displaySlot`, the dimmer's `slot` argument).
   - The five artwork globals (`upper`, `lower`, `iris`, `polar`, `sclera`)
     become one read-only `EyeArtwork`.
   - `timeSynced` → `timeKnown()`, which its own comment says it means.
-  - Upstream's cryptic names: `ENBLINK`/`DEBLINK`, `serEyeCtrl`, `pBurst`,
-    `gBurst`, `colourFrames`, `split()`.
+  - Upstream's cryptic names: `serEyeCtrl`, `pBurst`, `gBurst`,
+    `colourFrames`, `split()`.
   - `state.h` puts the verb first in nine names (`stateSetGaze`) and the
     noun first in sixteen (`stateGazeAuto`).
   - The settings keys are named by position: `PREFS_KEY_SLP_A`, `CLK_C0`.

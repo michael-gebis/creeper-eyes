@@ -133,14 +133,14 @@ const uint16_t (*iris)[IRIS_MAP_WIDTH];
 
 // Registry of the designs compiled in.  Order here is the order the console
 // reports and indexes them by.
-typedef struct {
+struct EyeDesign {
   const char *name;
   const uint16_t (*sclera)[SCLERA_WIDTH];
   const uint8_t (*upper)[SCREEN_WIDTH];
   const uint8_t (*lower)[SCREEN_WIDTH];
   const uint16_t (*polar)[IRIS_WIDTH];
   const uint16_t (*iris)[IRIS_MAP_WIDTH];
-} EyeDesign;
+};
 
 static const EyeDesign eyeDesigns[] = {
 #if EYE_DEFAULT
@@ -603,14 +603,17 @@ typedef SwappableSSD1351 displayType; // Using OLED display(s)
 // of the two elements in the eye[] array further down can be commented out.
 
 // Eye blinks are a tiny 3-state machine.  Per-eye allows winks + blinks.
-#define NOBLINK 0 // Not currently engaged in a blink
-#define ENBLINK 1 // Eyelid is currently closing
-#define DEBLINK 2 // Eyelid is currently opening
-typedef struct {
-  uint8_t state;      // NOBLINK/ENBLINK/DEBLINK
+// In this order: a blink advances by incrementing its state.
+enum : uint8_t {
+  BLINK_NONE,    // not blinking
+  BLINK_CLOSING, // eyelid closing
+  BLINK_OPENING, // eyelid opening
+};
+struct Blink {
+  uint8_t state;      // BLINK_NONE, _CLOSING or _OPENING
   uint32_t duration;  // Duration of blink state (micros)
   uint32_t startTime; // Time (micros) of last state change
-} eyeBlink;
+};
 
 #define MOSI_PIN 18
 #define MISO_PIN 19
@@ -619,11 +622,11 @@ typedef struct {
 struct {
   displayType display; // OLED/TFT object
   uint8_t cs;          // Chip select pin
-  eyeBlink blink;      // Current blink state
+  Blink blink;         // Current blink state
 } eye[] = {
 #if USE_SSD1327
-    {SSD1327(SELECT_L_PIN, DISPLAY_DC), SELECT_L_PIN, {NOBLINK}},
-    {SSD1327(SELECT_R_PIN, DISPLAY_DC), SELECT_R_PIN, {NOBLINK}},
+    {SSD1327(SELECT_L_PIN, DISPLAY_DC), SELECT_L_PIN, {BLINK_NONE}},
+    {SSD1327(SELECT_R_PIN, DISPLAY_DC), SELECT_R_PIN, {BLINK_NONE}},
 #else
     // OK to comment out one of these for single-eye display.
     //
@@ -633,10 +636,10 @@ struct {
     // pulses the shared line once instead.
     {SwappableSSD1351(128, 128, &SPI, SELECT_L_PIN, DISPLAY_DC, -1),
      SELECT_L_PIN,
-     {NOBLINK}},
+     {BLINK_NONE}},
     {SwappableSSD1351(128, 128, &SPI, SELECT_R_PIN, DISPLAY_DC, -1),
      SELECT_R_PIN,
-     {NOBLINK}},
+     {BLINK_NONE}},
 #endif
 };
 #define NUM_EYES (sizeof(eye) / sizeof(eye[0]))
@@ -2725,7 +2728,7 @@ void handleCommand(char *line, Print &out) {
       while (rest && *rest == ' ')
         rest++;
       if (!rest || !*rest) {
-        out.println(F("err: usage: wifi join <ssid> [password]"));
+        out.println(F("usage: wifi join <ssid> [password]"));
         return;
       }
       char *pass = strrchr(rest, ' ');
@@ -2781,7 +2784,7 @@ void handleCommand(char *line, Print &out) {
       return;
     }
     if (arg && !stateSetCpu(mhz)) {
-      out.println(F("error: the setting could not be stored"));
+      out.println(F("err: the setting could not be stored"));
       return;
     }
     out.printf("%scpu=%u MHz", arg ? "ok " : "", (unsigned)getCpuFrequencyMhz());
@@ -2862,7 +2865,7 @@ void handleCommand(char *line, Print &out) {
       }
     }
     if (!stateSetFlip(e, want)) {
-      out.println(F("no such panel in this build"));
+      out.println(F("err: no such panel in this build"));
       return;
     }
     out.printf("ok flip %s=%s\n", side, want ? "on" : "off");
@@ -2904,7 +2907,7 @@ void handleCommand(char *line, Print &out) {
     out.println(F("ok splash"));
 #endif
   } else {
-    out.printf("unknown command '%s' -- try 'help'\n", cmd);
+    out.printf("err: unknown command '%s' -- try 'help'\n", cmd);
   }
 }
 
@@ -3135,7 +3138,7 @@ void frame(            // Process motion for a single frame of left or right eye
   // Periodically initiates motion to a new random point, random speed,
   // holds there for random period until next motion.
 
-  static boolean eyeInMotion = false;
+  static bool eyeInMotion = false;
   static int16_t eyeOldX = 512, eyeOldY = 512, eyeCurX = 512, eyeCurY = 512,
                  eyeNewX = 512, eyeNewY = 512;
   static uint32_t eyeMoveStartTime = 0L;
@@ -3204,8 +3207,8 @@ void frame(            // Process motion for a single frame of left or right eye
     uint32_t blinkDuration = random(36000, 72000); // ~1/28 - ~1/14 sec
     // Set up durations for both eyes (if not already winking)
     for (uint8_t e = 0; e < NUM_EYES; e++) {
-      if (eye[e].blink.state == NOBLINK) {
-        eye[e].blink.state = ENBLINK;
+      if (eye[e].blink.state == BLINK_NONE) {
+        eye[e].blink.state = BLINK_CLOSING;
         eye[e].blink.startTime = t;
         eye[e].blink.duration = blinkDuration;
       }
@@ -3218,10 +3221,10 @@ void frame(            // Process motion for a single frame of left or right eye
     // Check if current blink state time has elapsed
     if ((t - eye[eyeIndex].blink.startTime) >= eye[eyeIndex].blink.duration) {
       // No buttons, or other state...
-      if (++eye[eyeIndex].blink.state > DEBLINK) { // Deblinking finished?
-        eye[eyeIndex].blink.state = NOBLINK;       // No longer blinking
-      } else { // Advancing from ENBLINK to DEBLINK mode
-        eye[eyeIndex].blink.duration *= 2; // DEBLINK is 1/2 ENBLINK speed
+      if (++eye[eyeIndex].blink.state > BLINK_OPENING) { // opened?
+        eye[eyeIndex].blink.state = BLINK_NONE;          // done blinking
+      } else { // closed, so now opening
+        eye[eyeIndex].blink.duration *= 2; // opening takes twice as long
         eye[eyeIndex].blink.startTime = t;
       }
     }
@@ -3283,7 +3286,7 @@ void frame(            // Process motion for a single frame of left or right eye
       s = 255; // At or past blink end
     else
       s = 255 * s / eye[eyeIndex].blink.duration; // Mid-blink
-    s = (eye[eyeIndex].blink.state == DEBLINK) ? 1 + s : 256 - s;
+    s = (eye[eyeIndex].blink.state == BLINK_OPENING) ? 1 + s : 256 - s;
     n = (uThreshold * s + 254 * (257 - s)) / 256;
     lThreshold = (lThreshold * s + 254 * (257 - s)) / 256;
   } else {

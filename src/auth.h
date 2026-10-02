@@ -89,7 +89,14 @@ private:
 
   // handleClient()'s parts: whether the request has all arrived, and how a
   // request is turned away before the library has read any of it.
-  enum Arrival { WAITING, READY, TOO_SLOW, HEAD_TOO_BIG, BODY_TOO_BIG, BAD_HEAD };
+  enum Arrival {
+    ARRIVAL_WAITING,
+    ARRIVAL_READY,
+    ARRIVAL_TOO_SLOW,
+    ARRIVAL_HEAD_TOO_BIG,
+    ARRIVAL_BODY_TOO_BIG,
+    ARRIVAL_BAD_HEAD,
+  };
   Arrival arrival(void);
   bool routeOf(const char *buf, int len, HTTPMethod &method, bool &streamed);
   void turnAway(int code, const char *reason);

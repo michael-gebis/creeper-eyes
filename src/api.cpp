@@ -34,7 +34,7 @@
 // it.
 #define API "/api/v1"
 
-static AuthWebServer *S = nullptr;
+static AuthWebServer *S = NULL;
 
 // --------------------------------------------------------------- plumbing --
 

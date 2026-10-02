@@ -210,7 +210,7 @@ bool AuthWebServer::routeOf(const char *buf, int len, HTTPMethod &method,
   const char *eol = (const char *)memchr(buf, '\r', len);
   const char *sp1 = (const char *)memchr(buf, ' ', eol ? eol - buf : len);
   const char *sp2 = sp1 ? (const char *)memchr(sp1 + 1, ' ', (eol ? eol : buf + len) - sp1 - 1)
-                        : nullptr;
+                        : NULL;
   if (!sp2)
     return false;
   method = methodNamed(buf, sp1 - buf);
@@ -230,7 +230,7 @@ bool AuthWebServer::routeOf(const char *buf, int len, HTTPMethod &method,
 AuthWebServer::Arrival AuthWebServer::arrival(void) {
   const int fd = _currentClient.fd();
   if (fd < 0)
-    return TOO_SLOW;
+    return ARRIVAL_TOO_SLOW;
   // Nothing has been read from a new client, so its whole request so far is
   // in the socket, and a peek sees it without taking any of it -- as far as
   // the first segment that arrived, which is all lwIP will show a peek.
@@ -256,7 +256,9 @@ AuthWebServer::Arrival AuthWebServer::arrival(void) {
     // bytes are waiting.  Measured: five milliseconds later it saw them all.
     // Either way, look again next frame.
     if (n == 0 || avail <= (unsigned long)n)
-      return n >= (int)sizeof(peekBuf) ? HEAD_TOO_BIG : late ? TOO_SLOW : WAITING;
+      return n >= (int)sizeof(peekBuf) ? ARRIVAL_HEAD_TOO_BIG
+             : late                     ? ARRIVAL_TOO_SLOW
+                                        : ARRIVAL_WAITING;
 
     // More has arrived than the peek can see: a head too long for one
     // segment.  Its size is known only as what has arrived, so the limits
@@ -264,23 +266,23 @@ AuthWebServer::Arrival AuthWebServer::arrival(void) {
     // without waiting for anything (see handleClient()), so a head that was
     // not in fact whole fails at once instead of waiting on the render loop.
     if (!routeOf(peekBuf, n, method, streamed))
-      return BAD_HEAD;
+      return ARRIVAL_BAD_HEAD;
     const bool bodiless = method == HTTP_GET || method == HTTP_HEAD ||
                           method == HTTP_OPTIONS;
     if (!streamed && avail > (unsigned long)REQUEST_HEAD_MAX +
                                  (bodiless ? 0 : REQUEST_BODY_MAX))
-      return bodiless ? HEAD_TOO_BIG : BODY_TOO_BIG;
+      return bodiless ? ARRIVAL_HEAD_TOO_BIG : ARRIVAL_BODY_TOO_BIG;
     if ((long)avail != settledAvail) {
       settledAvail = avail;
       settledMs = millis();
     } else if (millis() - settledMs >= REQUEST_SETTLE_MS) {
-      return READY;
+      return ARRIVAL_READY;
     }
-    return late ? TOO_SLOW : WAITING;
+    return late ? ARRIVAL_TOO_SLOW : ARRIVAL_WAITING;
   }
 
   if (!routeOf(peekBuf, headLen, method, streamed))
-    return BAD_HEAD;
+    return ARRIVAL_BAD_HEAD;
   // A multipart body is never streamed: the library parses those itself.
   const int ct = headerValueAt(peekBuf, headLen, "Content-Type");
   if (ct >= 0 && !strncasecmp(peekBuf + ct, "multipart/", 10))
@@ -293,15 +295,15 @@ AuthWebServer::Arrival AuthWebServer::arrival(void) {
     for (int i = cl; i < headLen && isdigit((unsigned char)peekBuf[i]); i++, digits++)
       body = body * 10 + (peekBuf[i] - '0');
     if (!digits || digits > 9)
-      return BAD_HEAD;
+      return ARRIVAL_BAD_HEAD;
   }
   if (streamed)
-    return READY; // its handler waits for the body itself
+    return ARRIVAL_READY; // its handler waits for the body itself
   if (body > REQUEST_BODY_MAX)
-    return BODY_TOO_BIG;
+    return ARRIVAL_BODY_TOO_BIG;
   if (avail >= headLen + body)
-    return READY;
-  return late ? TOO_SLOW : WAITING;
+    return ARRIVAL_READY;
+  return late ? ARRIVAL_TOO_SLOW : ARRIVAL_WAITING;
 }
 
 void AuthWebServer::turnAway(int code, const char *reason) {
@@ -332,9 +334,9 @@ void AuthWebServer::handleClient() {
   }
   if (_currentStatus == HC_WAIT_READ && _currentClient.connected()) {
     switch (arrival()) {
-    case WAITING:
+    case ARRIVAL_WAITING:
       return; // look again next frame; the eyes carry on meanwhile
-    case READY:
+    case ARRIVAL_READY:
       // Everything the library will read is already here, so its reads need
       // not wait for anything.  They waited five seconds a byte before: the
       // library sets that for sending each response, and WiFiClient's
@@ -342,17 +344,17 @@ void AuthWebServer::handleClient() {
       // was read with it.  (A streamed body waits for its own bytes.)
       setReadTimeoutMs(1);
       break;
-    case TOO_SLOW:
+    case ARRIVAL_TOO_SLOW:
       _currentClient = WiFiClient();
       _currentStatus = HC_NONE;
       return;
-    case HEAD_TOO_BIG:
+    case ARRIVAL_HEAD_TOO_BIG:
       turnAway(431, "Request Header Fields Too Large");
       return;
-    case BODY_TOO_BIG:
+    case ARRIVAL_BODY_TOO_BIG:
       turnAway(413, "Payload Too Large");
       return;
-    case BAD_HEAD:
+    case ARRIVAL_BAD_HEAD:
       turnAway(400, "Bad Request");
       return;
     }
@@ -439,60 +441,66 @@ void authBegin(AuthWebServer &s) {
 }
 
 // What the checks make of a request, before anything is said about it.
-enum Verdict { ALLOW, WRONG_HOST, CROSS_SITE, NEED_DIGEST, NEED_TOKEN };
+enum Verdict {
+  VERDICT_ALLOW,
+  VERDICT_WRONG_HOST,
+  VERDICT_CROSS_SITE,
+  VERDICT_NEED_DIGEST,
+  VERDICT_NEED_TOKEN,
+};
 
 static Verdict judge(AuthWebServer &s) {
 #if AUTH_HOST_CHECK
   if (!hostIsOurs(s.hostHeader()))
-    return WRONG_HOST;
+    return VERDICT_WRONG_HOST;
 #endif
 
 #if AUTH_HTTP || AUTH_TOKEN
   // Before any credential, so a forged request is refused however good the
   // credential it carries.
   if (fromAnotherSite(s))
-    return CROSS_SITE;
+    return VERDICT_CROSS_SITE;
 #endif
 
 #if AUTH_TOKEN
   if (s.hasHeader("Authorization") && tokenMatches(s.header("Authorization")))
-    return ALLOW;
+    return VERDICT_ALLOW;
 #endif
 
 #if AUTH_HTTP
   s.expireNonce(); // an expired nonce must fail here, not be accepted
   if (!s.authenticate(credGet(CRED_USER), credGet(CRED_PASS)) ||
       !s.digestMatchesRequest())
-    return NEED_DIGEST;
+    return VERDICT_NEED_DIGEST;
 #endif
 
 #if AUTH_TOKEN && !AUTH_HTTP
-  return NEED_TOKEN; // token is the only credential, and it did not match
+  return VERDICT_NEED_TOKEN; // the only credential, and it did not match
 #endif
 
   (void)s;
-  return ALLOW;
+  return VERDICT_ALLOW;
 }
 
-bool authPermits(AuthWebServer &s) { return judge(s) == ALLOW; }
+bool authPermits(AuthWebServer &s) { return judge(s) == VERDICT_ALLOW; }
 
 bool authCheck(AuthWebServer &s) {
   switch (judge(s)) {
-  case ALLOW:
+  case VERDICT_ALLOW:
     return true;
-  case WRONG_HOST:
+  case VERDICT_WRONG_HOST:
     s.send(403, "text/plain",
            "this request named a host that is not this device\n");
     return false;
-  case CROSS_SITE:
+  case VERDICT_CROSS_SITE:
     s.send(403, "text/plain", "this request was sent by another site\n");
     return false;
-  case NEED_DIGEST:
+  case VERDICT_NEED_DIGEST:
     // Digest, so the password itself never crosses the wire.  The browser
     // handles the challenge and asks the user once.
     s.digestChallenge(WIFI_HOSTNAME, "authentication required\n");
     return false;
-  case NEED_TOKEN:
+  case VERDICT_NEED_TOKEN:
     s.send(401, "text/plain", "a bearer token is required\n");
     return false;
   }
