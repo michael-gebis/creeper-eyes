@@ -177,6 +177,7 @@
 
 
 // PUPIL -------------------------------------------------------------------
+// In drawEye()'s units: frame() applies it after its remap.
 // The iris is drawn where iScale * distance / 128 < 64, and distance peaks
 // at 127 at the centre, so any scale at or below 64 keeps every pixel in
 // the iris and the pupil disappears, leaving a full iris disc.  Independent

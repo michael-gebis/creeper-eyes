@@ -3066,12 +3066,6 @@ void frame(            // Process motion for a single frame of left or right eye
   }
 #endif
 
-#if CONTROLLABLE
-  // Outranks the dilation override: with no pupil there is nothing to
-  // dilate.
-  if (!pupilOn)
-    iScale = PUPIL_OFF_SCALE;
-#endif
 
 #if DEBUG || CONTROLLABLE
   // The frame rate, once a second.
@@ -3238,6 +3232,13 @@ void frame(            // Process motion for a single frame of left or right eye
   // Iris scaling: remap from the 0-1023 scale to iris map height pixel units
   iScale = ((IRIS_MAP_HEIGHT + 1) * 1024) /
            (1024 - (iScale * (IRIS_MAP_HEIGHT - 1) / IRIS_MAP_HEIGHT));
+#if CONTROLLABLE
+  // Outranks the dilation override: with no pupil there is nothing to
+  // dilate.  After the remap, because PUPIL_OFF_SCALE is in drawEye()'s
+  // units: through the remap even 0 comes out above it, and leaves a dot.
+  if (!pupilOn)
+    iScale = PUPIL_OFF_SCALE;
+#endif
 
   // Scale eye X/Y positions (0-1023) to pixel units used by drawEye()
   eyeX = map(eyeX, 0, 1023, 0, SCLERA_WIDTH - 128);
