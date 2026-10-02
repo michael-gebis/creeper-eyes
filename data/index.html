@@ -175,7 +175,8 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
       <button id=rateSet>set</button>
     </div>
     <p class=note>Rate is how many seconds the hands advance per real second,
-      for checking the hands without waiting. No effect once NTP has answered.</p>
+      for checking the hands without waiting. No effect while a time server
+      or the RTC is setting the time.</p>
   </div>
 
   <div class=card>
@@ -418,11 +419,9 @@ const held = el => document.activeElement === el;
 const hex = n => '#' + n.toLowerCase();
 const unhex = v => v.replace('#', '').toUpperCase();
 
-// The two lists that never change while the firmware is running.  Fetched
-// once at startup and awaited one at a time: the device serves a single
-// client from inside its render loop, so two requests in flight are two
-// requests queued, and the second one is the one that times out.
 // Fixed for the life of the build, so it is read once rather than polled.
+// The commit is the one this firmware was built from, which is not
+// necessarily the tip of the branch it came from.
 async function fillInfo() {
   const i = await api('/info');
   $('#about').innerHTML = [
@@ -431,8 +430,6 @@ async function fillInfo() {
     ['built', i.built],
     ['api', i.api]
   ].map(([k, v]) => `<tr><td>${k}</td><td class=v>${v}</td></tr>`).join('');
-  // The commit is the one this firmware was built from, which is not
-  // necessarily the tip of the branch it came from.
   $('#project').innerHTML =
     `<a href="${i.project}" target="_blank" rel="noreferrer">${i.project
       .replace('https://', '')}</a>`;
@@ -461,6 +458,10 @@ function slotRender(slot) {
     : 'Load an eye file (.bin) to add one more design to the list.';
 }
 
+// The two lists that never change while the firmware is running.  Fetched
+// once at startup and awaited one at a time: the device serves a single
+// client from inside its render loop, so two requests in flight are two
+// requests queued, and the second one is the one that times out.
 async function fillLists() {
   await fillEyes();
 
@@ -1008,6 +1009,7 @@ $('#forget').onclick = () => {
 // the browser's connection pool was full and the page stopped responding
 // altogether.  A chained timeout cannot stack by construction, however slow
 // the device gets.
+//
 // A tab nobody is looking at does not need the board's attention.  Each poll
 // is about a kilobyte and, more to the point, a slice of the render loop --
 // and a page left open in a background tab would spend that every second for

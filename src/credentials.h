@@ -1,9 +1,8 @@
 // The credentials, and where they are kept.
 //
-// Until now these were compile-time constants out of include/secrets.h, which
-// meant changing a password was a rebuild and a reflash -- on a sealed head,
-// over the air, using the very password you were trying to change.  This
-// module gives them somewhere to live at runtime instead.
+// They live here at runtime so that changing a password is not a rebuild and
+// a reflash -- which on a sealed head means an update over the air, using the
+// very password being changed.
 //
 // The rule is the one config.h already uses for everything else: the
 // compiled-in value is the default, and a stored value overrides it.  A board

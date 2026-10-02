@@ -13,7 +13,4 @@
 // consumed in place by strtok, so the caller must own a writable copy.
 void handleCommand(char *line, Print &out);
 
-// One line describing everything worth knowing.
-void cmdStatus(Print &out);
-
 #endif // CONSOLE_H

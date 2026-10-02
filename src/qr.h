@@ -32,9 +32,5 @@
 // than no code, because it looks like it should work.
 bool qrShow(uint8_t eye, const char *text);
 
-// The largest payload qrShow() will accept, in bytes.  Exposed so callers can
-// check before building a string rather than after.
-uint16_t qrCapacity(void);
-
 #endif // QR_CODES
 #endif // QR_H

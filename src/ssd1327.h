@@ -42,29 +42,9 @@ class SSD1327 {
 public:
   SSD1327(int8_t csPin, int8_t dcPin) : _cs(csPin), _dc(dcPin) {}
 
-  // Park chip select high.  Call for every panel before initialising any of
-  // them, so a shared bus never reaches a panel that isn't listening.
   // Chip select can be reassigned after construction so a miswired pair
   // of panels can be swapped in software.  See the `swap` console command.
   void setCS(int8_t pin) { _cs = pin; }
-
-  void parkCS() const {
-    pinMode(_cs, OUTPUT);
-    digitalWrite(_cs, HIGH);
-  }
-
-  // Pulse the reset line shared by every panel.  Static because it must
-  // happen exactly once, before any panel is initialised -- resetting after
-  // a panel is up would wipe it.
-  static void sharedReset(int8_t rstPin) {
-    pinMode(rstPin, OUTPUT);
-    digitalWrite(rstPin, HIGH);
-    delay(20);
-    digitalWrite(rstPin, LOW);
-    delay(20);
-    digitalWrite(rstPin, HIGH);
-    delay(200);
-  }
 
   void begin(SPISettings cfg) {
     pinMode(_dc, OUTPUT);
@@ -83,10 +63,7 @@ public:
     cmd(0xA4);        // normal (not all-on / all-off / inverse)
     cmd1(0xA8, 0x7F); // multiplex ratio = 128
     cmd1(0xB1, 0xF1); // phase length
-    // Fastest oscillator, no division.  0x00 -- the slowest the controller
-    // has -- is what this sent for as long as there was an SSD1327 driver
-    // here, and it scans slowly enough to beat against a camera's rolling
-    // shutter.  See setFrontClock() and docs/QR.md.
+    // Fastest oscillator, no division: see setFrontClock().
     cmd1(0xB3, 0xF0); // front clock divider / oscillator frequency
     cmd1(0xAB, 0x01); // function select A: internal VDD regulator
     cmd1(0xB6, 0x0F); // second precharge period
@@ -169,11 +146,9 @@ public:
   // Low nibble is the DCLK divide ratio, high nibble the oscillator
   // frequency, and together with the phase lengths and the multiplex ratio
   // they set how often the panel scans itself.  begin() uses 0xF0 -- fastest
-  // oscillator, no division -- because 0x00, which it sent until the codes
-  // were photographed, scans slowly enough to beat visibly against a
-  // camera's rolling shutter.  Exposed so the sweep in src/diag/qr_test.cpp
-  // can step through the range with one fixed image on screen, which is how
-  // 0xF0 was chosen.
+  // oscillator, no division -- because 0x00, the slowest, scans slowly enough
+  // to beat visibly against a camera's rolling shutter.  0xF0 was chosen by
+  // sweeping the range with one fixed image on screen; see docs/QR.md.
   void setFrontClock(SPISettings cfg, uint8_t value) {
     SPI.beginTransaction(cfg);
     digitalWrite(_cs, LOW);
@@ -230,7 +205,7 @@ private:
 //
 // The eye artwork carries a lot of its detail in hue rather than brightness
 // (a hazel iris against a warm sclera), so a green-channel shortcut flattens
-// it badly.  Three multiplies per pixel is nothing on a 240 MHz core.
+// it badly.  Three multiplies per pixel is nothing, even at 160 MHz.
 static inline uint8_t rgb565ToGray4(uint16_t p) {
   uint8_t r5 = (uint8_t)((p >> 11) & 0x1F);
   uint8_t g6 = (uint8_t)((p >> 5) & 0x3F);

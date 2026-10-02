@@ -111,7 +111,7 @@ Inherited from upstream, unchanged:
 | :----- | :------ | :----- |
 | `TRACKING` | on | Eyelids follow the pupil. |
 | `AUTOBLINK` | on | Eyes blink on their own. |
-| `IRIS_MIN` / `IRIS_MAX` | `150` / `400` | Pupil range. Counter-intuitively, `IRIS_MIN` is the **widest** pupil — the value divides into the iris map. |
+| `IRIS_MIN` / `IRIS_MAX` | `150` / `400` | Pupil range: `IRIS_MIN` is the narrowest pupil and `IRIS_MAX` the widest. |
 
 One switch is derived rather than set: `CONTROLLABLE` is `COMMANDS || NETWORK`,
 and gates the machinery both interfaces share — the operations layer in

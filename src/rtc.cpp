@@ -187,8 +187,8 @@ void rtcBegin(void) {
   Wire.beginTransmission(RTC_ADDR);
   present = (Wire.endTransmission() == 0);
   if (!present) {
-    DEBUG_PRINTF("[rtc] no DS3231 at 0x%02X on SDA=%d SCL=%d; carrying on"
-                 "\n", RTC_ADDR, RTC_SDA_PIN, RTC_SCL_PIN);
+    DEBUG_PRINTF("[rtc] no DS3231 at 0x%02X on SDA=%d SCL=%d; carrying on\n",
+                 RTC_ADDR, RTC_SDA_PIN, RTC_SCL_PIN);
     return;
   }
 
@@ -196,7 +196,7 @@ void rtcBegin(void) {
   valid = readRegs(REG_STATUS, &st, 1) && !(st & STATUS_OSF);
   if (!valid) {
     DEBUG_PRINTF("[rtc] found, but its oscillator has stopped -- set the "
-                 "time with `clock set` and it will be kept" "\n");
+                 "time with `clock set` and it will be kept\n");
     return;
   }
 
@@ -213,30 +213,30 @@ void rtcBegin(void) {
 
   struct tm t;
   if (timeLocal(t))
-    DEBUG_PRINTF("[rtc] time restored: %04d-%02d-%02d %02d:%02d:%02d %s" "\n",
+    DEBUG_PRINTF("[rtc] time restored: %04d-%02d-%02d %02d:%02d:%02d %s\n",
                  t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour,
                  t.tm_min, t.tm_sec, tzString);
 }
 
 void rtcReport(Print &out) {
-  out.printf("rtc addr=0x%02X sda=%d scl=%d %s" "\n", RTC_ADDR, RTC_SDA_PIN,
+  out.printf("rtc addr=0x%02X sda=%d scl=%d %s\n", RTC_ADDR, RTC_SDA_PIN,
              RTC_SCL_PIN, present ? "present" : "not found");
   if (!present)
     return;
-  out.printf("  battery %s" "\n",
+  out.printf("  battery %s\n",
              valid ? "held; the time is good"
                    : "lost or never set; the time is not to be believed");
   time_t utc;
   if (rtcRead(utc)) {
     struct tm g;
     gmtime_r(&utc, &g);
-    out.printf("  chip    %04d-%02d-%02d %02d:%02d:%02d UTC" "\n",
+    out.printf("  chip    %04d-%02d-%02d %02d:%02d:%02d UTC\n",
                g.tm_year + 1900, g.tm_mon + 1, g.tm_mday, g.tm_hour, g.tm_min,
                g.tm_sec);
   }
   float c;
   if (rtcTemperature(c))
-    out.printf("  temp    %.2f C" "\n", c);
+    out.printf("  temp    %.2f C\n", c);
 }
 
 #endif // RTC

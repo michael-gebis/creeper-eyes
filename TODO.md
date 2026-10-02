@@ -46,53 +46,6 @@ leave this list as they are done.
 - `src/diag/qr_test.cpp` sizes its test code for a 12-character password
   derived from the MAC. The real setup portal uses a random 8-character one.
 
-### Clean-up that changes no behaviour
-
-- **Comments left behind when code moved.** About a dozen sit above code
-  they don't describe: in `main.cpp` around the shared text rendering, the
-  splash and the design lookup; in `net.cpp`, four fragments about code that
-  moved to `timekeeping.cpp`; in `ssd1327.h` above `setCS`; and three in
-  `index.html`.
-- **Comments that contradict each other.** One in `main.cpp` says `IRIS_MIN`
-  is the widest pupil; another, and the code, say it is `IRIS_MAX`.
-  `docs/CONFIG.md` repeats the wrong one.
-- **Comments no longer true.** About twenty, among them:
-  - "there is no authentication on this API" (`api.cpp`);
-  - "no real time source yet" (`config.h`);
-  - "secrets.ini" (`net.cpp`);
-  - "nothing outside this module and web.cpp knows the network exists"
-    (`net.h`);
-  - the tools' "works on the 3.9 that ships with PlatformIO";
-  - `config.h`'s list of the switches that aren't overridable.
-- **Explanations given more than once.** Keep each at its definition and
-  point to it from the other places:
-  - espota's acknowledgements, three times;
-  - the `loop()`/`split()` caveat, three times;
-  - "the server answers one client at a time", six times;
-  - which pin is Frank's right, three times.
-- **History in header comments.** Lines such as "Until now…", "This used to
-  live in…" and the argument in `state.h` against splitting `main.cpp`. A
-  header should say what the module guarantees now; the history belongs in
-  the docs.
-- **Dead code.**
-  - In `main.cpp`: an unused `SPISettings`, `IRIS_SMOOTH`, `SerialIn` with
-    its pin, a commented-out remap, and an empty `if`.
-  - In `sleepmode.cpp`: `sleepBegin()`, and `asleepNow` and `reason`, which
-    are written and never read.
-  - Functions nothing calls: `qrCapacity()`, `timeSource()`, and
-    `ssd1327.h`'s `parkCS()` and `sharedReset()`. The last two are
-    reimplemented in three places.
-  - Names visible to other files that needn't be: web.cpp's handlers and
-    `server`, and `wifiWaitConnected`/`netDrawPanel` in net.cpp.
-  - Unused includes in `main.cpp` and `timekeeping.cpp`.
-- **One way to write a trailing newline.** 50 string literals end in
-  `"…" "\n"`, against about 55 that write `\n` inline.
-- **Invariants nobody wrote down.**
-  - `TimeSource`'s declaration order is the ranking `timeAccept()` relies on.
-  - The blink timers are in µs.
-  - The state lock serializes writers, while `frame()` reads without it.
-  - The eye-file header's field offsets have no names.
-
 ### Consistency and naming
 
 - **`main.cpp` still uses the upstream C style:** `typedef struct`, a
@@ -101,12 +54,6 @@ leave this list as they are done.
   `auth.cpp` (`ALLOW`, `WAITING`, `READY`…).
 - **The console's replies** use `ok`, `err:` and `usage:`, with three
   outliers (`error:`, `err: usage:`, and bare text).
-- **The Python tools:**
-  - `Optional[X]` in some files and `X | None` in others;
-  - gaps in the annotation rule `docs/TESTING.md` sets;
-  - `open().read()` without `with`;
-  - `# noqa: BLE001` on some broad `except`s and not others;
-  - three ways of importing a sibling module.
 - **`platformio.ini`** repeats the same three OTA lines four times, and
   respells inherited build flags. An `[ota]` section and `${…}`
   interpolation would remove both.
@@ -154,7 +101,7 @@ each step:
    - `clockface` and `splash`;
    - `settings`, with one constant for the NVS namespace that
      `credentials.cpp` shares today only because both spell it "creeper";
-   - `state.cpp`.
+   - `state.cpp`, dropping `state.h`'s argument against this split.
 5. **Last, and riskiest: `motion` and `render`.**
    - Make the iris walk non-blocking, so `loop()` shows the program's real
      control flow; today a recursive `split()` blocks there for 10 s.

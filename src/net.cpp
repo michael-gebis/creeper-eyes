@@ -30,7 +30,7 @@ static bool ntpWanted = true;
 static uint8_t retrySource = 0; // 1 = the radio's stored network, 2 = built-in
 
 // Blocks until connected or the timeout expires.  Returns true on success.
-bool wifiWaitConnected(uint32_t ms) {
+static bool wifiWaitConnected(uint32_t ms) {
   uint32_t start = millis();
   while (millis() - start < ms) {
     if (WiFi.status() == WL_CONNECTED)
@@ -40,16 +40,6 @@ bool wifiWaitConnected(uint32_t ms) {
   return false;
 }
 
-// Three sources of credentials, tried in order of how deliberate they are:
-//
-//   1. whatever the portal last stored, since that was an explicit choice
-//      made on this device and is probably the network it is standing in
-//   2. the build-time defaults from secrets.ini
-//   3. the portal itself
-//
-// A failure at every stage is not fatal.  The eyes are the point of the
-// device; the network is a convenience, so an unreachable one just means
-// carrying on offline.
 // Its own namespace rather than the console's: this is the network module's
 // business, and keeping it separate means `forget` on the settings side cannot
 // wipe the flag by accident.
@@ -172,7 +162,7 @@ void netPollPending(void) {
 
   switch (op) {
   case 1:
-    DEBUG_PRINTF("[net] storing network '%s' and rebooting" "\n", pendingSsid);
+    DEBUG_PRINTF("[net] storing network '%s' and rebooting\n", pendingSsid);
     showMessage("WIFI", "JOIN", pendingSsid, "rebooting");
     // persistent(true) is set in setupNetwork, so begin() writes the
     // credentials to NVS.  The connection attempt itself is incidental --
@@ -180,12 +170,12 @@ void netPollPending(void) {
     WiFi.begin(pendingSsid, pendingPass);
     break;
   case 2:
-    DEBUG_PRINTF("[net] forgetting the stored network and rebooting" "\n");
+    DEBUG_PRINTF("[net] forgetting the stored network and rebooting\n");
     showMessage("WIFI", "FORGET", NULL, "rebooting");
     WiFi.disconnect(true, true); // radio off, erase the stored AP
     break;
   case 3:
-    DEBUG_PRINTF("[net] portal requested; rebooting into it" "\n");
+    DEBUG_PRINTF("[net] portal requested; rebooting into it\n");
     showMessage("WIFI", "SETUP", NULL, "rebooting");
     {
       Preferences p;
@@ -201,6 +191,16 @@ void netPollPending(void) {
   ESP.restart();
 }
 
+// Three sources of credentials, tried in order of how deliberate they are:
+//
+//   1. whatever the portal last stored, since that was an explicit choice
+//      made on this device and is probably the network it is standing in
+//   2. the build-time defaults from secrets.h
+//   3. the portal itself
+//
+// A failure at every stage is not fatal.  The eyes are the point of the
+// device; the network is a convenience, so an unreachable one just means
+// carrying on offline.
 void setupNetwork(void) {
   // Hostname before mode() and begin(), or the DHCP request goes out with
   // the default name and the router records that instead.  Learned the hard
@@ -220,7 +220,7 @@ void setupNetwork(void) {
 
   bool forcePortal = takePortalRequest();
   if (forcePortal)
-    DEBUG_PRINTF("[net] portal was requested; skipping stored networks" "\n");
+    DEBUG_PRINTF("[net] portal was requested; skipping stored networks\n");
 
   readStoredSsid(); // before any begin() overwrites the running config
 
@@ -231,7 +231,7 @@ void setupNetwork(void) {
     retrySource = 2;
 
   if (!forcePortal && retrySource == 1) {
-    DEBUG_PRINTF("[net] trying stored network '%s'" "\n", savedSsid);
+    DEBUG_PRINTF("[net] trying stored network '%s'\n", savedSsid);
     WiFi.begin();
     if (wifiWaitConnected(WIFI_CONNECT_MS)) {
       netState = NET_UP;
@@ -240,7 +240,7 @@ void setupNetwork(void) {
   }
 
   if (!forcePortal && strlen(WIFI_SSID)) {
-    DEBUG_PRINTF("[net] trying built-in network '%s'" "\n", WIFI_SSID);
+    DEBUG_PRINTF("[net] trying built-in network '%s'\n", WIFI_SSID);
     // Deliberately not written to NVS.  The driver persists whatever begin()
     // is given, which would quietly turn the build-time fallback into a
     // stored network -- and then `wifi forget` would look like it had not
@@ -258,7 +258,7 @@ void setupNetwork(void) {
 
   // Nothing worked.  Say so on the panels, because a head sitting dark with
   // no explanation looks broken rather than unconfigured.
-  DEBUG_PRINTF("[net] no network; opening setup portal '%s'" "\n",
+  DEBUG_PRINTF("[net] no network; opening setup portal '%s'\n",
                WIFI_AP_NAME);
   showMessage("WIFI", "SETUP", "join the network", WIFI_AP_NAME);
 
@@ -331,9 +331,9 @@ void setupNetwork(void) {
   // per session and shown openly on a panel anyway: anyone reading this has a
   // cable in the board, which is closer than anyone reading the eye.
   if (haveCode)
-    DEBUG_PRINTF("[net] join code: %s" "\n", join);
+    DEBUG_PRINTF("[net] join code: %s\n", join);
   else
-    DEBUG_PRINTF("[net] join code too long to draw legibly; text only" "\n");
+    DEBUG_PRINTF("[net] join code too long to draw legibly; text only\n");
 #else
   // No code to caption, so the text card goes to both panels as it
   // always did.
@@ -357,7 +357,7 @@ void setupNetwork(void) {
     if (WiFi.softAPgetStationNum() > 0) {
       if (!hadClient) {
         hadClient = true;
-        DEBUG_PRINTF("[net] someone joined the portal; holding it open" "\n");
+        DEBUG_PRINTF("[net] someone joined the portal; holding it open\n");
       }
       deadline = millis() + (uint32_t)WIFI_PORTAL_S * 1000UL;
     }
@@ -394,7 +394,7 @@ void setupNetwork(void) {
     wm.stopConfigPortal();
   netState = ok ? NET_UP : NET_DOWN;
   if (!ok)
-    DEBUG_PRINTF("[net] portal timed out after %ds; carrying on offline" "\n",
+    DEBUG_PRINTF("[net] portal timed out after %ds; carrying on offline\n",
                  WIFI_PORTAL_S);
 }
 
@@ -414,15 +414,15 @@ void netOnConnected(void) {
   WiFi.enableIpV6();
 #endif
   if (MDNS.begin(WIFI_HOSTNAME))
-    DEBUG_PRINTF("[net] mdns up: %s.local" "\n", WIFI_HOSTNAME);
+    DEBUG_PRINTF("[net] mdns up: %s.local\n", WIFI_HOSTNAME);
   else
-    DEBUG_PRINTF("[net] mdns failed to start" "\n");
-  DEBUG_PRINTF("[net] connected: %s  ipv4 %s" "\n",
+    DEBUG_PRINTF("[net] mdns failed to start\n");
+  DEBUG_PRINTF("[net] connected: %s  ipv4 %s\n",
                WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
   if (ntpWanted)
     netStartTime();
   else
-    DEBUG_PRINTF("[net] ntp is off; not starting the time client" "\n");
+    DEBUG_PRINTF("[net] ntp is off; not starting the time client\n");
   webBegin();
 }
 
@@ -433,17 +433,6 @@ void netOnConnected(void) {
 // does not fit is wrapped rather than truncated -- half an address is worse
 // than none.
 uint32_t netShowUntil = 0;
-void netShow(void); // defined with the display code below
-
-// Applies the timezone and kicks off SNTP.  Safe to call again after a TZ
-// change: the daemon is simply reconfigured.
-// Typing a POSIX string correctly is no fun, so the common zones get names.
-// A raw POSIX string is still accepted for anywhere not listed.
-
-// Returns the POSIX string for a shortcut, or NULL if the name is unknown.
-
-// Whether a sync has ever landed.  The clock free-runs until it has, so the
-// eyes work with no network at all.
 
 // Set from the SNTP task the moment a reply is applied, and cleared by
 // netPollTime.  The work that follows a sync -- logging it, writing it
@@ -470,7 +459,7 @@ void netNtpSetEnabled(bool on) {
     // defended by it -- otherwise `clock set` would have no effect on a board
     // whose time server has been switched off.
     timeRelinquish(TIME_NTP);
-    DEBUG_PRINTF("[net] ntp off; the time already set is kept" "\n");
+    DEBUG_PRINTF("[net] ntp off; the time already set is kept\n");
     return;
   }
   // Only worth starting once there is something to ask over; otherwise
@@ -532,7 +521,7 @@ void netPollLink(void) {
   lastCheck = now;
 
   if (WiFi.status() == WL_CONNECTED) {
-    DEBUG_PRINTF("[net] link came up late; bringing the network up" "\n");
+    DEBUG_PRINTF("[net] link came up late; bringing the network up\n");
     netOnConnected();
     return;
   }
@@ -544,7 +533,7 @@ void netPollLink(void) {
 
   // Non-blocking: begin() only starts the attempt, and the check above picks
   // up the result on a later pass.  The eyes keep rendering throughout.
-  DEBUG_PRINTF("[net] retrying the %s network" "\n",
+  DEBUG_PRINTF("[net] retrying the %s network\n",
                retrySource == 1 ? "stored" : "built-in");
   if (retrySource == 1) {
     WiFi.begin();
@@ -574,7 +563,7 @@ void netPollTime(void) {
 
   struct tm t;
   if (timeLocal(t))
-    DEBUG_PRINTF("[net] time synced: %04d-%02d-%02d %02d:%02d:%02d %s" "\n",
+    DEBUG_PRINTF("[net] time synced: %04d-%02d-%02d %02d:%02d:%02d %s\n",
                  t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour,
                  t.tm_min, t.tm_sec, tzString);
 
@@ -583,23 +572,23 @@ void netPollTime(void) {
   // keeps the right time through a power cut, and through the network going
   // away for good.
   if (rtcPresent() && rtcWriteNow())
-    DEBUG_PRINTF("[rtc] written from ntp" "\n");
+    DEBUG_PRINTF("[rtc] written from ntp\n");
 #endif
 }
 
 void netReport(Print &out) {
-  out.printf("host=%s.local state=%s" "\n", WIFI_HOSTNAME,
+  out.printf("host=%s.local state=%s\n", WIFI_HOSTNAME,
              WiFi.status() == WL_CONNECTED ? "up"
              : netState == NET_PORTAL     ? "portal"
                                           : "down");
-  out.printf("  mac  %s" "\n", WiFi.macAddress().c_str());
+  out.printf("  mac  %s\n", WiFi.macAddress().c_str());
   if (WiFi.status() == WL_CONNECTED) {
-    out.printf("  ssid %s (%d dBm)" "\n", WiFi.SSID().c_str(),
+    out.printf("  ssid %s (%d dBm)\n", WiFi.SSID().c_str(),
                (int)WiFi.RSSI());
-    out.printf("  ipv4 %s  gw %s" "\n", WiFi.localIP().toString().c_str(),
+    out.printf("  ipv4 %s  gw %s\n", WiFi.localIP().toString().c_str(),
                WiFi.gatewayIP().toString().c_str());
 #if IPV6
-    out.printf("  ipv6 %s" "\n", WiFi.localIPv6().toString().c_str());
+    out.printf("  ipv6 %s\n", WiFi.localIPv6().toString().c_str());
 #endif
   }
   timeReport(out);
@@ -609,7 +598,7 @@ void netReport(Print &out) {
 // signal -- because a 128 px panel holds 21 characters of the default font
 // and none of this fits on one.  His left takes the code that opens the
 // control page, or, in builds without QR codes, the names.
-void netDrawPanel(uint8_t e) {
+static void netDrawPanel(uint8_t e) {
   GFXcanvas1 c(PANEL_W, PANEL_H);
   c.fillScreen(0);
   c.setTextColor(1);
@@ -642,12 +631,12 @@ void netDrawPanel(uint8_t e) {
     if (qrShow(e, url)) {
       // Worth a line: it is the only way to tell a panel that drew nothing
       // from one that drew the wrong thing without pointing a phone at it.
-      DEBUG_PRINTF("[net] address code: %s" "\n", url);
+      DEBUG_PRINTF("[net] address code: %s\n", url);
       return;
     }
     // Too long to draw legibly, which an IPv4 address never is -- fall through
     // to the text card rather than leave a panel blank.
-    DEBUG_PRINTF("[net] %s will not draw legibly; showing names" "\n", url);
+    DEBUG_PRINTF("[net] %s will not draw legibly; showing names\n", url);
   }
 #endif
 
@@ -695,14 +684,14 @@ void netDrawPanel(uint8_t e) {
   pushCanvas(e, c);
 }
 
+// Requested by netShow, drawn in netShowPoll.  Nothing off the render loop
+// may touch a panel: the SPI bus is shared with the eyes, and two writers on
+// it produce garbage rather than a race anybody can debug.
+static volatile bool showRequested = false;
+
 // Paints both panels and leaves them up for a while.  Non-blocking: frame()
 // simply skips the eye render until the deadline, so the console stays
 // responsive and a second `net` refreshes rather than queueing.
-// Requested here, drawn in netShowPoll.  Nothing off the render loop may
-// touch a panel: the SPI bus is shared with the eyes, and two writers on it
-// produce garbage rather than a race anybody can debug.
-static volatile bool showRequested = false;
-
 void netShow(void) { showRequested = true; }
 
 void netShowPoll(void) {

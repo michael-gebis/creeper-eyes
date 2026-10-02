@@ -1,15 +1,10 @@
-// Wall-clock time and the timezone.  See timekeeping.h for why this is not
-// part of net.cpp any more.
+// Wall-clock time and the timezone.  See timekeeping.h.
 
 #include "timekeeping.h"
 
 #include <ctype.h>
 #include <string.h>
 #include <sys/time.h>
-
-#if RTC
-#include "rtc.h"
-#endif
 
 bool timeSynced = false;
 char tzString[TZ_MAX] = TZ_DEFAULT;
@@ -194,8 +189,6 @@ void timeRelinquish(TimeSource from) {
     rank = TIME_FREE; // the reading stays; nothing is defending it now
 }
 
-TimeSource timeSource(void) { return source; }
-
 bool timeIsExternal(void) {
   return source == TIME_NTP || source == TIME_RTC;
 }
@@ -237,9 +230,9 @@ bool timeLocalSecOfDay(uint32_t &out) {
 void timeReport(Print &p) {
   struct tm t;
   if (timeLocal(t))
-    p.printf("  time %04d-%02d-%02d %02d:%02d:%02d  tz %s  from %s" "\n",
+    p.printf("  time %04d-%02d-%02d %02d:%02d:%02d  tz %s  from %s\n",
              t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min,
              t.tm_sec, tzString, timeSourceName());
   else
-    p.printf("  time not set (tz %s)" "\n", tzString);
+    p.printf("  time not set (tz %s)\n", tzString);
 }

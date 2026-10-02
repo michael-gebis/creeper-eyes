@@ -5,10 +5,9 @@
 // calls the same ones.  Neither knows the other exists, and neither can drift
 // from the other, because there is only one implementation of each operation.
 //
-// Before this existed the console *was* the interface, and the web server
-// worked by handing it synthesised command strings -- which meant every HTTP
-// call round-tripped through a text parser, and the console's human-readable
-// output was load-bearing for machines.
+// The alternative, the web server handing the console synthesised command
+// strings, would make every HTTP call round-trip through a text parser and
+// the console's human-readable output load-bearing for machines.
 //
 // Operations that can fail return false rather than printing.  Deciding what
 // to say about a failure belongs to the front end: the console prints prose,
@@ -60,7 +59,8 @@ struct DeviceState {
   bool clockOn;
   bool clockSeconds;
   bool clockSuppressed; // on, but nothing knows the time, so nothing is drawn
-  uint16_t clockRate;      // free-running multiplier; ignored once NTP syncs
+  uint16_t clockRate;      // free-running multiplier; ignored while NTP or
+                           // the RTC supplies the time
   uint32_t clockSecOfDay;  // current time as seconds past midnight
   uint32_t clockColor[3];  // 0xRRGGBB, hour / minute / second
 
@@ -196,6 +196,11 @@ bool stateClockSetColor(long which, uint32_t rgb);
 // the operations safe to call from somewhere other than the render loop
 // should that ever happen, and it is the memory barrier that makes the
 // queueing above mean what it says.
+//
+// It serializes writers; the renderer does not take it.  frame() reads the
+// gaze, dilation, pupil and startle settings directly.  Each is a word or
+// less, written whole, so a read sees the old value or the new one -- at
+// worst the two halves of a gaze position disagree for one frame.
 
 // Apply anything queued.  Called from the render loop between frames, and
 // only from there.

@@ -1,8 +1,7 @@
 // WiFi, the setup portal, mDNS and NTP.
 //
 // Everything here compiles to nothing when NETWORK is 0, which is what the
-// *_local environments in platformio.ini build.  Nothing outside this module
-// and web.cpp knows the network exists.
+// *_local environments in platformio.ini build.
 //
 // The timezone and the system clock are not here: they belong to
 // timekeeping.h, which is compiled either way, because an RTC needs both and
@@ -126,7 +125,6 @@ void netPollPending(void);
 
 // The web interface and OTA, in web.cpp.
 void webBegin(void);
-void otaBegin(void);
 void webPoll(void);
 
 // True once an update has landed and the board is about to reboot into it.

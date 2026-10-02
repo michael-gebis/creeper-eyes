@@ -31,8 +31,6 @@ static const uint8_t QR_CAPACITY_M[QR_MAX_VERSION] = {14, 26, 42};
 #define QR_MODULES(v) (4 * (v) + 17)
 #define QR_BUFFER_BYTES(v) (((QR_MODULES(v) * QR_MODULES(v)) + 7) / 8)
 
-uint16_t qrCapacity(void) { return QR_CAPACITY_M[QR_MAX_VERSION - 1]; }
-
 bool qrShow(uint8_t eye, const char *text) {
   if (!text || eye >= displayCount())
     return false;

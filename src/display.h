@@ -1,4 +1,5 @@
-// Text rendering shared by the startup splash and the network address cards.
+// The panels, for the modules that are not the renderer: text cards, power,
+// brightness, waiting out a frame in flight, and which panel is where.
 //
 // The implementations stay in main.cpp with the rest of the panel handling;
 // this only publishes the handful of entry points other modules need, so

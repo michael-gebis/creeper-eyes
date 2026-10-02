@@ -21,14 +21,13 @@
 #include <WiFi.h>
 
 // WEB SERVER ---------------------------------------------------------------
-// handleClient() is polled from frame(), not loop(): loop() spends ~10 s
-// inside split() per iteration, so a request handled there would sit unserved
-// for up to ten seconds.  The cost is that writing a response blocks
+// handleClient() is polled from frame(), not loop() -- see loop() for why.
+// The cost is that writing a response blocks
 // rendering, which is why responses are kept small and the page polls at a
 // leisurely once a second.
 
-// Not static: api.cpp hangs its routes off this one.
-AuthWebServer server(80);
+// api.cpp hangs its routes off this one; webBegin() hands it over.
+static AuthWebServer server(80);
 
 #if WEB_CMD_ENDPOINT && COMMANDS
 
@@ -51,11 +50,11 @@ public:
   }
 };
 
-void webHandleCmd(void) {
+static void webHandleCmd(void) {
   if (!authCheck(server))
     return;
   if (!server.hasArg("c")) {
-    server.send(400, "text/plain", "usage: /cmd?c=status" "\n");
+    server.send(400, "text/plain", "usage: /cmd?c=status\n");
     return;
   }
   String c = server.arg("c");
@@ -63,7 +62,7 @@ void webHandleCmd(void) {
   // Refused rather than cut short: a truncated command is a different
   // command -- `wifi join` with half a password, say -- not a shorter one.
   if (c.length() >= sizeof(line)) {
-    server.send(400, "text/plain", "command too long" "\n");
+    server.send(400, "text/plain", "command too long\n");
     return;
   }
   memcpy(line, c.c_str(), c.length() + 1);
@@ -85,7 +84,7 @@ void webHandleCmd(void) {
 // No Accept-Encoding check: every browser made this century sends gzip, and
 // the alternative is carrying both copies in flash to serve a client that
 // does not exist.  A command-line client wanting to read it uses --compressed.
-void webHandleRoot(void) {
+static void webHandleRoot(void) {
   if (!authCheck(server))
     return;
   // Never inside another site's frame.  Framed, the page's one-click controls
@@ -112,7 +111,7 @@ static uint32_t otaRebootAt = 0;
 
 bool webRebootPending(void) { return otaRebootAt != 0; }
 
-void otaBegin(void) {
+static void otaBegin(void) {
   ArduinoOTA.setHostname(WIFI_HOSTNAME);
   // The reboot is ours, not the library's -- see OTA_REBOOT_DELAY_MS.  Its
   // own is 110 ms after closing the socket, which on a lossy link is not
@@ -135,7 +134,7 @@ void otaBegin(void) {
 #endif
 
   ArduinoOTA.onStart([]() {
-    DEBUG_PRINTF("[ota] update starting" "\n");
+    DEBUG_PRINTF("[ota] update starting\n");
     showMessage("UPDATE", "0%", NULL, NULL);
   });
 
@@ -153,7 +152,7 @@ void otaBegin(void) {
   });
 
   ArduinoOTA.onEnd([]() {
-    DEBUG_PRINTF("[ota] done; rebooting in %d ms" "\n", OTA_REBOOT_DELAY_MS);
+    DEBUG_PRINTF("[ota] done; rebooting in %d ms\n", OTA_REBOOT_DELAY_MS);
     showMessage("UPDATE", "DONE", "rebooting", NULL);
     // Deferred rather than immediate, so the socket this arrived over closes
     // properly and the sender hears that it worked.
@@ -163,13 +162,13 @@ void otaBegin(void) {
   });
 
   ArduinoOTA.onError([](ota_error_t e) {
-    DEBUG_PRINTF("[ota] failed, error %u" "\n", (unsigned)e);
+    DEBUG_PRINTF("[ota] failed, error %u\n", (unsigned)e);
     showMessage("UPDATE", "FAILED", NULL, NULL);
     otaRebootAt = 0; // nothing to boot into; carry on running what we have
   });
 
   ArduinoOTA.begin();
-  DEBUG_PRINTF("[net] ota ready: pio run -t upload --upload-port %s.local" "\n",
+  DEBUG_PRINTF("[net] ota ready: pio run -t upload --upload-port %s.local\n",
                WIFI_HOSTNAME);
 }
 
@@ -185,23 +184,22 @@ void webBegin(void) {
   server.on("/cmd", webHandleCmd);
 #endif
   apiRegister(server);
-  server.onNotFound([]() { server.send(404, "text/plain", "not found" "\n"); });
+  server.onNotFound([]() { server.send(404, "text/plain", "not found\n"); });
   server.begin();
   MDNS.addService("http", "tcp", 80);
   otaBegin();
-  DEBUG_PRINTF("[net] web server on http://%s.local/" "\n", WIFI_HOSTNAME);
+  DEBUG_PRINTF("[net] web server on http://%s.local/\n", WIFI_HOSTNAME);
 }
 
 // Service one HTTP request and any OTA traffic.  Called once per rendered
-// frame rather than from loop(), which spends ten seconds at a time inside
-// split() and would leave requests unanswered for that long.
+// frame.
 void webPoll(void) {
   // An update is aboard and waiting.  Nothing else here is worth doing, and
   // the waiting is the point: it is what lets the sender hear that the update
   // worked before the radio goes away.
   if (otaRebootAt) {
     if ((int32_t)(millis() - otaRebootAt) >= 0) {
-      DEBUG_PRINTF("[ota] rebooting now" "\n");
+      DEBUG_PRINTF("[ota] rebooting now\n");
       ESP.restart();
     }
     return;

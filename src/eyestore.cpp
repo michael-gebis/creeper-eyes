@@ -76,6 +76,7 @@ static bool nameValid(const char name[16]) {
 static EyeLoadResult parseHeader(const uint8_t *b, Header &h) {
   if (memcmp(b, MAGIC, sizeof(MAGIC)))
     return EYE_LOAD_NOT_EYE_FILE;
+  // Offsets as in the header table in docs/EYE_FILES.md.
   h.version = rd16(b + 8);
   h.headerBytes = rd16(b + 10);
   h.payloadBytes = rd32(b + 12);

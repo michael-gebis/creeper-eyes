@@ -1,13 +1,9 @@
 // Wall-clock time and the timezone, independent of where the time came from.
 //
-// This used to live in net.cpp, which meant a no-network build had no concept
-// of a timezone at all.  That was fine while NTP was the only source of real
-// time; it stopped being fine when a battery-backed RTC became a second one,
-// because an offline board still has to know that its stored UTC is five
-// hours behind Chicago, and still has to get DST right in March.
-//
-// So: this module owns the timezone and the "do we know what time it is"
-// flag, and is compiled into every build.  net.cpp and rtc.cpp are sources
+// Compiled into every build, network or not: an offline board with an RTC
+// still has to know that its stored UTC is five hours behind Chicago, and
+// still has to get DST right in March.  This module owns the timezone and the
+// "do we know what time it is" flag.  net.cpp and rtc.cpp are sources
 // that feed it; neither is required, and with both compiled out the clock
 // free-runs exactly as it always did.
 //
@@ -29,6 +25,10 @@
 // because "the clock says 3:47" is much less useful than knowing whether
 // that came off a time server, out of a battery-backed chip, or from a
 // counter that started at 10:10 when the board booted.
+//
+// Declared in rank order, lowest first: timeAccept() refuses a source that
+// ranks below the one in charge, so reordering this list changes which
+// source wins.
 enum TimeSource {
   TIME_FREE = 0, // free-running since boot; nothing has said what time it is
   TIME_RTC,      // restored from the RTC at boot
@@ -94,7 +94,6 @@ void timeRelinquish(TimeSource from);
 bool timeIsExternal(void);
 
 // Where the time currently on show came from.
-TimeSource timeSource(void);
 const char *timeSourceName(void);
 
 // Local time now.  False while the clock is still free-running, in which case

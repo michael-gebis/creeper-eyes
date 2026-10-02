@@ -7,12 +7,13 @@
 //
 // See the environments in platformio.ini for the combinations that ship.
 //
-// Everything in this file is overridable; the only names that are not are
-// the include guard, CONTROLLABLE (derived from two others), and the two
-// FAVICON_* values that FAVICON selects between.
+// Everything in this file is overridable except the include guard, the names
+// derived from other settings (CONTROLLABLE, OTA_AUTH, FIRMWARE_COMMIT and
+// the DEBUG_* macros), the fixed limits DIM_GAMMA_MIN and DIM_GAMMA_MAX, and
+// the two FAVICON_* values that FAVICON selects between.
 //
 // Not quite everything is here.  The switches this project inherited from
-// upstream -- USE_SSD1327, SSD1327_SPI_HZ, STARTLE_WINDUP_MS,
+// upstream -- USE_SSD1327, SSD1327_SPI_HZ, SSD1351_SPI_HZ, STARTLE_WINDUP_MS,
 // STARTLE_HOLD_MS, TRACKING, AUTOBLINK and IRIS_MIN/IRIS_MAX -- are still
 // declared in main.cpp beside the rendering code they belong to.  They are
 // overridable from build_flags just the same; USE_SSD1327 is set that way by
@@ -92,10 +93,7 @@
 #define NET_COLS 21
 #endif
 
-// Time is taken from NTP with a POSIX TZ string, rather than the manual
-// hour/minute offset plus a DST checkbox the wandering-hour-clock used.
-// A TZ string carries the DST *rules*, so the changeover happens on its
-// own instead of needing a visit twice a year.
+// The time servers, in the order they are asked.
 #ifndef NTP_SERVER_1
 #define NTP_SERVER_1 "pool.ntp.org"
 #endif
@@ -107,7 +105,8 @@
 // just an offset -- "PST8PDT" names both standard and summer time, and
 // "M3.2.0/2,M11.1.0/2" is the US changeover: second Sunday in March at
 // 02:00, first Sunday in November at 02:00.  So DST is not a separate
-// setting, and nothing needs touching twice a year.
+// setting -- no offset plus a checkbox -- and nothing needs touching twice a
+// year.
 #ifndef TZ_DEFAULT
 #define TZ_DEFAULT "PST8PDT,M3.2.0/2,M11.1.0/2"
 #endif
@@ -187,9 +186,10 @@
 #endif
 
 // CLOCK FACE --------------------------------------------------------------
-// Turns the iris into an analogue clock.  There is no real time source yet,
-// so it free-runs from millis() and the time is set from the console; `clock
-// rate` speeds it up to see the hands move.
+// Turns the iris into an analogue clock.  Until a time server or the RTC
+// supplies the time it free-runs from millis(), and can be set from the
+// console; `clock rate` speeds the free-running clock up to see the hands
+// move.
 //
 // Hands are found from the polar table the renderer already reads: the high
 // 9 bits are the angle and the low 7 the distance, so a pixel is on a hand
@@ -301,13 +301,10 @@
 // and a close to finish, and restarting through that tears the radio away
 // mid-conversation.  Owning the reboot ourselves buys the stack time.
 //
-// Honesty about what this did not fix: it was written to explain espota
-// reporting failure for updates that had plainly worked, and it does not
-// explain them.  That turned out to be ack bookkeeping much earlier in the
-// transfer -- see tools/ota.py.  This remains because not yanking the radio
-// out from under an unfinished close is right on its own terms, and because
-// the panels now hold "DONE" long enough to read, but no measurement says it
-// changed an outcome.  Set it to 0 to get the library's behaviour back.
+// No measurement says this changed an outcome -- espota's false failures
+// were ack bookkeeping, not this (see tools/ota.py).  It stays because not
+// tearing the radio away mid-close is right on its own terms, and the panels
+// hold "DONE" long enough to read.  0 restores the library's behaviour.
 #ifndef OTA_REBOOT_DELAY_MS
 #define OTA_REBOOT_DELAY_MS 1500
 #endif

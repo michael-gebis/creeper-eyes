@@ -33,14 +33,9 @@
 #include "parse.h"
 
 #include <Adafruit_GFX.h>   // Core graphics lib for Adafruit displays
-#include <HardwareSerial.h> // Needed for 2nd serial port on ESP32
 #include <Preferences.h>    // NVS-backed settings, part of the ESP32 core
 #if NETWORK
 #include <WiFi.h>
-#include <WiFiManager.h> // tzapu/WiFiManager -- captive setup portal
-#include <ESPmDNS.h>
-#include <WebServer.h>
-#include <ArduinoOTA.h>
 #endif
 #include <SPI.h>
 #include <esp_freertos_hooks.h> // the tick hook behind wdtClue
@@ -128,6 +123,8 @@
 
 // The renderer reads the artwork through these.  They are pointers TO const
 // data, not const pointers, so a whole design can be swapped at runtime.
+// Swap between frames, never mid-render: drawEye() reads all five as it
+// scans, so changing them under it would tear one frame.
 const uint16_t (*sclera)[SCLERA_WIDTH];
 const uint8_t (*upper)[SCREEN_WIDTH];
 const uint8_t (*lower)[SCREEN_WIDTH];
@@ -428,7 +425,7 @@ static bool settingsDirty = false;
 
 // The clock's display preferences are saved; the time itself is not.
 // Restoring a time from whenever the power went off would be wrong by
-// exactly that interval, and the plan is to get the time from NTP, which
+// exactly that interval, and NTP or the RTC supplies the real one, which
 // makes a stored one pointless as well as misleading.
 
 static void saveSettings(void) {
@@ -578,7 +575,6 @@ typedef SwappableSSD1351 displayType; // Using OLED display(s)
 // see showSplash() for the labels that are correct from Frank's side.
 #define SELECT_L_PIN 15  // viewer's left  = Frank's RIGHT eye
 #define SELECT_R_PIN 04  // viewer's right = Frank's LEFT eye
-#define UART_RX_PIN 13   // Pin to receive UART commands from controller
 
 // INPUT CONFIG (for eye motion -- enable or comment out as needed) --------
 
@@ -587,10 +583,8 @@ typedef SwappableSSD1351 displayType; // Using OLED display(s)
 #define TRACKING 1
 #endif
 
-#define IRIS_SMOOTH // If enabled, filter input from IRIS_PIN
-
-// Pupil range.  Counter-intuitively IRIS_MIN is the *widest* pupil: the value
-// divides into the iris map.  Narrowed from upstream's 120/720 so a pair of
+// Pupil range: IRIS_MIN is the narrowest pupil and IRIS_MAX the widest (see
+// dilateCmdActive for why).  Narrowed from upstream's 120/720 so a pair of
 // eyes do not look odd beside each other.
 #ifndef IRIS_MIN
 #define IRIS_MIN 150
@@ -622,8 +616,6 @@ typedef struct {
 #define MISO_PIN 19
 #define SCLK_PIN 5
 
-SPISettings settings(16000000, MSBFIRST,
-                     SPI_MODE3); // 26.667MHz seems reliable on the ESP32.
 struct {
   displayType display; // OLED/TFT object
   uint8_t cs;          // Chip select pin
@@ -694,6 +686,8 @@ static void applyFlips(void) {
 // Used by the startup splash and by the network address cards, so these
 // live outside both feature guards.
 
+// The default GFX font is a 6x8 cell, so a string's width is just its
+// length scaled up.
 void splashCenter(GFXcanvas1 &c, const char *str, uint8_t size,
                          int16_t y) {
   c.setTextSize(size);
@@ -701,15 +695,6 @@ void splashCenter(GFXcanvas1 &c, const char *str, uint8_t size,
   c.print(str);
 }
 
-// Left and right are given from FRANK'S OWN perspective, the way anatomy
-// is always described: facing him, his right eye is the one on your left.
-//
-// Which panel that is depends on wiring, and nothing in the sketch or the
-// README says whose perspective SELECT_L_PIN / SELECT_R_PIN were named
-// from.  The splash prints the chip-select pin alongside the label so the
-// mapping can be read off the panels once and settled here for good.
-// Push a 1-bit canvas to one panel, in whichever format it wants.  Shared by
-// the splash and by the network messages below.
 // PANEL POWER ---------------------------------------------------------------
 // Lit or dark, and how bright, without drawing anything.
 //
@@ -809,6 +794,8 @@ void displaySetLuminance(uint8_t e, float f) {
 #endif
 }
 
+// Push a 1-bit canvas to one panel, in whichever format it wants.  Shared by
+// the splash and by the network messages.
 void pushCanvas(uint8_t e, GFXcanvas1 &canvas) {
   // An eye frame queued before this card would otherwise land on top of it.
   displayQuiesce();
@@ -946,8 +933,6 @@ static void reportResetReason(void) {
   healthNote("the board restarted after %s", why);
 }
 
-HardwareSerial SerialIn(1);
-
 // Four centred lines, drawn once and pushed to whichever panels the caller
 // wants.  Used whenever the eyes are not running and the head would otherwise
 // sit there dark with no explanation: the setup portal, and OTA progress.  Not
@@ -985,14 +970,10 @@ void showMessage(const char *l1, const char *l2, const char *l3,
 
 #if STARTUP_SPLASH
 
-// The default GFX font is a 6x8 cell, so a string's width is just its
-// length scaled up.
-// One frame of the countdown, on both panels.
-//
-// Confirmed on the bench: the panel on SELECT_L_PIN (D15) is the one on
-// FRANK'S RIGHT -- the viewer's left.  So the upstream L/R pin names are
-// viewer-relative, and eye[0] is Frank's right eye.  Both perspectives are
-// shown because every previous attempt to write this down was ambiguous.
+// One frame of the countdown, on both panels, each labelled from both sides:
+// Frank's own, the way anatomy is described, and the viewer's.  eye[0] is
+// Frank's right eye (see SELECT_L_PIN).  Both are shown because every
+// previous attempt to write this down was ambiguous.
 static void splashDraw(int8_t remain) {
   // One 1-bit canvas serves both panel types: 2 KB, versus 32 KB for a
   // colour one, and the text is monochrome either way.
@@ -1111,7 +1092,6 @@ void setup(void) {
   idle0Counted = // see idle0Runs
       esp_register_freertos_idle_hook_for_cpu(countIdle0, 0) == ESP_OK;
   esp_register_freertos_tick_hook_for_cpu(sampleCore0, 0); // see wdtClue
-  // SerialIn.begin(9600, SERIAL_8N1, UART_RX_PIN); // disabled
   randomSeed(analogRead(A3)); // Seed random() from floating analog input
 
   // Route the SPI bus to the pins in the README wiring table.  Required on
@@ -1149,11 +1129,9 @@ void setup(void) {
                (unsigned)NUM_EYES, USE_SSD1327 ? "SSD1327 grey" : "SSD1351 rgb");
 
   // Eyelid mirroring for the left eye is done in software, in drawEye(), so
-  // it behaves the same on both panel types.  The hardware alternative below
-  // mirrors the whole SSD1351 panel in its controller -- which would also
-  // mirror gaze direction and cross the eyes, so leave it off.
-  // eye[0].display.writeCommand(SSD1351_CMD_SETREMAP);
-  // eye[0].display.write16(0x76);
+  // it behaves the same on both panel types.  The hardware alternative,
+  // SSD1351_CMD_SETREMAP, mirrors the whole panel in its controller -- which
+  // would also mirror gaze direction and cross the eyes.
 
   timeApplyTz(); // the built-in default, until settings say otherwise
   dimmerBegin(); // the panels are up at their initial level; start from it
@@ -1224,8 +1202,8 @@ static void sendFrame(uint8_t e, const void *frame) {
 #else
   eye[e].display.startWrite();
   // The library's own window, which sends each bound as the one byte the
-  // controller takes.  This used to send them by hand as 16-bit writes --
-  // four bytes where two are expected -- and the frames never landed.
+  // controller takes.  Not by hand as 16-bit writes: that sends four bytes
+  // where two are expected, and the frames never land.
   eye[e].display.setAddrWindow(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
   // One large burst, through the ESP32's SPI FIFO.
   SPI.writePixels(frame, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(uint16_t));
@@ -1368,7 +1346,7 @@ static uint16_t colourFrames[FRAME_BUFFERS][SCREEN_WIDTH * SCREEN_HEIGHT];
 static uint8_t nextBuffer = 0;
 
 void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
-    uint8_t e,       // Eye array index; 0 or 1 for left/right
+    uint8_t e,       // Eye array index; 0 is Frank's right (viewer's left)
     uint32_t iScale, // Scale factor for iris
     uint8_t scleraX, // First pixel X offset into sclera image
     uint8_t scleraY, // First pixel Y offset into sclera image
@@ -1394,10 +1372,6 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
 #if !USE_SSD1327
   uint16_t *const pBurst = colourFrames[buf]; // the frame itself, sent as drawn
 #endif
-
-  // Set up raw pixel dump to entire screen.  Although such writes can wrap
-  // around automatically from end of rect back to beginning, the region is
-  // reset on each frame here in case of an SPI glitch.
 
   scleraXsave = scleraX; // Save initial X value to reset on each line
   irisY = scleraY - (SCLERA_HEIGHT - IRIS_HEIGHT) / 2;
@@ -1557,15 +1531,11 @@ const uint8_t ease[] = { // Ease in/out curve for eye movements 3*t^2-2*t^3
     254, 255, 255, 255, 255, 255, 255, 255}; // n
 
 #if AUTOBLINK
-uint32_t timeOfLastBlink = 0L, timeToNextBlink = 0L;
+uint32_t timeOfLastBlink = 0L, timeToNextBlink = 0L; // micros()
 #endif
 
 #if CONTROLLABLE
 
-// These five are pointers TO const data, not const pointers, so the whole
-// eye can be swapped at runtime -- which is exactly what the note above
-// them describes.  Swap between frames, never mid-render: drawEye() reads
-// all five as it scans, so changing them under it would tear one frame.
 // Returns designCount() if there is no match.
 static uint8_t eyeDesignByName(const char *name) {
   for (uint8_t i = 0; i < designCount(); i++)
@@ -2352,7 +2322,7 @@ static void cmdWarnings(Print &out) {
 
 // One line of everything worth knowing, plus an (unsaved) marker when the
 // live settings differ from the stored ones.
-void cmdStatus(Print &out) {
+static void cmdStatus(Print &out) {
   out.printf("eye=%u/%u %s gaze=%s", (unsigned)eyeDesign,
                 (unsigned)designCount(), designAt(eyeDesign).name,
                 gazeCmdActive ? "commanded" : "auto");
@@ -2407,7 +2377,7 @@ void handleCommand(char *line, Print &out) {
   if (!strcmp(cmd, "help") || !strcmp(cmd, "?")) {
     cmdHelp(out);
   } else if (!strcmp(cmd, "version")) {
-    out.printf("frank %s (%s), built %s" "\n", FIRMWARE_VERSION,
+    out.printf("frank %s (%s), built %s\n", FIRMWARE_VERSION,
                FIRMWARE_COMMIT, __DATE__ " " __TIME__);
     out.println(F(PROJECT_URL));
   } else if (!strcmp(cmd, "status")) {
@@ -2617,7 +2587,7 @@ void handleCommand(char *line, Print &out) {
     while (rest && *rest == ' ')
       rest++;
     if (!rest || !*rest) {
-      out.printf("tz %s (time from %s)" "\n", tzString, timeSourceName());
+      out.printf("tz %s (time from %s)\n", tzString, timeSourceName());
       const char *region = NULL;
       for (uint8_t i = 0; i < numTzChoices; i++) {
         if (!region || strcmp(region, tzChoices[i].region)) {
@@ -2631,14 +2601,14 @@ void handleCommand(char *line, Print &out) {
       return;
     }
     if (!timeSetTz(rest)) {
-      out.printf("err: timezone must be under %d characters" "\n", TZ_MAX);
+      out.printf("err: timezone must be under %d characters\n", TZ_MAX);
       return;
     }
     settingsDirty = true;
 #if NETWORK
     netRequestTimeRestart(); // from the render loop; the lookup can block
 #endif
-    out.printf("ok tz=%s" "\n", tzString);
+    out.printf("ok tz=%s\n", tzString);
 
 #if NETWORK
   } else if (!strcmp(cmd, "ntp")) {
@@ -2715,7 +2685,7 @@ void handleCommand(char *line, Print &out) {
       out.println(F("ok forgetting the stored network; rebooting"));
     } else if (!strcmp(arg, "portal")) {
       netRequestPortal();
-      out.printf("ok rebooting into the portal; join '%s'" "\n", WIFI_AP_NAME);
+      out.printf("ok rebooting into the portal; join '%s'\n", WIFI_AP_NAME);
     } else if (!strcmp(arg, "join")) {
       // The SSID may contain spaces, the password may not -- so the password
       // is taken as the last word and the SSID as everything before it.
@@ -2736,7 +2706,7 @@ void handleCommand(char *line, Print &out) {
         out.println(F("err: ssid must be 1-32 characters, password under 64"));
         return;
       }
-      out.printf("ok storing '%s'; rebooting" "\n", rest);
+      out.printf("ok storing '%s'; rebooting\n", rest);
     } else {
       out.println(F("err: wifi takes join, forget or portal"));
     }
@@ -2750,8 +2720,8 @@ void handleCommand(char *line, Print &out) {
     netReport(out);
     if (!arg || strcmp(arg, "quiet")) {
       netShow();
-      out.printf("ok showing address cards for %us -- `net off` to dismiss"
-                 "\n", (unsigned)(NET_SHOW_MS / 1000));
+      out.printf("ok showing address cards for %us -- `net off` to dismiss\n",
+                 (unsigned)(NET_SHOW_MS / 1000));
     }
 #endif
   } else if (!strcmp(cmd, "pupil")) {
@@ -2907,8 +2877,7 @@ void handleCommand(char *line, Print &out) {
   }
 }
 
-// Non-blocking: called once per rendered frame, never from loop(), which
-// spends ~10 s inside split() and would make the console feel dead.
+// Non-blocking: called once per rendered frame (see loop() for why).
 static void pollCommands(void) {
   static char line[64];
   static uint8_t len = 0;
@@ -2957,6 +2926,7 @@ static void pollBootButton(void) {
   // FACTORY_RESET_MS.  It is the only way back into a board whose password
   // has been forgotten, which is why it exists and why it is deliberately
   // awkward.
+  //
   // Nothing held: forget any countdown in progress, so that the next press
   // starts from the top.  Letting go also needs no repainting -- drawEye()
   // covers the whole panel at the end of this same frame.
@@ -2996,7 +2966,7 @@ static void pollBootButton(void) {
 #endif // COMMANDS
 
 void frame(            // Process motion for a single frame of left or right eye
-    uint16_t iScale) { // Iris scale (0-1023) passed in
+    uint16_t iScale) { // Iris scale, IRIS_MIN..IRIS_MAX
 #if DEBUG || CONTROLLABLE
   static uint32_t frames = 0; // frames drawn since the last rate report
 #endif
@@ -3087,8 +3057,7 @@ void frame(            // Process motion for a single frame of left or right eye
       // Per second, not per interval.  The interval is at least a second but
       // has no upper bound -- anything that blocks the render loop stretches
       // it -- so reporting the raw count described a rate that had never
-      // happened.  One observed reading of 2171 was 2171 frames across 57
-      // seconds, which is 38 fps.
+      // happened.
       uint16_t fps = (uint16_t)((frames * 1000UL) / elapsed);
 #if DEBUG
       // Heartbeat: proves the render loop is alive even with no displays
@@ -3235,18 +3204,13 @@ void frame(            // Process motion for a single frame of left or right eye
 
   // Process motion, blinking and iris scale into renderable values
 
-  // Iris scaling: remap from 0-1023 input to iris map height pixel units
+  // Iris scaling: remap from the 0-1023 scale to iris map height pixel units
   iScale = ((IRIS_MAP_HEIGHT + 1) * 1024) /
            (1024 - (iScale * (IRIS_MAP_HEIGHT - 1) / IRIS_MAP_HEIGHT));
 
   // Scale eye X/Y positions (0-1023) to pixel units used by drawEye()
   eyeX = map(eyeX, 0, 1023, 0, SCLERA_WIDTH - 128);
   eyeY = map(eyeY, 0, 1023, 0, SCLERA_HEIGHT - 128);
-  if (eyeIndex ==
-      1) { // this inverts the motion of the eyes
-           // eyeX = (SCLERA_WIDTH - 128) - eyeX; // Mirrored display
-  }
-
   // Horizontal position is offset so that eyes are very slightly crossed
   // to appear fixated (converged) at a conversational distance.  Number
   // here was extracted from my posterior and not mathematically based.
@@ -3369,6 +3333,10 @@ void split( // Subdivides motion path into two sub-paths w/randomization
 }
 
 // MAIN LOOP -- runs continuously after setup() ----------------------------
+// Each pass spends about ten seconds inside split(), which calls frame() for
+// every frame drawn.  So frame() is where everything else is serviced -- the
+// console, the web server, OTA, the BOOT button -- since anything polled from
+// here would wait up to ten seconds for its turn.
 
 void loop() {
 

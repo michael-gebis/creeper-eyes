@@ -1018,9 +1018,10 @@ static void putRtc(void) {
 
 #endif // RTC
 
-// WiFi.  The password goes in and never comes out -- there is no
-// authentication on this API, so anything readable here is readable by
-// anyone on the network, and a stored password does not need to be.
+// WiFi.  The password goes in and never comes out.  A build may have no
+// authentication at all (the _open environments), and then anything
+// readable here is readable by anyone on the network; a stored password does
+// not need to be.
 static void getWifi(void) {
   JsonDocument d;
   bool up = WiFi.status() == WL_CONNECTED;

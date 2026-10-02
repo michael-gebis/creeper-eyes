@@ -15,13 +15,6 @@ static uint8_t level = SLEEP_LEVEL;
 // While this is in the future the eyes stay up, window or no window.
 static uint32_t wakeUntil = 0;
 
-// What the last poll concluded, so a transition can be acted on once rather
-// than a command sent every frame.
-static bool asleepNow = false;
-static const char *reason = "awake";
-
-void sleepBegin(void) { /* settings arrive via sleepLoad() */ }
-
 void sleepLoad(bool en, uint16_t start, uint16_t stop, uint8_t lvl) {
   enabled = en;
   if (start < 1440 && stop < 1440) {
@@ -42,10 +35,10 @@ static bool nowMinutes(uint16_t &out);
 // The decision, as a pure function of the settings, the clock and the hold.
 //
 // Separate from sleepPoll() because the answer has to be available the
-// instant it changes, not on the next frame.  It was a cached value at first,
-// and every reply to PUT /sleep carried the *previous* window's conclusion --
-// a one-step lag that made a correct implementation look broken, and would
-// have done the same to anyone driving the API.
+// instant it changes, not on the next frame.  A value cached by the poll
+// would make every reply to PUT /sleep carry the *previous* window's
+// conclusion -- a one-step lag that makes a correct implementation look
+// broken to anyone driving the API.
 //
 // Deciding is pure; only sleepPoll() acts on it.
 static bool decide(const char **why) {
@@ -143,16 +136,13 @@ bool sleepNextChange(uint16_t &minutesOut, bool &toAsleepOut) {
 uint8_t sleepPoll(void) {
   const char *why;
   bool want = decide(&why);
-  reason = why;
   if (want)
     wakeUntil = 0; // the hold has expired; stop carrying it
 
-  asleepNow = want;
-
   // The conclusion as a fraction of the brightness setting, every poll
-  // rather than only on the asleep/awake edge.  Edge-triggering was the
-  // first version and it was wrong: changing the level while already asleep
-  // never reached the panels.  The dimmer does the rest -- fading, switching
+  // rather than only on the asleep/awake edge, or changing the level while
+  // already asleep would never reach the panels.  The dimmer does the rest --
+  // fading, switching
   // the panels off at 0, and telling the renderer when there is nothing to
   // draw.  A dimmed panel keeps drawing, so the eyes still move faintly.
   return want ? level : 100;

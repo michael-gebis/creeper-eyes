@@ -17,18 +17,17 @@
 // left to send the next update to.  Flash it over USB, which you want anyway,
 // since the measurements come back over serial.
 //
-// Two codes, narrated over serial.  Both of them
-// ends up at three pixels per module, because 128 divided by anything in this
-// range is three; what changes is how much of the panel gets used:
+// Two codes, narrated over serial.  Both end up at three pixels per module,
+// because 128 divided by anything in this range is three; what changes is
+// how much of the panel gets used:
 //
 //   1. WiFi join, ECC M -- version 3, 29x29, 111 of 128 px.  The candidate.
-//   2. WiFi join, ECC Q -- version 4, 33x33, 123 of 128 px.  Twice the error
-//      correction of M, and nearly the whole panel.  Worth trying because a
-//      code photographed at an angle, in an eye socket, is exactly the case
-//      error correction exists for.
-//   3. The address, http://192.168.123.166/ -- version 2, 25x25, 99 of 128
+//   2. The address, http://192.168.123.166/ -- version 2, 25x25, 99 of 128
 //      px.  An address rather than frank.local: see ADDRESS_URL below.
-//      The sparsest of the three.  If this one fails, the idea is dead.
+//      The sparser of the two.  If this one fails, the idea is dead.
+//
+// A third, the WiFi join at ECC Q (version 4, 123 of 128 px), was measured
+// and dropped: the phone struggles to latch onto it.  See docs/QR.md.
 //
 // ECC L is deliberately absent: at 41 bytes it produces the same version 3 as
 // ECC M, so it would be the same picture with less redundancy.
@@ -333,9 +332,8 @@ void loop(void) {
   buildWifiPayload(wifiPayload, sizeof(wifiPayload));
 
 #if USE_SSD1327
-  // 0xF0 measured steady through a camera where 0x00 -- the slowest
-  // oscillator, and what begin() used to send -- beat visibly.  begin() sends
-  // 0xF0 now, so this only restores it after a reset that did not run it.
+  // begin() sends 0xF0 (see setFrontClock()); this restores it after a reset
+  // that did not run begin().
   leftEye.setFrontClock(panelSPI, 0xF0);
   rightEye.setFrontClock(panelSPI, 0xF0);
 #endif
