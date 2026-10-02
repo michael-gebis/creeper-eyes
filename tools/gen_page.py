@@ -29,7 +29,36 @@ PROJECT: str = env.subst("$PROJECT_DIR")  # noqa: F821
 BUILD: str = env.subst("$BUILD_DIR")  # noqa: F821
 SOURCE: str = os.path.join(PROJECT, "data", "index.html")
 FAVICON_H: str = os.path.join(PROJECT, "src", "favicon.h")
+CONFIG_H: str = os.path.join(PROJECT, "src", "config.h")
 OUT: str = os.path.join(BUILD, "page_gz.h")
+
+
+def build_defines() -> list[Any]:
+    """The -D flags, each a (name, value) pair or a bare name.
+
+    This runs before PlatformIO has turned build_flags into CPPDEFINES, so
+    they are parsed here as well.
+    """
+    defines: list[Any] = list(env.get("CPPDEFINES", []))  # noqa: F821
+    defines += env.ParseFlags(  # noqa: F821
+        env.get("BUILD_FLAGS", [])).get("CPPDEFINES", [])  # noqa: F821
+    return defines
+
+
+def hostname() -> str:
+    """WIFI_HOSTNAME as the firmware sees it: a -D override, or else
+    config.h's default, read from there rather than repeated here."""
+    for define in build_defines():
+        if (isinstance(define, (list, tuple)) and len(define) == 2
+                and str(define[0]) == "WIFI_HOSTNAME"):
+            # -DWIFI_HOSTNAME=\"frank-dev\" keeps its escaped quotes.
+            return str(define[1]).replace("\\", "").strip('"')
+    with open(CONFIG_H, encoding="utf-8") as f:
+        m: re.Match[str] | None = re.search(
+            r'#define\s+WIFI_HOSTNAME\s+"([^"]*)"', f.read())
+    if not m:
+        raise SystemExit("gen_page: no WIFI_HOSTNAME in config.h")
+    return m.group(1)
 
 
 def selected_favicon() -> str:
@@ -41,15 +70,10 @@ def selected_favicon() -> str:
     with open(FAVICON_H, encoding="utf-8") as f:
         src: str = f.read()
 
-    # This runs before PlatformIO has turned build_flags into CPPDEFINES, so
-    # they are parsed here.  -DFAVICON=FAVICON_EYES, or its value
-    # -DFAVICON=1, arrives as a pair; a bare -DFAVICON arrives as a string,
-    # and is 1 too.
-    defines: list[Any] = list(env.get("CPPDEFINES", []))  # noqa: F821
-    defines += env.ParseFlags(  # noqa: F821
-        env.get("BUILD_FLAGS", [])).get("CPPDEFINES", [])  # noqa: F821
+    # -DFAVICON=FAVICON_EYES, or its value -DFAVICON=1, arrives as a pair; a
+    # bare -DFAVICON arrives as a string, and is 1 too.
     eyes: bool = False
-    for define in defines:
+    for define in build_defines():
         if isinstance(define, (list, tuple)) and len(define) == 2:
             if str(define[0]) == "FAVICON":
                 value: str = str(define[1])
@@ -95,11 +119,15 @@ def emit(data: bytes, raw_len: int, icon: str) -> str:
 
 
 def main() -> None:
-    html: str = open(SOURCE, encoding="utf-8").read()
-    if "{{FAVICON}}" not in html:
-        raise SystemExit("gen_page: data/index.html has no {{FAVICON}} marker")
+    with open(SOURCE, encoding="utf-8") as f:
+        html: str = f.read()
+    for marker in ("{{FAVICON}}", "{{HOSTNAME}}"):
+        if marker not in html:
+            raise SystemExit("gen_page: data/index.html has no %s marker"
+                             % marker)
     icon: str = selected_favicon()
-    page: bytes = html.replace("{{FAVICON}}", icon).encode("utf-8")
+    page: bytes = (html.replace("{{FAVICON}}", icon)
+                   .replace("{{HOSTNAME}}", hostname()).encode("utf-8"))
 
     # mtime zeroed so an unchanged page produces an identical header and does
     # not force a rebuild of everything that includes it.

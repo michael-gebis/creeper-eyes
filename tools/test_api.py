@@ -1337,7 +1337,7 @@ def test_sleep(res: Result, api: Api) -> None:
     res.ok("put the window back", "%s-%s" % (before["start"], before["stop"]))
 
 
-def test_page(res: Result, api: Api) -> None:
+def test_page(res: Result, api: Api, info: Json) -> None:
     res.heading("the control page")
     code, body = api.raw("/", full=True)
     if code != 200:
@@ -1359,7 +1359,8 @@ def test_page(res: Result, api: Api) -> None:
     else:
         res.fail("the page is compressed", "%d bytes, not gzip" % len(body))
         text = body.decode("utf-8", "replace")
-    for what, needle in (("a title", "<title>frank</title>"),
+    title: str = "<title>%s</title>" % info.get("name", "frank")
+    for what, needle in (("its name as the title", title),
                          ("a tab icon", "rel=icon"),
                          ("the state poll", "/api/v1"),
                          ("the aim pad", "id=pad")):
@@ -1918,7 +1919,7 @@ def main(argv: list[str]) -> int:
     if not start:
         return 1
 
-    test_page(res, api)
+    test_page(res, api, info)
     test_eyes(res, api)
     test_eye_slot(res, api, args.eye_file)
     test_validation(res, api, start)

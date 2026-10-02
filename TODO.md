@@ -41,8 +41,6 @@ the button whenever the board is controllable at all.
   - `timeSynced` → `timeKnown()`, which its own comment says it means.
 - **One feature, several names.** The address cards have five names across
   C, the API, the console and the page. Dilation is "width" on the page.
-- **"frank" is hard-coded** in the page's title and banners, the console's
-  `version` reply and a test, although the hostname is a build option.
 
 ### Reorganising
 

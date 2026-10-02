@@ -2,7 +2,7 @@
 <html lang=en><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
 <link rel=icon href="{{FAVICON}}">
-<title>frank</title>
+<title>{{HOSTNAME}}</title>
 <style>
 :root{--bg:#14161a;--card:#1d2026;--line:#2a2f38;--ink:#e6e8eb;--dim:#8b93a1;
       --accent:#6ba3d6;--warn:#e8a35f;--bad:#e8705f}
@@ -73,7 +73,7 @@ a{color:var(--accent)}
 hr{border:0;border-top:1px solid var(--line);margin:2px 0}
 </style>
 
-<h1>frank <small id=sub>connecting…</small></h1>
+<h1>{{HOSTNAME}} <small id=sub>connecting…</small></h1>
 
 <div id=banner></div>
 <div id=warn hidden>
@@ -330,6 +330,7 @@ hr{border:0;border-top:1px solid var(--line);margin:2px 0}
 
 <script>
 const $ = s => document.querySelector(s);
+const HOST = '{{HOSTNAME}}'; // WIFI_HOSTNAME, filled in by tools/gen_page.py
 let st = null, busy = false, halted = false, warnShown = '';
 
 async function api(path, method, body) {
@@ -358,7 +359,7 @@ async function api(path, method, body) {
       ? 'Not signed in. Reload the page to try again — and check the ' +
         'username and password, since the board refused them.'
       : 'Refused: this board only answers to its own name or address. ' +
-        'Try http://frank.local/ or its IP address directly.';
+        `Try http://${HOST}.local/ or its IP address directly.`;
     throw new Error(r.status === 401 ? 'not signed in' : 'wrong host');
   }
 
@@ -599,7 +600,7 @@ function render(s) {
   // work.  With IPv6 compiled out there is nothing to explain away.
   $('#v6note').innerHTML = (s.net.ipv6 && !s.net.ipv6Served)
     ? 'The IPv6 address answers pings but not HTTP: the ESP32 Arduino core ' +
-      'binds an IPv4 socket only. Use the IPv4 address or <kbd>frank.local</kbd>.'
+      `binds an IPv4 socket only. Use the IPv4 address or <kbd>${HOST}.local</kbd>.`
     : '';
 
   $('#dirty').textContent = s.system.settingsDirty ? 'unsaved changes' : 'saved';
@@ -986,7 +987,7 @@ function reboot(fn, what) {
   halted = true;
   $('#banner').style.display = 'block';
   $('#banner').textContent = 'Rebooting. Reload in a few seconds — try ' +
-    'http://frank.local/ if the address has changed.';
+    `http://${HOST}.local/ if the address has changed.`;
   fn().catch(() => {}); // the reply may not outlive the radio
 }
 

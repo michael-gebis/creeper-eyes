@@ -2419,7 +2419,7 @@ void handleCommand(char *line, Print &out) {
   if (!strcmp(cmd, "help") || !strcmp(cmd, "?")) {
     cmdHelp(out);
   } else if (!strcmp(cmd, "version")) {
-    out.printf("frank %s (%s), built %s\n", FIRMWARE_VERSION,
+    out.printf("%s %s (%s), built %s\n", WIFI_HOSTNAME, FIRMWARE_VERSION,
                FIRMWARE_COMMIT, __DATE__ " " __TIME__);
     out.println(F(PROJECT_URL));
   } else if (!strcmp(cmd, "status")) {
