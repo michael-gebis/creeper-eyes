@@ -44,7 +44,7 @@ static void apply(void) {
   }
   const float lum = luminance(shown, gammaX10);
   for (uint8_t e = 0; e < displayCount(); e++) {
-    float l = lum * (100 + trim[displaySlot(e)]) / 100.0f;
+    float l = lum * (100 + trim[displayPosition(e)]) / 100.0f;
     displaySetLuminance(e, l > 1.0f ? 1.0f : l);
   }
   displaySetPower(true);
@@ -77,12 +77,14 @@ void dimmerSetGammaX10(uint8_t g) {
   apply(); // same setting, new curve: seen at once, no fade to wait for
 }
 
-int8_t dimmerTrim(uint8_t slot) { return slot < 2 ? trim[slot] : 0; }
+int8_t dimmerTrim(uint8_t position) {
+  return position < 2 ? trim[position] : 0;
+}
 
-void dimmerSetTrim(uint8_t slot, int8_t percent) {
-  if (slot >= 2)
+void dimmerSetTrim(uint8_t position, int8_t percent) {
+  if (position >= 2)
     return;
-  trim[slot] = percent;
+  trim[position] = percent;
   apply();
 }
 

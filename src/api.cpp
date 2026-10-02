@@ -34,7 +34,7 @@
 // it.
 #define API "/api/v1"
 
-static AuthWebServer *S = NULL;
+static AuthWebServer *srv = NULL;
 
 // --------------------------------------------------------------- plumbing --
 
@@ -43,7 +43,7 @@ static AuthWebServer *S = NULL;
 // guard: there is one place a route is named, and the guard is part of
 // naming it.  Compiles away to nothing when no credential is required.
 template <void (*H)()> static void guarded(void) {
-  if (!authCheck(*S))
+  if (!authCheck(*srv))
     return;
 #if SLEEP
   // Anything that changes state counts as someone being there, and wakes the
@@ -57,8 +57,8 @@ template <void (*H)()> static void guarded(void) {
   // administration rather than presence, and a request that says "sleep from
   // now" must not also say "and someone is here, so stay up" -- which would
   // leave the board awake for a minute and look like the setting did nothing.
-  if (S->method() != HTTP_GET && S->method() != HTTP_OPTIONS &&
-      S->uri() != API "/sleep")
+  if (srv->method() != HTTP_GET && srv->method() != HTTP_OPTIONS &&
+      srv->uri() != API "/sleep")
     sleepNudge();
 #endif
   H();
@@ -74,17 +74,17 @@ template <void (*H)()> static void guarded(void) {
 // what turning authentication on asked for.
 static void corsHeaders(void) {
   if (!authRequired())
-    S->sendHeader("Access-Control-Allow-Origin", "*");
-  S->sendHeader("Access-Control-Allow-Methods",
+    srv->sendHeader("Access-Control-Allow-Origin", "*");
+  srv->sendHeader("Access-Control-Allow-Methods",
                 "GET, PUT, POST, DELETE, OPTIONS");
-  S->sendHeader("Access-Control-Allow-Headers", "Content-Type");
+  srv->sendHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
 static void sendJson(int code, JsonDocument &doc) {
   String body;
   serializeJson(doc, body);
   corsHeaders();
-  S->send(code, "application/json", body);
+  srv->send(code, "application/json", body);
 }
 
 static void sendError(int code, const char *message) {
@@ -105,11 +105,11 @@ static bool readBody(JsonDocument &doc) {
   // WebServer only keeps the raw body under "plain" when it did not recognise
   // the content type; a form-encoded body has already been split into args by
   // the time a handler runs, which is the usual reason for landing here.
-  if (!S->hasArg("plain")) {
+  if (!srv->hasArg("plain")) {
     sendError(400, "expected a JSON body with Content-Type: application/json");
     return false;
   }
-  DeserializationError e = deserializeJson(doc, S->arg("plain"));
+  DeserializationError e = deserializeJson(doc, srv->arg("plain"));
   if (e) {
     sendError(400, "malformed JSON");
     return false;
@@ -152,7 +152,7 @@ static void notAllowed(void) {
 // Preflight.  Answered for every mutable route.
 static void handleOptions(void) {
   corsHeaders();
-  S->send(204);
+  srv->send(204);
 }
 
 // ------------------------------------------------------------ serialising --
@@ -421,13 +421,13 @@ static uint32_t slotStartedMs = 0;
 // False if the request was abandoned, in which case the library's next read
 // comes back empty and the stream ends RAW_ABORTED.
 static bool awaitNextRead(void) {
-  const HTTPRaw &r = S->raw();
-  const size_t left = S->clientContentLength() - r.totalSize;
+  const HTTPRaw &r = srv->raw();
+  const size_t left = srv->clientContentLength() - r.totalSize;
   const size_t want = left < HTTP_RAW_BUFLEN ? left : HTTP_RAW_BUFLEN;
   const uint32_t limit = slotAllowed ? EYE_UPLOAD_MAX_MS : EYE_REFUSED_MAX_MS;
-  while (want && (size_t)S->pendingBytes() < want) {
-    if (millis() - slotStartedMs > limit || !S->clientConnected()) {
-      S->abortRequest();
+  while (want && (size_t)srv->pendingBytes() < want) {
+    if (millis() - slotStartedMs > limit || !srv->clientConnected()) {
+      srv->abortRequest();
       return false;
     }
     delay(1);
@@ -436,16 +436,16 @@ static bool awaitNextRead(void) {
 }
 
 static void eyeSlotBody(void) {
-  HTTPRaw &r = S->raw();
+  HTTPRaw &r = srv->raw();
   switch (r.status) {
   case RAW_START:
     slotStartedMs = millis();
     slotStreamed = true;
-    slotAllowed = authPermits(*S);
+    slotAllowed = authPermits(*srv);
     slotResult = EYE_LOAD_INCOMPLETE;
     if (slotAllowed)
-      stateEyeLoadBegin(S->clientContentLength());
-    S->setReadTimeoutMs(1); // every read finds its bytes waiting
+      stateEyeLoadBegin(srv->clientContentLength());
+    srv->setReadTimeoutMs(1); // every read finds its bytes waiting
     awaitNextRead();
     break;
   case RAW_WRITE:
@@ -520,14 +520,14 @@ static void putEye(void) {
       wrongType<long>(b, "index", "a whole number"))
     return;
   if (b["next"].as<bool>()) {
-    stateNextEye();
+    stateEyeNext();
   } else if (b["name"].is<const char *>()) {
-    if (!stateSetEyeName(b["name"])) {
+    if (!stateEyeSetName(b["name"])) {
       sendError(404, "no such eye design on this board");
       return;
     }
   } else if (b["index"].is<long>()) {
-    if (!stateSetEyeIndex(b["index"].as<long>())) {
+    if (!stateEyeSetIndex(b["index"].as<long>())) {
       sendError(404, "index out of range");
       return;
     }
@@ -558,7 +558,7 @@ static void putGaze(void) {
   if (!strcmp(mode, "auto")) {
     stateGazeAuto();
   } else if (b["x"].is<long>() && b["y"].is<long>()) {
-    if (!stateSetGaze(b["x"].as<long>(), b["y"].as<long>())) {
+    if (!stateGazeSet(b["x"].as<long>(), b["y"].as<long>())) {
       sendError(400, "x and y must each be 0-1023");
       return;
     }
@@ -588,7 +588,7 @@ static void putDilate(void) {
   if (!strcmp(mode, "auto")) {
     stateDilationAuto();
   } else if (b["percent"].is<long>()) {
-    if (!stateSetDilation(b["percent"].as<long>())) {
+    if (!stateDilationSet(b["percent"].as<long>())) {
       sendError(400, "percent must be 0-100");
       return;
     }
@@ -615,7 +615,7 @@ static void putPupil(void) {
     sendError(400, "expected on: true or false");
     return;
   }
-  stateSetPupil(b["on"]);
+  statePupilSet(b["on"]);
   getPupil();
 }
 
@@ -661,7 +661,7 @@ static void putFlip(void) {
   }
   for (uint8_t e = 0; e < 2; e++)
     if (b[sides[e]].is<bool>())
-      stateSetFlip(e, b[sides[e]]);
+      stateFlipSet(e, b[sides[e]]);
   getFlip();
 }
 
@@ -742,7 +742,7 @@ static void putSwap(void) {
     sendError(400, "expected on: true or false");
     return;
   }
-  stateSetSwap(b["on"]);
+  stateSwapSet(b["on"]);
   getSwap();
 }
 
@@ -755,7 +755,7 @@ static void getCpu(void) {
   sendJson(200, d);
 }
 
-// Stored at once; takes effect at the next restart -- see stateSetCpu().
+// Stored at once; takes effect at the next restart -- see stateCpuSet().
 static void putCpu(void) {
   JsonDocument b;
   if (!readBody(b))
@@ -765,7 +765,7 @@ static void putCpu(void) {
     sendError(400, "expected mhz: 160 or 240");
     return;
   }
-  if (!stateSetCpu(mhz)) {
+  if (!stateCpuSet(mhz)) {
     sendError(500, "the setting could not be stored");
     return;
   }
@@ -1404,7 +1404,7 @@ static void postSettings(void) {
 // Read-only and mutable routes are registered separately so a wrong method
 // gets a 405 from the framework rather than a confusing 404.
 void apiRegister(AuthWebServer &s) {
-  S = &s;
+  srv = &s;
 
 #if AUTH_HTTP || AUTH_TOKEN || OTA_AUTH
   s.on(API "/credentials", HTTP_GET, guarded<getCredentials>);

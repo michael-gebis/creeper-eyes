@@ -36,22 +36,9 @@ the button whenever the board is controllable at all.
 ### Consistency and naming
 
 - **Names to change:**
-  - `eye[]` is the array of panels, an anonymous struct, so make it
-    `panels[]` of a named `Panel`, with `NUM_EYES` → `PANEL_COUNT` and the
-    `displayType` typedef → `PanelDriver`. "Eye" already means a design and
-    an API resource, and the overlap has caused one bug already.
-  - "Slot" is the eye-file slot and also a panel position (`flipSlot`,
-    `displaySlot`, the dimmer's `slot` argument).
   - The five artwork globals (`upper`, `lower`, `iris`, `polar`, `sclera`)
     become one read-only `EyeArtwork`.
   - `timeSynced` → `timeKnown()`, which its own comment says it means.
-  - Upstream's cryptic names: `serEyeCtrl`, `pBurst`, `gBurst`,
-    `colourFrames`, `split()`.
-  - `state.h` puts the verb first in nine names (`stateSetGaze`) and the
-    noun first in sixteen (`stateGazeAuto`).
-  - The settings keys are named by position: `PREFS_KEY_SLP_A`, `CLK_C0`.
-    Rename the macros and keep the stored strings.
-  - `S` in `api.cpp`, and `splashCenter`, which isn't only for the splash.
 - **One feature, several names.** The address cards have five names across
   C, the API, the console and the page. Dilation is "width" on the page.
 - **"frank" is hard-coded** in the page's title and banners, the console's

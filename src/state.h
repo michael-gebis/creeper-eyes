@@ -79,9 +79,9 @@ void stateGet(DeviceState &out);
 
 uint8_t stateEyeCount(void);
 const char *stateEyeName(uint8_t index); // NULL if out of range
-bool stateSetEyeIndex(long index);
-bool stateSetEyeName(const char *name);
-void stateNextEye(void);
+bool stateEyeSetIndex(long index);
+bool stateEyeSetName(const char *name);
+void stateEyeNext(void);
 
 // ------------------------------------------------------------- the eye slot --
 // One design beyond the built-in ones, loaded from a file into flash of its
@@ -112,30 +112,30 @@ bool stateEyeUnload(void);
 // -------------------------------------------------------------------- gaze --
 
 // x and y are 0-1023; anything outside that is rejected.
-bool stateSetGaze(long x, long y);
+bool stateGazeSet(long x, long y);
 void stateGazeAuto(void);
 
 // ---------------------------------------------------------------- dilation --
 
 // 0 is the narrowest pupil, 100 the widest.
-bool stateSetDilation(long percent);
+bool stateDilationSet(long percent);
 void stateDilationAuto(void);
 
 // ------------------------------------------------------------------ pupil ---
 
-void stateSetPupil(bool on);
+void statePupilSet(bool on);
 
 // ------------------------------------------------------------------- panels --
 
 // Exchanges the two panels' chip selects, for a pair wired the wrong way
 // round.  Takes effect between frames.
-void stateSetSwap(bool swapped);
+void stateSwapSet(bool swapped);
 
 // Turns one panel's image through 180 degrees, for a panel mounted upside
 // down.  `eye` is the eye as displayed -- 0 on your left, 1 on your right --
 // but the setting attaches to the panel that eye is on and stays with it
 // through a later swap.  False if there is no such eye.  Between frames.
-bool stateSetFlip(uint8_t eye, bool flipped);
+bool stateFlipSet(uint8_t eye, bool flipped);
 
 // ---------------------------------------------------------------- CPU speed --
 
@@ -143,7 +143,7 @@ bool stateSetFlip(uint8_t eye, bool flipped);
 // live re-locks the PLL, which took the network down for seconds.  False if
 // the value is neither, or it could not be stored.  A board that restarts
 // after a brownout comes back at 160 and stores that -- see loadSettings().
-bool stateSetCpu(long mhz);
+bool stateCpuSet(long mhz);
 
 // Restarts the board a moment from now, after the caller has answered.
 // Unsaved settings are lost; the reply is the place to say so.
@@ -154,7 +154,7 @@ void stateRestart(void);
 
 bool stateDimSet(long percent);          // 0-100
 bool stateDimSetGamma(long gammaX10);    // DIM_GAMMA_MIN-DIM_GAMMA_MAX, tenths
-// `eye` as displayed, like stateSetFlip(), and like it the trim attaches to
+// `eye` as displayed, like stateFlipSet(), and like it the trim attaches to
 // the panel that eye is on.  -50 to +50, a percentage of that panel's level.
 bool stateDimSetTrim(uint8_t eye, long percent);
 // The slow full-range sweep, for judging a curve by eye.  Not a setting:

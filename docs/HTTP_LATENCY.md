@@ -105,7 +105,7 @@ property being given up.
 
 Shared state that would need protecting:
 
-- **The eye design pointers.** `setEyeDesign()` swaps five pointers that
+- **The eye design pointers.** `applyDesign()` swaps five pointers that
   `drawEye()` dereferences as it scans. Changing them mid-render tears a frame.
   There is already a `swapPending` flag for the panel swap that exists for
   exactly this reason — the same discipline would have to cover eye selection,
@@ -279,7 +279,7 @@ branch with this page as the reason.
 ### What was kept
 
 The locking and the deferred applies, which are on `main`. They stand without
-the task, because the hazard they close was already there: `setEyeDesign()`
+the task, because the hazard they close was already there: `applyDesign()`
 swaps five pointers `drawEye()` dereferences per pixel, and the console could
 already call it from `pollCommands()` at an arbitrary point in a frame.
 Single-threaded, but not safe. `netShow()` splitting a request from the draw

@@ -46,10 +46,10 @@ void dimmerSetPercent(uint8_t percent); // 0-100; the caller checks the range
 uint8_t dimmerGammaX10(void);
 void dimmerSetGammaX10(uint8_t gammaX10); // DIM_GAMMA_MIN..DIM_GAMMA_MAX
 
-// Per panel, by chip-select slot -- 0 for SELECT_L_PIN, 1 for SELECT_R_PIN --
-// as a percentage of the panel's brightness, -50 to +50.
-int8_t dimmerTrim(uint8_t slot);
-void dimmerSetTrim(uint8_t slot, int8_t percent);
+// Per panel, by chip-select position -- 0 for SELECT_L_PIN, 1 for
+// SELECT_R_PIN -- as a percentage of the panel's brightness, -50 to +50.
+int8_t dimmerTrim(uint8_t position);
+void dimmerSetTrim(uint8_t position, int8_t percent);
 
 // A slow run from full to nearly off and back, for judging a curve by eye.
 // Replaces the setting while it runs; the setting itself is untouched.

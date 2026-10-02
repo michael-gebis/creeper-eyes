@@ -16,13 +16,13 @@
 #define PANEL_W 128
 #define PANEL_H 128
 
-// How many panels are fitted.  Wraps NUM_EYES, which is derived from an
-// anonymous struct and so cannot be shared directly.
+// How many panels are fitted.  Wraps PANEL_COUNT, which is derived from the
+// panel array in main.cpp and so cannot be shared directly.
 uint8_t displayCount(void);
 
 // Draw a string centred horizontally at the given row, in the default font
 // scaled by `size`.
-void splashCenter(GFXcanvas1 &c, const char *str, uint8_t size, int16_t y);
+void drawCenteredText(GFXcanvas1 &c, const char *str, uint8_t size, int16_t y);
 
 // Send a 1-bit canvas to one panel, in whichever format that panel wants.
 void pushCanvas(uint8_t e, GFXcanvas1 &canvas);
@@ -61,9 +61,9 @@ void displaySetLuminance(uint8_t e, float fraction);
 // controller's setup runs it at full current.  What "unchanged" means.
 float displayInitialLuminance(void);
 
-// Which chip-select slot eye `e` is on at the moment -- 0 for SELECT_L_PIN,
-// 1 for SELECT_R_PIN.  For settings that belong to the panel rather than to
-// the eye, which a swap moves between them.
-uint8_t displaySlot(uint8_t e);
+// Which chip-select position eye `e` is on at the moment -- 0 for
+// SELECT_L_PIN, 1 for SELECT_R_PIN.  For settings that belong to the panel
+// rather than to the eye, which a swap moves between them.
+uint8_t displayPosition(uint8_t e);
 
 #endif // DISPLAY_H

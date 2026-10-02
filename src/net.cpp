@@ -602,12 +602,12 @@ static void netDrawPanel(uint8_t e) {
   GFXcanvas1 c(PANEL_W, PANEL_H);
   c.fillScreen(0);
   c.setTextColor(1);
-  splashCenter(c, WIFI_HOSTNAME, 2, 4);
+  drawCenteredText(c, WIFI_HOSTNAME, 2, 4);
   c.drawFastHLine(14, 26, PANEL_W - 28, 1);
 
   if (WiFi.status() != WL_CONNECTED) {
-    splashCenter(c, "OFFLINE", 2, 52);
-    splashCenter(c, "no network", 1, 80);
+    drawCenteredText(c, "OFFLINE", 2, 52);
+    drawCenteredText(c, "no network", 1, 80);
     pushCanvas(e, c);
     return;
   }
@@ -643,40 +643,40 @@ static void netDrawPanel(uint8_t e) {
   int16_t y = 34;
   if (e == 0) {
     char line[24];
-    splashCenter(c, "MAC", 1, y);
+    drawCenteredText(c, "MAC", 1, y);
     y += 11;
-    splashCenter(c, WiFi.macAddress().c_str(), 1, y);
+    drawCenteredText(c, WiFi.macAddress().c_str(), 1, y);
     y += 18;
-    splashCenter(c, "IPv4", 1, y);
+    drawCenteredText(c, "IPv4", 1, y);
     y += 11;
-    splashCenter(c, WiFi.localIP().toString().c_str(), 1, y);
+    drawCenteredText(c, WiFi.localIP().toString().c_str(), 1, y);
     y += 18;
     snprintf(line, sizeof(line), "%d dBm", (int)WiFi.RSSI());
-    splashCenter(c, line, 1, y);
+    drawCenteredText(c, line, 1, y);
   } else {
 #if IPV6
-    splashCenter(c, "IPv6", 1, y);
+    drawCenteredText(c, "IPv6", 1, y);
     y += 11;
     String v6 = WiFi.localIPv6().toString();
     // Wrapped rather than truncated: a partial address is worse than useless.
     for (uint16_t i = 0; i < v6.length(); i += NET_COLS) {
-      splashCenter(c, v6.substring(i, i + NET_COLS).c_str(), 1, y);
+      drawCenteredText(c, v6.substring(i, i + NET_COLS).c_str(), 1, y);
       y += 10;
     }
     y += 10;
-    splashCenter(c, WIFI_HOSTNAME ".local", 1, y);
+    drawCenteredText(c, WIFI_HOSTNAME ".local", 1, y);
 #else
-    splashCenter(c, "NAME", 1, y);
+    drawCenteredText(c, "NAME", 1, y);
     y += 11;
-    splashCenter(c, WIFI_HOSTNAME ".local", 1, y);
+    drawCenteredText(c, WIFI_HOSTNAME ".local", 1, y);
     y += 18;
-    splashCenter(c, "NETWORK", 1, y);
+    drawCenteredText(c, "NETWORK", 1, y);
     y += 11;
     // Wrapped for the same reason as the address was: an SSID can be 32
     // characters and a panel holds 21.
     String ssid = WiFi.SSID();
     for (uint16_t i = 0; i < ssid.length(); i += NET_COLS) {
-      splashCenter(c, ssid.substring(i, i + NET_COLS).c_str(), 1, y);
+      drawCenteredText(c, ssid.substring(i, i + NET_COLS).c_str(), 1, y);
       y += 10;
     }
 #endif

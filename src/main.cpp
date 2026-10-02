@@ -142,7 +142,7 @@ struct EyeDesign {
   const uint16_t (*iris)[IRIS_MAP_WIDTH];
 };
 
-static const EyeDesign eyeDesigns[] = {
+static const EyeDesign builtinDesigns[] = {
 #if EYE_DEFAULT
     {"default", scleraDefault, upperDefault, lowerDefault, polarDefault, irisDefault},
 #endif
@@ -220,12 +220,12 @@ static const EyeDesign eyeDesigns[] = {
 #endif
 };
 
-#define NUM_BUILTIN_DESIGNS (sizeof(eyeDesigns) / sizeof(eyeDesigns[0]))
+#define NUM_BUILTIN_DESIGNS (sizeof(builtinDesigns) / sizeof(builtinDesigns[0]))
 
 // The design in the eye slot, loaded from a file rather than compiled in --
 // see eyestore.h.  Always listed after the built-ins, at this index, so
 // loading or removing it never renumbers them.
-#define LOADED_DESIGN NUM_BUILTIN_DESIGNS
+#define LOADED_DESIGN_INDEX NUM_BUILTIN_DESIGNS
 static EyeDesign loadedDesign;
 static bool loadedPresent = false;
 
@@ -248,7 +248,7 @@ static uint8_t designCount(void) {
 
 // Callers bound the index by designCount() first.
 static const EyeDesign &designAt(uint8_t i) {
-  return i < NUM_BUILTIN_DESIGNS ? eyeDesigns[i] : loadedDesign;
+  return i < NUM_BUILTIN_DESIGNS ? builtinDesigns[i] : loadedDesign;
 }
 
 // Lists whatever the slot holds.  At boot, and after an upload succeeds.
@@ -265,7 +265,7 @@ static void adoptLoadedDesign(void) {
   loadedDesign.iris = (const uint16_t(*)[IRIS_MAP_WIDTH])a.iris;
 }
 
-static uint8_t eyeDesign = 0;
+static uint8_t currentDesign = 0;
 
 // Whether the eye has a pupil at all.  Off gives a full iris disc, which
 // suits a clock face but is not tied to it.
@@ -296,7 +296,7 @@ static bool cpuValid(long mhz) { return mhz == 160 || mhz == 240; }
 static bool restartPending = false;
 static uint32_t restartAskedMs = 0;
 
-// Which panels were mounted upside down.  Indexed by chip-select slot --
+// Which panels were mounted upside down.  Indexed by chip-select position --
 // 0 for SELECT_L_PIN, 1 for SELECT_R_PIN -- and NOT by eye, because it is
 // the panel that is the wrong way up, and it stays that way whichever eye
 // is drawn on it.  A later `swap` moves the eyes and leaves these where
@@ -407,20 +407,20 @@ static bool settingsDirty = false;
 #define PREFS_KEY_PUPIL "pupil"
 #define PREFS_KEY_TZ "tz"
 #define PREFS_KEY_NTP "ntp"
-#define PREFS_KEY_CLK_ON "clkOn"
-#define PREFS_KEY_CLK_SEC "clkSec"
-#define PREFS_KEY_CLK_RATE "clkRate"
-#define PREFS_KEY_CLK_C0 "clkC0"
-#define PREFS_KEY_CLK_C1 "clkC1"
-#define PREFS_KEY_CLK_C2 "clkC2"
-#define PREFS_KEY_SLP_ON "slpOn"
-#define PREFS_KEY_SLP_A "slpStart"
-#define PREFS_KEY_SLP_B "slpStop"
-#define PREFS_KEY_SLP_LVL "slpLevel"
+#define PREFS_KEY_CLOCK_ON "clkOn"
+#define PREFS_KEY_CLOCK_SECONDS "clkSec"
+#define PREFS_KEY_CLOCK_RATE "clkRate"
+#define PREFS_KEY_CLOCK_HOUR_COLOR "clkC0"
+#define PREFS_KEY_CLOCK_MINUTE_COLOR "clkC1"
+#define PREFS_KEY_CLOCK_SECOND_COLOR "clkC2"
+#define PREFS_KEY_SLEEP_ON "slpOn"
+#define PREFS_KEY_SLEEP_START "slpStart"
+#define PREFS_KEY_SLEEP_STOP "slpStop"
+#define PREFS_KEY_SLEEP_LEVEL "slpLevel"
 #define PREFS_KEY_DIM "dim"
 #define PREFS_KEY_DIM_GAMMA "dimGamma" // tenths: 22 is gamma 2.2
-#define PREFS_KEY_DIM_TRIM0 "dimTrim0" // SELECT_L_PIN's panel, -50..50
-#define PREFS_KEY_DIM_TRIM1 "dimTrim1" // SELECT_R_PIN's
+#define PREFS_KEY_DIM_TRIM_L "dimTrim0" // SELECT_L_PIN's panel, -50..50
+#define PREFS_KEY_DIM_TRIM_R "dimTrim1" // SELECT_R_PIN's
 #define PREFS_KEY_CPU "cpuMHz" // written when it changes, not by save
 
 // The clock's display preferences are saved; the time itself is not.
@@ -430,7 +430,7 @@ static bool settingsDirty = false;
 
 static void saveSettings(void) {
   prefs.begin(PREFS_NAMESPACE, false);
-  prefs.putString(PREFS_KEY_EYE, designAt(eyeDesign).name);
+  prefs.putString(PREFS_KEY_EYE, designAt(currentDesign).name);
   prefs.putBool(PREFS_KEY_SWAP, eyesSwapped);
   prefs.putUChar(PREFS_KEY_FLIP,
                  (uint8_t)((panelFlip[0] ? 1 : 0) | (panelFlip[1] ? 2 : 0)));
@@ -440,24 +440,24 @@ static void saveSettings(void) {
   prefs.putBool(PREFS_KEY_NTP, netNtpEnabled());
 #endif
 #if CLOCK
-  prefs.putBool(PREFS_KEY_CLK_ON, clockOn);
-  prefs.putBool(PREFS_KEY_CLK_SEC, clockSeconds);
-  prefs.putUShort(PREFS_KEY_CLK_RATE, clockRate);
-  prefs.putULong(PREFS_KEY_CLK_C0, clockRGB[0]);
-  prefs.putULong(PREFS_KEY_CLK_C1, clockRGB[1]);
-  prefs.putULong(PREFS_KEY_CLK_C2, clockRGB[2]);
+  prefs.putBool(PREFS_KEY_CLOCK_ON, clockOn);
+  prefs.putBool(PREFS_KEY_CLOCK_SECONDS, clockSeconds);
+  prefs.putUShort(PREFS_KEY_CLOCK_RATE, clockRate);
+  prefs.putULong(PREFS_KEY_CLOCK_HOUR_COLOR, clockRGB[0]);
+  prefs.putULong(PREFS_KEY_CLOCK_MINUTE_COLOR, clockRGB[1]);
+  prefs.putULong(PREFS_KEY_CLOCK_SECOND_COLOR, clockRGB[2]);
   // Not the time -- see the note by the keys.
 #endif
 #if SLEEP
-  prefs.putBool(PREFS_KEY_SLP_ON, sleepEnabled());
-  prefs.putUShort(PREFS_KEY_SLP_A, sleepStart());
-  prefs.putUShort(PREFS_KEY_SLP_B, sleepStop());
-  prefs.putUChar(PREFS_KEY_SLP_LVL, sleepLevel());
+  prefs.putBool(PREFS_KEY_SLEEP_ON, sleepEnabled());
+  prefs.putUShort(PREFS_KEY_SLEEP_START, sleepStart());
+  prefs.putUShort(PREFS_KEY_SLEEP_STOP, sleepStop());
+  prefs.putUChar(PREFS_KEY_SLEEP_LEVEL, sleepLevel());
 #endif
   prefs.putUChar(PREFS_KEY_DIM, dimmerPercent());
   prefs.putUChar(PREFS_KEY_DIM_GAMMA, dimmerGammaX10());
-  prefs.putChar(PREFS_KEY_DIM_TRIM0, dimmerTrim(0));
-  prefs.putChar(PREFS_KEY_DIM_TRIM1, dimmerTrim(1));
+  prefs.putChar(PREFS_KEY_DIM_TRIM_L, dimmerTrim(0));
+  prefs.putChar(PREFS_KEY_DIM_TRIM_R, dimmerTrim(1));
   prefs.end();
   settingsDirty = false;
 }
@@ -480,7 +480,7 @@ static void forgetSettings(void) {
 // again.  The first failure is a warning, since it costs frames; the retries
 // are not, or every design change would add another.
 static uint16_t *ramPolar = NULL, *ramIris = NULL;
-static bool ramTablesNoted = false;
+static bool ramTablesWarned = false;
 #endif
 
 // Repoints the five artwork pointers at another design.  drawEye() reads them
@@ -488,7 +488,7 @@ static bool ramTablesNoted = false;
 // through pendingEyeDesign, never directly from an operation -- except
 // dropLoadedDesign(), which explains why it cannot wait.  Out-of-range falls
 // back to the first design.
-static void setEyeDesign(uint8_t idx) {
+static void applyDesign(uint8_t idx) {
   if (idx >= designCount())
     idx = 0;
   const EyeDesign *d = &designAt(idx);
@@ -505,9 +505,9 @@ static void setEyeDesign(uint8_t idx) {
       free(ramPolar);
       free(ramIris);
       ramPolar = ramIris = NULL;
-      if (!ramTablesNoted)
+      if (!ramTablesWarned)
         healthNote("no memory for the eye tables in RAM; frames are slower");
-      ramTablesNoted = true;
+      ramTablesWarned = true;
     }
   }
   if (ramPolar) {
@@ -517,7 +517,7 @@ static void setEyeDesign(uint8_t idx) {
     iris = (const uint16_t(*)[IRIS_MAP_WIDTH])ramIris;
   }
 #endif
-  eyeDesign = idx;
+  currentDesign = idx;
 #if CONTROLLABLE
   settingsDirty = true;
 #endif
@@ -535,7 +535,7 @@ static void setEyeDesign(uint8_t idx) {
 
 #if USE_SSD1327
 #include "ssd1327.h"
-typedef SSD1327 displayType;
+using PanelDriver = SSD1327;
 // Two panels on one bus; drop this if long jumpers make it unreliable.
 #ifndef SSD1327_SPI_HZ
 #define SSD1327_SPI_HZ 8000000
@@ -553,7 +553,7 @@ public:
   void setCS(int8_t pin) { _cs = pin; }
 };
 
-typedef SwappableSSD1351 displayType; // Using OLED display(s)
+using PanelDriver = SwappableSSD1351;
 
 // The colour panels' bus speed.  A colour frame is 32 KB, four times a
 // greyscale one, so this is most of the colour frame rate: at the library's
@@ -600,7 +600,7 @@ typedef SwappableSSD1351 displayType; // Using OLED display(s)
 
 // Probably don't need to edit any config below this line, -----------------
 // unless building a single-eye project (pendant, etc.), in which case one
-// of the two elements in the eye[] array further down can be commented out.
+// of the two elements in the panels[] array further down can be commented out.
 
 // Eye blinks are a tiny 3-state machine.  Per-eye allows winks + blinks.
 // In this order: a blink advances by incrementing its state.
@@ -619,11 +619,14 @@ struct Blink {
 #define MISO_PIN 19
 #define SCLK_PIN 5
 
-struct {
-  displayType display; // OLED/TFT object
+// The panels, in chip-select order.  Not "eyes": an eye is a design, and a
+// panel is the hardware one is drawn on.  A swap exchanges their chip selects.
+struct Panel {
+  PanelDriver display; // OLED object
   uint8_t cs;          // Chip select pin
   Blink blink;         // Current blink state
-} eye[] = {
+};
+Panel panels[] = {
 #if USE_SSD1327
     {SSD1327(SELECT_L_PIN, DISPLAY_DC), SELECT_L_PIN, {BLINK_NONE}},
     {SSD1327(SELECT_R_PIN, DISPLAY_DC), SELECT_R_PIN, {BLINK_NONE}},
@@ -642,11 +645,11 @@ struct {
      {BLINK_NONE}},
 #endif
 };
-#define NUM_EYES (sizeof(eye) / sizeof(eye[0]))
+#define PANEL_COUNT (sizeof(panels) / sizeof(panels[0]))
 
 // display.h publishes these for modules that draw text but have no
-// business knowing about eye[] or the artwork headers.
-uint8_t displayCount(void) { return NUM_EYES; }
+// business knowing about panels[] or the artwork headers.
+uint8_t displayCount(void) { return PANEL_COUNT; }
 static_assert(PANEL_W == SCREEN_WIDTH && PANEL_H == SCREEN_HEIGHT,
               "display.h panel size must match the eye artwork");
 
@@ -654,15 +657,16 @@ static_assert(PANEL_W == SCREEN_WIDTH && PANEL_H == SCREEN_HEIGHT,
 // chip select asserted on the wrong panel.
 static void applySwap(void) {
   displayQuiesce(); // a frame in flight is using the chip select this moves
-  uint8_t a = eye[0].cs, b = eye[1].cs;
-  eye[0].cs = b;
-  eye[1].cs = a;
-  eye[0].display.setCS((int8_t)b);
-  eye[1].display.setCS((int8_t)a);
+  uint8_t a = panels[0].cs, b = panels[1].cs;
+  panels[0].cs = b;
+  panels[1].cs = a;
+  panels[0].display.setCS((int8_t)b);
+  panels[1].display.setCS((int8_t)a);
 }
 
-// Which panelFlip[] entry belongs to a chip select.
-static uint8_t flipSlot(uint8_t cs) { return cs == SELECT_R_PIN ? 1 : 0; }
+// A chip select's position: 0 for SELECT_L_PIN, 1 for SELECT_R_PIN.  The
+// index of the settings that belong to a panel rather than to an eye.
+static uint8_t csPosition(uint8_t cs) { return cs == SELECT_R_PIN ? 1 : 0; }
 
 // Send each panel its orientation.  Between frames only, like applySwap():
 // it is one command per panel, but it opens its own SPI transaction, and
@@ -675,12 +679,12 @@ static uint8_t flipSlot(uint8_t cs) { return cs == SELECT_R_PIN ? 1 : 0; }
 // SSD1351 the library's own setRotation() sends the same register.
 static void applyFlips(void) {
   displayQuiesce(); // setRotation() changes state the sender reads
-  for (uint8_t e = 0; e < NUM_EYES; e++) {
-    const bool f = panelFlip[flipSlot(eye[e].cs)];
+  for (uint8_t e = 0; e < PANEL_COUNT; e++) {
+    const bool f = panelFlip[csPosition(panels[e].cs)];
 #if USE_SSD1327
-    eye[e].display.setFlip(graySPI, f);
+    panels[e].display.setFlip(graySPI, f);
 #else
-    eye[e].display.setRotation(f ? 2 : 0);
+    panels[e].display.setRotation(f ? 2 : 0);
 #endif
   }
 }
@@ -691,7 +695,7 @@ static void applyFlips(void) {
 
 // The default GFX font is a 6x8 cell, so a string's width is just its
 // length scaled up.
-void splashCenter(GFXcanvas1 &c, const char *str, uint8_t size,
+void drawCenteredText(GFXcanvas1 &c, const char *str, uint8_t size,
                          int16_t y) {
   c.setTextSize(size);
   c.setCursor((SCREEN_WIDTH - (int16_t)strlen(str) * 6 * size) / 2, y);
@@ -719,16 +723,16 @@ void displaySetPower(bool on) {
   if (on == panelsOn)
     return;
   panelsOn = on;
-  for (uint8_t e = 0; e < NUM_EYES; e++) {
+  for (uint8_t e = 0; e < PANEL_COUNT; e++) {
 #if USE_SSD1327
-    eye[e].display.setPower(graySPI, on);
+    panels[e].display.setPower(graySPI, on);
 #else
     // startWrite()/endWrite() arbitrate the bus and this panel's own chip
     // select; each display object carries its own.
-    eye[e].display.startWrite();
-    eye[e].display.writeCommand(on ? SSD1351_CMD_DISPLAYON
+    panels[e].display.startWrite();
+    panels[e].display.writeCommand(on ? SSD1351_CMD_DISPLAYON
                                    : SSD1351_CMD_DISPLAYOFF);
-    eye[e].display.endWrite();
+    panels[e].display.endWrite();
 #endif
   }
 }
@@ -748,14 +752,14 @@ static const float INITIAL_LUMINANCE = 0xC8 / 255.0f;
 
 float displayInitialLuminance(void) { return INITIAL_LUMINANCE; }
 
-uint8_t displaySlot(uint8_t e) { return flipSlot(eye[e].cs); }
+uint8_t displayPosition(uint8_t e) { return csPosition(panels[e].cs); }
 
 // The registers last sent to each panel, so a fade that has not moved a
 // register this frame sends nothing.  Zero means "not sent yet".
-static uint16_t sentLevel[NUM_EYES];
+static uint16_t sentLevel[PANEL_COUNT];
 
 void displaySetLuminance(uint8_t e, float f) {
-  if (e >= NUM_EYES)
+  if (e >= PANEL_COUNT)
     return;
   if (f > 1.0f)
     f = 1.0f;
@@ -766,7 +770,7 @@ void displaySetLuminance(uint8_t e, float f) {
   if (sentLevel[e] == (uint16_t)(contrast + 1))
     return;
   sentLevel[e] = contrast + 1;
-  eye[e].display.setContrast(graySPI, contrast);
+  panels[e].display.setContrast(graySPI, contrast);
 #else
   // Two stages.  Master current is sixteen coarse steps, (m + 1) / 16 of
   // full; each channel then has 256 fine ones.  Take the smallest master
@@ -787,13 +791,13 @@ void displaySetLuminance(uint8_t e, float f) {
   if (sentLevel[e] == sig)
     return;
   sentLevel[e] = sig;
-  eye[e].display.startWrite();
-  eye[e].display.writeCommand(SSD1351_CMD_CONTRASTABC);
+  panels[e].display.startWrite();
+  panels[e].display.writeCommand(SSD1351_CMD_CONTRASTABC);
   for (uint8_t i = 0; i < 3; i++)
-    eye[e].display.spiWrite(ch[i]);
-  eye[e].display.writeCommand(SSD1351_CMD_CONTRASTMASTER);
-  eye[e].display.spiWrite((uint8_t)m);
-  eye[e].display.endWrite();
+    panels[e].display.spiWrite(ch[i]);
+  panels[e].display.writeCommand(SSD1351_CMD_CONTRASTMASTER);
+  panels[e].display.spiWrite((uint8_t)m);
+  panels[e].display.endWrite();
 #endif
 }
 
@@ -815,10 +819,10 @@ void pushCanvas(uint8_t e, GFXcanvas1 &canvas) {
       buf[o] = (uint8_t)((canvas.getPixel(x, y) ? 0xF0 : 0x00) |
                          (canvas.getPixel(x + 1, y) ? 0x0F : 0x00));
   SPI.beginTransaction(graySPI);
-  eye[e].display.pushFrame(buf);
+  panels[e].display.pushFrame(buf);
   SPI.endTransaction();
 #else
-  eye[e].display.drawBitmap(0, 0, canvas.getBuffer(), SCREEN_WIDTH,
+  panels[e].display.drawBitmap(0, 0, canvas.getBuffer(), SCREEN_WIDTH,
                             SCREEN_HEIGHT, 0xFFFF, 0x0000);
 #endif
 }
@@ -949,20 +953,17 @@ void showMessageOn(int8_t which, const char *l1, const char *l2,
   canvas.fillScreen(0);
   canvas.setTextColor(1);
   if (l1)
-    splashCenter(canvas, l1, 2, 14);
+    drawCenteredText(canvas, l1, 2, 14);
   if (l2)
-    splashCenter(canvas, l2, 2, 40);
+    drawCenteredText(canvas, l2, 2, 40);
   if (l3)
-    splashCenter(canvas, l3, 1, 70);
+    drawCenteredText(canvas, l3, 1, 70);
   if (l4)
-    splashCenter(canvas, l4, 1, 86);
-  // Not named `eye`: that is the panel array at file scope, and NUM_EYES is
-  // sizeof(eye)/sizeof(eye[0]), so a parameter of that name silently turns
-  // the panel count into arithmetic on a signed char.
+    drawCenteredText(canvas, l4, 1, 86);
   if (which < 0)
-    for (uint8_t e = 0; e < NUM_EYES; e++)
+    for (uint8_t e = 0; e < PANEL_COUNT; e++)
       pushCanvas(e, canvas);
-  else if ((uint8_t)which < NUM_EYES)
+  else if ((uint8_t)which < PANEL_COUNT)
     pushCanvas((uint8_t)which, canvas);
 }
 
@@ -974,7 +975,7 @@ void showMessage(const char *l1, const char *l2, const char *l3,
 #if STARTUP_SPLASH
 
 // One frame of the countdown, on both panels, each labelled from both sides:
-// Frank's own, the way anatomy is described, and the viewer's.  eye[0] is
+// Frank's own, the way anatomy is described, and the viewer's.  panels[0] is
 // Frank's right eye (see SELECT_L_PIN).  Both are shown because every
 // previous attempt to write this down was ambiguous.
 static void splashDraw(int8_t remain) {
@@ -985,26 +986,26 @@ static void splashDraw(int8_t remain) {
   static const char *const yourSide[2] = {"LEFT", "RIGHT"};
   char digit[2] = {(char)('0' + remain), '\0'};
 
-  for (uint8_t e = 0; e < NUM_EYES; e++) {
+  for (uint8_t e = 0; e < PANEL_COUNT; e++) {
     canvas.fillScreen(0);
     canvas.setTextColor(1);
-    splashCenter(canvas, "FRANK'S", 2, 6);
-    splashCenter(canvas, franksSide[e & 1], 2, 26);
+    drawCenteredText(canvas, "FRANK'S", 2, 6);
+    drawCenteredText(canvas, franksSide[e & 1], 2, 26);
     canvas.drawFastHLine(20, 50, SCREEN_WIDTH - 40, 1);
-    splashCenter(canvas, "YOUR", 2, 58);
-    splashCenter(canvas, yourSide[e & 1], 2, 78);
-    splashCenter(canvas, digit, 3, 100);
+    drawCenteredText(canvas, "YOUR", 2, 58);
+    drawCenteredText(canvas, yourSide[e & 1], 2, 78);
+    drawCenteredText(canvas, digit, 3, 100);
     pushCanvas(e, canvas);
   }
 }
 
 // Hand a clean screen back to the eyes.
 static void splashClear(void) {
-  for (uint8_t e = 0; e < NUM_EYES; e++) {
+  for (uint8_t e = 0; e < PANEL_COUNT; e++) {
 #if USE_SSD1327
-    eye[e].display.fill(graySPI, 0x0);
+    panels[e].display.fill(graySPI, 0x0);
 #else
-    eye[e].display.fillScreen(0x0000);
+    panels[e].display.fillScreen(0x0000);
 #endif
   }
 }
@@ -1070,7 +1071,7 @@ static bool splashPoll(void) {
 void setup(void) {
   uint8_t e;
 
-  setEyeDesign(0); // the pointers start unset now, so pick a design first
+  applyDesign(0); // the pointers start unset now, so pick a design first
 #if CLOCK
   for (uint8_t i = 0; i < 3; i++)
     clockSetColor(i, clockRGB[i]);
@@ -1090,7 +1091,7 @@ void setup(void) {
                ESP.getChipModel(), (unsigned)ESP.getChipRevision(),
                (unsigned)getCpuFrequencyMhz(), (unsigned)ESP.getFreeHeap());
   DEBUG_PRINTF("[creeper-eyes] SPI SCK=%u MISO=%u MOSI=%u | eyes=%u\n",
-               SCLK_PIN, MISO_PIN, MOSI_PIN, (unsigned)NUM_EYES);
+               SCLK_PIN, MISO_PIN, MOSI_PIN, (unsigned)PANEL_COUNT);
   reportResetReason();
   idle0Counted = // see idle0Runs
       esp_register_freertos_idle_hook_for_cpu(countIdle0, 0) == ESP_OK;
@@ -1103,9 +1104,9 @@ void setup(void) {
 
   // Park every chip select before touching the bus, so no panel listens
   // while another is being set up.
-  for (e = 0; e < NUM_EYES; e++) {
-    pinMode(eye[e].cs, OUTPUT);
-    digitalWrite(eye[e].cs, HIGH);
+  for (e = 0; e < PANEL_COUNT; e++) {
+    pinMode(panels[e].cs, OUTPUT);
+    digitalWrite(panels[e].cs, HIGH);
   }
 
   // Both panels share one reset line, so it is pulsed exactly once, here,
@@ -1118,18 +1119,19 @@ void setup(void) {
   digitalWrite(DISPLAY_RESET, HIGH);
   delay(200);
 
-  for (e = 0; e < NUM_EYES; e++) {
+  for (e = 0; e < PANEL_COUNT; e++) {
 #if USE_SSD1327
-    eye[e].display.begin(graySPI);
-    eye[e].display.fill(graySPI, 0x0);
+    panels[e].display.begin(graySPI);
+    panels[e].display.fill(graySPI, 0x0);
 #else
-    digitalWrite(eye[e].cs, LOW); // Select one eye for init
-    eye[e].display.begin(SSD1351_SPI_HZ); // kept for every transfer after
-    digitalWrite(eye[e].cs, HIGH); // Deselect
+    digitalWrite(panels[e].cs, LOW); // Select one eye for init
+    panels[e].display.begin(SSD1351_SPI_HZ); // kept for every transfer after
+    digitalWrite(panels[e].cs, HIGH); // Deselect
 #endif
   }
   DEBUG_PRINTF("[creeper-eyes] %u panel(s) initialised (%s)\n",
-               (unsigned)NUM_EYES, USE_SSD1327 ? "SSD1327 grey" : "SSD1351 rgb");
+               (unsigned)PANEL_COUNT,
+               USE_SSD1327 ? "SSD1327 grey" : "SSD1351 rgb");
 
   // Eyelid mirroring for the left eye is done in software, in drawEye(), so
   // it behaves the same on both panel types.  The hardware alternative,
@@ -1193,24 +1195,24 @@ void setup(void) {
 // reported with it: drawing the pixels, waiting for the previous frame to be
 // sent (with OVERLAP_SEND), and sending -- on core 0, or here without it.
 // The rest of the interval is everything else the render loop does.
-static uint32_t perfDrawUs = 0, perfWaitUs = 0, perfSendUs = 0, perfEyeUs = 0;
+static uint32_t perfDrawUs = 0, perfWaitUs = 0, perfSendUs = 0, perfFrameUs = 0;
 static portMUX_TYPE perfMux = portMUX_INITIALIZER_UNLOCKED; // perfSendUs, cross-core
 
 // Sends one finished frame to eye e's panel, on whichever core calls it.
 static void sendFrame(uint8_t e, const void *frame) {
 #if USE_SSD1327
   SPI.beginTransaction(graySPI);
-  eye[e].display.pushFrame((const uint8_t *)frame);
+  panels[e].display.pushFrame((const uint8_t *)frame);
   SPI.endTransaction();
 #else
-  eye[e].display.startWrite();
+  panels[e].display.startWrite();
   // The library's own window, which sends each bound as the one byte the
   // controller takes.  Not by hand as 16-bit writes: that sends four bytes
   // where two are expected, and the frames never land.
-  eye[e].display.setAddrWindow(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+  panels[e].display.setAddrWindow(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
   // One large burst, through the ESP32's SPI FIFO.
   SPI.writePixels(frame, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(uint16_t));
-  eye[e].display.endWrite();
+  panels[e].display.endWrite();
 #endif
 }
 
@@ -1336,15 +1338,15 @@ static void startSender(void) {
 // other is sent.  Colour frames go out as drawn; greyscale ones are drawn in
 // RGB565 like colour, then packed to four bits a pixel, and it is the packed
 // frame that is sent -- so there, only the packed buffer needs a second copy.
-// drawEye() draws into pBurst either way: on greyscale it is the one scratch
-// buffer below, on colour a pointer to whichever colourFrames buffer is free,
+// drawEye() draws into rgbFrame either way: on greyscale it is the one scratch
+// buffer below, on colour a pointer to whichever rgbFrames buffer is free,
 // so the drawing code is the same for both.
 #define FRAME_BUFFERS (OVERLAP_SEND ? 2 : 1)
 #if USE_SSD1327
-static uint16_t pBurst[SCREEN_WIDTH * SCREEN_HEIGHT];
-static uint8_t gBurst[FRAME_BUFFERS][SSD1327_FRAME_BYTES];
+static uint16_t rgbFrame[SCREEN_WIDTH * SCREEN_HEIGHT];
+static uint8_t grayFrames[FRAME_BUFFERS][SSD1327_FRAME_BYTES];
 #else
-static uint16_t colourFrames[FRAME_BUFFERS][SCREEN_WIDTH * SCREEN_HEIGHT];
+static uint16_t rgbFrames[FRAME_BUFFERS][SCREEN_WIDTH * SCREEN_HEIGHT];
 #endif
 static uint8_t nextBuffer = 0;
 
@@ -1373,7 +1375,7 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
   const uint8_t buf = nextBuffer;
   nextBuffer = (uint8_t)((nextBuffer + 1) % FRAME_BUFFERS);
 #if !USE_SSD1327
-  uint16_t *const pBurst = colourFrames[buf]; // the frame itself, sent as drawn
+  uint16_t *const rgbFrame = rgbFrames[buf]; // the frame itself, sent as drawn
 #endif
 
   scleraXsave = scleraX; // Save initial X value to reset on each line
@@ -1407,7 +1409,7 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
           p = sclera[scleraY][scleraX];          // Pixel = sclera
         }
       }
-      pBurst[screenY * SCREEN_WIDTH + screenX] = p;
+      rgbFrame[screenY * SCREEN_WIDTH + screenX] = p;
     }
   }
 
@@ -1473,7 +1475,7 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
               mirrorLids ? (uint8_t)(SCREEN_WIDTH - 1 - sx) : (uint8_t)sx;
           if (lower[sy][lx] <= lT || upper[sy][lx] <= uT)
             continue; // under an eyelid
-          pBurst[sy * SCREEN_WIDTH + sx] = clockPix[h];
+          rgbFrame[sy * SCREEN_WIDTH + sx] = clockPix[h];
         }
       }
     }
@@ -1483,18 +1485,18 @@ void drawEye(        // Renders one eye.  Inputs must be pre-clipped & valid.
 #if USE_SSD1327
   // Pack the RGB565 frame down to 4-bit grey, two pixels per byte.  This
   // halves what goes over the wire compared with the colour panel.
-  uint8_t *const packed = gBurst[buf];
+  uint8_t *const packed = grayFrames[buf];
   for (uint16_t i = 0, o = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i += 2, o++)
-    packed[o] = (uint8_t)((rgb565ToGray4(pBurst[i]) << 4) |
-                          rgb565ToGray4(pBurst[i + 1]));
+    packed[o] = (uint8_t)((rgb565ToGray4(rgbFrame[i]) << 4) |
+                          rgb565ToGray4(rgbFrame[i + 1]));
   const void *const frame = packed;
 #else
-  const void *const frame = pBurst;
+  const void *const frame = rgbFrame;
 #endif
   const uint32_t tDrawn = micros();
   perfDrawUs += tDrawn - tStart;
   submitFrame(e, frame);
-  perfEyeUs += micros() - tStart;
+  perfFrameUs += micros() - tStart;
 }
 
 // EYE ANIMATION -----------------------------------------------------------
@@ -1581,22 +1583,25 @@ static void loadSettings(void) {
   netNtpSetEnabled(nvsReadBool(prefs, PREFS_KEY_NTP, true));
 #endif
 #if CLOCK
-  clockOn = nvsReadBool(prefs, PREFS_KEY_CLK_ON, clockOn);
-  clockSeconds = nvsReadBool(prefs, PREFS_KEY_CLK_SEC, clockSeconds);
-  clockRate = nvsReadU16(prefs, PREFS_KEY_CLK_RATE, clockRate, 1, 3600);
-  uint32_t c0 = nvsReadU32(prefs, PREFS_KEY_CLK_C0, clockRGB[0], 0, 0xFFFFFF);
-  uint32_t c1 = nvsReadU32(prefs, PREFS_KEY_CLK_C1, clockRGB[1], 0, 0xFFFFFF);
-  uint32_t c2 = nvsReadU32(prefs, PREFS_KEY_CLK_C2, clockRGB[2], 0, 0xFFFFFF);
+  clockOn = nvsReadBool(prefs, PREFS_KEY_CLOCK_ON, clockOn);
+  clockSeconds = nvsReadBool(prefs, PREFS_KEY_CLOCK_SECONDS, clockSeconds);
+  clockRate = nvsReadU16(prefs, PREFS_KEY_CLOCK_RATE, clockRate, 1, 3600);
+  uint32_t c0 = nvsReadU32(prefs, PREFS_KEY_CLOCK_HOUR_COLOR, clockRGB[0], 0,
+                           0xFFFFFF);
+  uint32_t c1 = nvsReadU32(prefs, PREFS_KEY_CLOCK_MINUTE_COLOR, clockRGB[1], 0,
+                           0xFFFFFF);
+  uint32_t c2 = nvsReadU32(prefs, PREFS_KEY_CLOCK_SECOND_COLOR, clockRGB[2], 0,
+                           0xFFFFFF);
 #endif
 #if SLEEP
-  sleepLoad(nvsReadBool(prefs, PREFS_KEY_SLP_ON, SLEEP_ENABLED),
-            nvsReadU16(prefs, PREFS_KEY_SLP_A, SLEEP_START_MIN, 0, 1439),
-            nvsReadU16(prefs, PREFS_KEY_SLP_B, SLEEP_STOP_MIN, 0, 1439),
-            nvsReadU8(prefs, PREFS_KEY_SLP_LVL, SLEEP_LEVEL, 0, 100));
+  sleepLoad(nvsReadBool(prefs, PREFS_KEY_SLEEP_ON, SLEEP_ENABLED),
+            nvsReadU16(prefs, PREFS_KEY_SLEEP_START, SLEEP_START_MIN, 0, 1439),
+            nvsReadU16(prefs, PREFS_KEY_SLEEP_STOP, SLEEP_STOP_MIN, 0, 1439),
+            nvsReadU8(prefs, PREFS_KEY_SLEEP_LEVEL, SLEEP_LEVEL, 0, 100));
 #endif
   // Nothing saved means the brightness the panels always had.
-  const int8_t trims[2] = {nvsReadI8(prefs, PREFS_KEY_DIM_TRIM0, 0, -50, 50),
-                           nvsReadI8(prefs, PREFS_KEY_DIM_TRIM1, 0, -50, 50)};
+  const int8_t trims[2] = {nvsReadI8(prefs, PREFS_KEY_DIM_TRIM_L, 0, -50, 50),
+                           nvsReadI8(prefs, PREFS_KEY_DIM_TRIM_R, 0, -50, 50)};
   dimmerLoad(nvsReadU8(prefs, PREFS_KEY_DIM, dimmerDefaultPercent(), 0, 100),
              nvsReadU8(prefs, PREFS_KEY_DIM_GAMMA, DIM_GAMMA_X10, DIM_GAMMA_MIN,
                        DIM_GAMMA_MAX),
@@ -1640,20 +1645,20 @@ static void loadSettings(void) {
   if (saved[0]) {
     uint8_t idx = eyeDesignByName(saved);
     if (idx < designCount())
-      setEyeDesign(idx);
+      applyDesign(idx);
     else
       // Not damage, so not removed: the design may be a loaded one whose
       // file is gone, and loading it again should bring the setting back.
       healthNote("saved eye '%s' is not on this board; showing %s", saved,
                  designAt(0).name);
   }
-  // setEyeDesign() during setup() flags a change; nothing has actually been
+  // applyDesign() during setup() flags a change; nothing has actually been
   // modified since the store was read, so start clean.
   settingsDirty = false;
 
   DEBUG_PRINTF("[creeper-eyes] settings: eye=%s swap=%s flip=%s%s pupil=%s "
                "cpu=%u MHz\n",
-               designAt(eyeDesign).name, eyesSwapped ? "yes" : "no",
+               designAt(currentDesign).name, eyesSwapped ? "yes" : "no",
                panelFlip[0] ? "L" : "-", panelFlip[1] ? "R" : "-",
                pupilOn ? "on" : "off", (unsigned)getCpuFrequencyMhz());
 #if CLOCK
@@ -1668,17 +1673,15 @@ static void loadSettings(void) {
 static void listEyeDesigns(Print &out) {
   for (uint8_t i = 0; i < designCount(); i++)
     out.printf("  %u  %-10s%s%s\n", (unsigned)i, designAt(i).name,
-                  i == eyeDesign ? "  <- current" : "",
-                  i == LOADED_DESIGN ? "  (loaded from a file)" : "");
+                  i == currentDesign ? "  <- current" : "",
+                  i == LOADED_DESIGN_INDEX ? "  (loaded from a file)" : "");
   if (!eyeStoreAvailable())
     out.println(F("  no eye slot on this board; one USB flash adds it"));
   else if (!loadedPresent)
     out.println(F("  eye slot empty; load a file from the control page"));
 }
 
-// Gaze override.  Consumed in frame(), which sets the vestigial serEyeCtrl
-// flag from it -- that flag is the one piece of the original UART command
-// plumbing still wired into the motion state machine.
+// Gaze override.  Consumed in frame(), which holds the gaze while it is set.
 static bool gazeCmdActive = false;
 static bool gazeCmdPending = false;
 static int16_t gazeCmdX = 512, gazeCmdY = 512;
@@ -1780,7 +1783,7 @@ static void pollStartle(void) {
 
 // CROSSING THREADS ----------------------------------------------------------
 // See the note in state.h.  A recursive mutex because a few operations call
-// each other -- stateSetDilation cancels a startle, which is itself an
+// each other -- stateDilationSet cancels a startle, which is itself an
 // operation -- and a plain one would deadlock on the second take.
 
 static SemaphoreHandle_t stateMutex = NULL;
@@ -1816,7 +1819,7 @@ void statePollPending(void) {
     return; // the common case, and it costs one comparison
   LOCKED;
   if (pendingEyeDesign >= 0) { // re-checked now the lock is held
-    setEyeDesign((uint8_t)pendingEyeDesign);
+    applyDesign((uint8_t)pendingEyeDesign);
     pendingEyeDesign = -1;
   }
 }
@@ -1830,7 +1833,8 @@ void stateGet(DeviceState &o) {
   LOCKED;
   // The requested design, not the one currently on screen: they differ for at
   // most a frame, and a client that just set one should be told what it set.
-  uint8_t shown = pendingEyeDesign >= 0 ? (uint8_t)pendingEyeDesign : eyeDesign;
+  uint8_t shown =
+      pendingEyeDesign >= 0 ? (uint8_t)pendingEyeDesign : currentDesign;
   o.eyeIndex = shown;
   o.eyeCount = designCount();
   o.eyeName = designAt(shown).name;
@@ -1846,12 +1850,12 @@ void stateGet(DeviceState &o) {
   o.swapped = eyesSwapped;
   // Reported per eye as displayed, which is what a person can point at.
   for (uint8_t e = 0; e < 2; e++)
-    o.flipped[e] = e < NUM_EYES && panelFlip[flipSlot(eye[e].cs)];
+    o.flipped[e] = e < PANEL_COUNT && panelFlip[csPosition(panels[e].cs)];
   o.dimPercent = dimmerPercent();
   o.dimShown = dimmerShown();
   o.dimGammaX10 = dimmerGammaX10();
   for (uint8_t e = 0; e < 2; e++)
-    o.dimTrim[e] = e < NUM_EYES ? dimmerTrim(flipSlot(eye[e].cs)) : 0;
+    o.dimTrim[e] = e < PANEL_COUNT ? dimmerTrim(csPosition(panels[e].cs)) : 0;
   o.dimSweeping = dimmerSweeping();
   o.startleActive = (startleState != STARTLE_OFF);
 #if CLOCK
@@ -1883,12 +1887,12 @@ const char *stateEyeName(uint8_t i) {
   return i < designCount() ? designAt(i).name : NULL;
 }
 
-// Queued rather than applied: see the note in state.h.  eyeDesign itself is
+// Queued rather than applied: see the note in state.h.  currentDesign itself is
 // updated only when the renderer picks the request up, so a caller reading it
 // back immediately sees the old value for at most one frame -- which is why
 // the API re-reads through stateGet after setting, and gets the pending value
 // from there.
-bool stateSetEyeIndex(long i) {
+bool stateEyeSetIndex(long i) {
   LOCKED;
   if (i < 0 || i >= designCount())
     return false;
@@ -1896,7 +1900,7 @@ bool stateSetEyeIndex(long i) {
   return true;
 }
 
-bool stateSetEyeName(const char *name) {
+bool stateEyeSetName(const char *name) {
   LOCKED;
   uint8_t i = eyeDesignByName(name);
   if (i >= designCount())
@@ -1905,11 +1909,12 @@ bool stateSetEyeName(const char *name) {
   return true;
 }
 
-void stateNextEye(void) {
+void stateEyeNext(void) {
   LOCKED;
   // From whichever is the latest intention, so two presses in one frame move
   // two designs rather than fighting over one.
-  uint8_t from = pendingEyeDesign >= 0 ? (uint8_t)pendingEyeDesign : eyeDesign;
+  uint8_t from =
+      pendingEyeDesign >= 0 ? (uint8_t)pendingEyeDesign : currentDesign;
   pendingEyeDesign = (int16_t)((from + 1) % designCount());
 }
 
@@ -1925,10 +1930,10 @@ static void dropLoadedDesign(void) {
   LOCKED;
   if (!loadedPresent)
     return;
-  if (pendingEyeDesign == (int16_t)LOADED_DESIGN)
+  if (pendingEyeDesign == (int16_t)LOADED_DESIGN_INDEX)
     pendingEyeDesign = 0;
-  if (eyeDesign == LOADED_DESIGN)
-    setEyeDesign(0);
+  if (currentDesign == LOADED_DESIGN_INDEX)
+    applyDesign(0);
   loadedPresent = false;
 }
 
@@ -1943,7 +1948,7 @@ static EyeLoadResult eyeUploadGate(const char *name) {
     if (!strcmp(name, k))
       return EYE_LOAD_NAME_TAKEN;
   for (uint8_t i = 0; i < NUM_BUILTIN_DESIGNS; i++)
-    if (!strcmp(name, eyeDesigns[i].name))
+    if (!strcmp(name, builtinDesigns[i].name))
       return EYE_LOAD_NAME_TAKEN;
   dropLoadedDesign();
   // The next few seconds are spent erasing and writing flash from inside
@@ -1957,7 +1962,7 @@ void stateEyeSlot(EyeSlotState &o) {
   o.available = eyeStoreAvailable();
   o.loaded = loadedPresent;
   o.name = loadedPresent ? loadedDesign.name : NULL;
-  o.index = LOADED_DESIGN;
+  o.index = LOADED_DESIGN_INDEX;
   o.capacity = eyeStoreCapacity();
 }
 
@@ -1975,7 +1980,7 @@ EyeLoadResult stateEyeLoadEnd(void) {
     LOCKED;
     adoptLoadedDesign();
     // Selected, because seeing it is why anybody uploads one.
-    pendingEyeDesign = (int16_t)LOADED_DESIGN;
+    pendingEyeDesign = (int16_t)LOADED_DESIGN_INDEX;
   }
   return r;
 }
@@ -1987,7 +1992,7 @@ bool stateEyeUnload(void) {
   return eyeStoreErase();
 }
 
-bool stateSetGaze(long x, long y) {
+bool stateGazeSet(long x, long y) {
   LOCKED;
   if (x < 0 || x > 1023 || y < 0 || y > 1023)
     return false;
@@ -2003,7 +2008,7 @@ void stateGazeAuto(void) {
   gazeCmdActive = false;
 }
 
-bool stateSetDilation(long pct) {
+bool stateDilationSet(long pct) {
   LOCKED;
   if (pct < 0 || pct > 100)
     return false;
@@ -2018,13 +2023,13 @@ void stateDilationAuto(void) {
   dilateCmdActive = false;
 }
 
-void stateSetPupil(bool on) {
+void statePupilSet(bool on) {
   LOCKED;
   pupilOn = on;
   settingsDirty = true;
 }
 
-void stateSetSwap(bool sw) {
+void stateSwapSet(bool sw) {
   LOCKED;
   if (sw == eyesSwapped)
     return;
@@ -2036,7 +2041,7 @@ void stateSetSwap(bool sw) {
 // Stored at once rather than by save, since it cannot be tried out live
 // first -- see cpuSetting for why it waits for a restart.  Forget clears it
 // with everything else.
-bool stateSetCpu(long mhz) {
+bool stateCpuSet(long mhz) {
   if (!cpuValid(mhz))
     return false;
   LOCKED;
@@ -2055,16 +2060,16 @@ void stateRestart(void) {
   restartAskedMs = millis();
 }
 
-bool stateSetFlip(uint8_t e, bool flipped) {
+bool stateFlipSet(uint8_t e, bool flipped) {
   LOCKED;
-  if (e >= NUM_EYES)
+  if (e >= PANEL_COUNT)
     return false;
   // Resolved to the panel now, not at apply time: a swap queued in the same
   // gap moves the eye, and the setting must not follow it.
-  bool &slot = panelFlip[flipSlot(eye[e].cs)];
-  if (slot == flipped)
+  bool &setting = panelFlip[csPosition(panels[e].cs)];
+  if (setting == flipped)
     return true;
-  slot = flipped;
+  setting = flipped;
   flipPending = true; // applied between frames
   settingsDirty = true;
   return true;
@@ -2090,10 +2095,10 @@ bool stateDimSetGamma(long gammaX10) {
 
 bool stateDimSetTrim(uint8_t e, long percent) {
   LOCKED;
-  if (e >= NUM_EYES || percent < -50 || percent > 50)
+  if (e >= PANEL_COUNT || percent < -50 || percent > 50)
     return false;
-  // Resolved to the panel now, as stateSetFlip() does, and for its reason.
-  dimmerSetTrim(flipSlot(eye[e].cs), (int8_t)percent);
+  // Resolved to the panel now, as stateFlipSet() does, and for its reason.
+  dimmerSetTrim(csPosition(panels[e].cs), (int8_t)percent);
   settingsDirty = true;
   return true;
 }
@@ -2358,8 +2363,8 @@ static void cmdWarnings(Print &out) {
 // One line of everything worth knowing, plus an (unsaved) marker when the
 // live settings differ from the stored ones.
 static void cmdStatus(Print &out) {
-  out.printf("eye=%u/%u %s gaze=%s", (unsigned)eyeDesign,
-                (unsigned)designCount(), designAt(eyeDesign).name,
+  out.printf("eye=%u/%u %s gaze=%s", (unsigned)currentDesign,
+                (unsigned)designCount(), designAt(currentDesign).name,
                 gazeCmdActive ? "commanded" : "auto");
   if (gazeCmdActive)
     out.printf("(%d,%d)", gazeCmdX, gazeCmdY);
@@ -2371,9 +2376,11 @@ static void cmdStatus(Print &out) {
                                                 : " startle=hold");
   out.printf(" pupil=%s", pupilOn ? "on" : "off");
   out.printf(" swap=%s flip=%s%s%s", eyesSwapped ? "on" : "off",
-                panelFlip[flipSlot(eye[0].cs)] ? "L" : "-",
-                NUM_EYES > 1 && panelFlip[flipSlot(eye[NUM_EYES - 1].cs)]
-                    ? "R" : "-",
+                panelFlip[csPosition(panels[0].cs)] ? "L" : "-",
+                PANEL_COUNT > 1 &&
+                        panelFlip[csPosition(panels[PANEL_COUNT - 1].cs)]
+                    ? "R"
+                    : "-",
                 settingsDirty ? " (unsaved)" : "");
   out.printf(" dim=%u%% cpu=%uMHz", (unsigned)dimmerPercent(),
              (unsigned)getCpuFrequencyMhz());
@@ -2433,25 +2440,25 @@ void handleCommand(char *line, Print &out) {
         out.println(F("err: no eye slot on this board, or erasing it failed"));
         return;
       }
-      out.printf("ok slot empty; eye=%u %s\n", (unsigned)eyeDesign,
-                 designAt(eyeDesign).name);
+      out.printf("ok slot empty; eye=%u %s\n", (unsigned)currentDesign,
+                 designAt(currentDesign).name);
       return;
     }
     if (!strcmp(arg, "next") || !strcmp(arg, "toggle")) {
-      stateNextEye();
+      stateEyeNext();
     } else if (arg[0] >= '0' && arg[0] <= '9') { // by index
       long idx;
-      if (!parseLong(arg, 0, 255, idx) || !stateSetEyeIndex(idx)) {
+      if (!parseLong(arg, 0, 255, idx) || !stateEyeSetIndex(idx)) {
         out.printf("err: no design %s -- there are %u\n", arg,
                    (unsigned)stateEyeCount());
         return;
       }
-    } else if (!stateSetEyeName(arg)) { // by name
+    } else if (!stateEyeSetName(arg)) { // by name
         out.printf("err: no design '%s'. built in:\n", arg);
       listEyeDesigns(out);
       return;
     }
-    // The requested design, from stateGet(): eyeDesign itself only changes
+    // The requested design, from stateGet(): currentDesign itself only changes
     // when the renderer picks the request up, on the next frame, so reading
     // it here reported the design being replaced.
     DeviceState s;
@@ -2475,7 +2482,7 @@ void handleCommand(char *line, Print &out) {
     }
     long x, y;
     if (!parseLong(a1, 0, 1023, x) || !parseLong(a2, 0, 1023, y) ||
-        !stateSetGaze(x, y)) {
+        !stateGazeSet(x, y)) {
       out.println(F("err: both values must be 0-1023"));
       return;
     }
@@ -2765,11 +2772,11 @@ void handleCommand(char *line, Print &out) {
       for (char *c = arg; *c; c++)
         *c = (char)tolower((unsigned char)*c);
     if (!arg)
-      stateSetPupil(!pupilOn);
+      statePupilSet(!pupilOn);
     else if (!strcmp(arg, "on"))
-      stateSetPupil(true);
+      statePupilSet(true);
     else if (!strcmp(arg, "off"))
-      stateSetPupil(false);
+      statePupilSet(false);
     else {
       out.println(F("usage: pupil [on|off]"));
       return;
@@ -2783,7 +2790,7 @@ void handleCommand(char *line, Print &out) {
       out.println(F("usage: cpu [160|240]"));
       return;
     }
-    if (arg && !stateSetCpu(mhz)) {
+    if (arg && !stateCpuSet(mhz)) {
       out.println(F("err: the setting could not be stored"));
       return;
     }
@@ -2808,7 +2815,7 @@ void handleCommand(char *line, Print &out) {
         return;
       }
     }
-    stateSetSwap(want);
+    stateSwapSet(want);
     out.printf("ok swap=%s\n", eyesSwapped ? "on" : "off");
   } else if (!strcmp(cmd, "dim")) {
     char *a = strtok(NULL, " \t");
@@ -2864,7 +2871,7 @@ void handleCommand(char *line, Print &out) {
         return;
       }
     }
-    if (!stateSetFlip(e, want)) {
+    if (!stateFlipSet(e, want)) {
       out.println(F("err: no such panel in this build"));
       return;
     }
@@ -2872,7 +2879,7 @@ void handleCommand(char *line, Print &out) {
   } else if (!strcmp(cmd, "save")) {
     stateSave();
     out.printf("ok saved eye=%s swap=%s\n",
-                  designAt(eyeDesign).name, eyesSwapped ? "on" : "off");
+                  designAt(currentDesign).name, eyesSwapped ? "on" : "off");
   } else if (!strcmp(cmd, "forget")) {
     stateForget();
     out.println(F("ok settings cleared; build defaults apply at next boot"));
@@ -2891,7 +2898,7 @@ void handleCommand(char *line, Print &out) {
       return;
     }
     long pct;
-    if (!parseLong(arg, 0, 100, pct) || !stateSetDilation(pct)) {
+    if (!parseLong(arg, 0, 100, pct) || !stateDilationSet(pct)) {
       out.println(F("err: dilation must be 0-100"));
       return;
     }
@@ -2948,7 +2955,7 @@ static void pollBootButton(void) {
 #if SLEEP
       sleepNudge();
 #endif
-      stateNextEye();
+      stateEyeNext();
       DeviceState s; // the requested design; see the `eye` command
       stateGet(s);
       Serial.printf("ok eye=%u %s (button)\n", (unsigned)s.eyeIndex, s.eyeName);
@@ -3004,14 +3011,14 @@ void frame(            // Process motion for a single frame of left or right eye
 #if DEBUG || CONTROLLABLE
   static uint32_t frames = 0; // frames drawn since the last rate report
 #endif
-  static uint8_t eyeIndex = 0; // eye[] array counter
+  static uint8_t eyeIndex = 0; // panels[] array counter
   int16_t eyeX, eyeY;
   uint32_t t; // Time at start of function
-  // The only survivor of the original UART command protocol: while set, the
-  // motion code below holds the commanded gaze instead of drifting.
-  static uint16_t serEyeCtrl = 0;
+  // While set, the motion code below holds the commanded gaze instead of
+  // drifting.
+  static bool gazeHeld = false;
 
-  if (++eyeIndex >= NUM_EYES)
+  if (++eyeIndex >= PANEL_COUNT)
     eyeIndex = 0; // Cycle through eyes, 1 per call
 
 #if COMMANDS
@@ -3105,9 +3112,10 @@ void frame(            // Process motion for a single frame of left or right eye
       // bits wrap at 71 minutes.  The perf counters stay 32-bit because they
       // only grow while frames are drawn and sent, which a stall stops.
       const uint64_t elapsedUs = (uint64_t)elapsed * 1000;
-      const uint32_t restT = frames && elapsedUs > perfEyeUs
-                                 ? (uint32_t)((elapsedUs - perfEyeUs) / n / 100)
-                                 : 0;
+      const uint32_t restT =
+          frames && elapsedUs > perfFrameUs
+              ? (uint32_t)((elapsedUs - perfFrameUs) / n / 100)
+              : 0;
       DEBUG_PRINTF("[creeper-eyes] fps=%u draw=%u.%ums wait=%u.%ums "
                    "send=%u.%ums other=%u.%ums heap=%u\n",
                    (unsigned)fps, (unsigned)(drawT / 10), (unsigned)(drawT % 10),
@@ -3121,7 +3129,7 @@ void frame(            // Process motion for a single frame of left or right eye
       lastFps = fps;
 #endif
       frames = 0;
-      perfDrawUs = perfWaitUs = perfEyeUs = 0;
+      perfDrawUs = perfWaitUs = perfFrameUs = 0;
       portENTER_CRITICAL(&perfMux);
       perfSendUs = 0;
       portEXIT_CRITICAL(&perfMux);
@@ -3145,7 +3153,7 @@ void frame(            // Process motion for a single frame of left or right eye
   static int32_t eyeMoveDuration = 0L;
 
 #if CONTROLLABLE
-  serEyeCtrl = gazeCmdActive ? 1 : 0;
+  gazeHeld = gazeCmdActive;
   if (gazeCmdPending) { // a target from the console or the API
     gazeCmdPending = false;
     eyeOldX = eyeCurX; // glide from wherever the eye is now
@@ -3162,8 +3170,7 @@ void frame(            // Process motion for a single frame of left or right eye
 
   if (eyeInMotion) {             // Currently moving?
     if (dt >= eyeMoveDuration) { // Time up?  Destination reached.
-      if (serEyeCtrl) { // If serial controlled, we're done moving, but stay in
-                        // motion
+      if (gazeHeld) { // Held by a command: done moving, but stay in motion
         eyeX = eyeOldX = eyeNewX; // Save position
         eyeY = eyeOldY = eyeNewY;
       } else {
@@ -3206,26 +3213,27 @@ void frame(            // Process motion for a single frame of left or right eye
     timeOfLastBlink = t;
     uint32_t blinkDuration = random(36000, 72000); // ~1/28 - ~1/14 sec
     // Set up durations for both eyes (if not already winking)
-    for (uint8_t e = 0; e < NUM_EYES; e++) {
-      if (eye[e].blink.state == BLINK_NONE) {
-        eye[e].blink.state = BLINK_CLOSING;
-        eye[e].blink.startTime = t;
-        eye[e].blink.duration = blinkDuration;
+    for (uint8_t e = 0; e < PANEL_COUNT; e++) {
+      if (panels[e].blink.state == BLINK_NONE) {
+        panels[e].blink.state = BLINK_CLOSING;
+        panels[e].blink.startTime = t;
+        panels[e].blink.duration = blinkDuration;
       }
     }
     timeToNextBlink = blinkDuration * 3 + random(4000000);
   }
 #endif
 
-  if (eye[eyeIndex].blink.state) { // Eye currently blinking?
+  if (panels[eyeIndex].blink.state) { // Eye currently blinking?
     // Check if current blink state time has elapsed
-    if ((t - eye[eyeIndex].blink.startTime) >= eye[eyeIndex].blink.duration) {
+    if ((t - panels[eyeIndex].blink.startTime) >=
+        panels[eyeIndex].blink.duration) {
       // No buttons, or other state...
-      if (++eye[eyeIndex].blink.state > BLINK_OPENING) { // opened?
-        eye[eyeIndex].blink.state = BLINK_NONE;          // done blinking
+      if (++panels[eyeIndex].blink.state > BLINK_OPENING) { // opened?
+        panels[eyeIndex].blink.state = BLINK_NONE;          // done blinking
       } else { // closed, so now opening
-        eye[eyeIndex].blink.duration *= 2; // opening takes twice as long
-        eye[eyeIndex].blink.startTime = t;
+        panels[eyeIndex].blink.duration *= 2; // opening takes twice as long
+        panels[eyeIndex].blink.startTime = t;
       }
     }
   }
@@ -3259,38 +3267,40 @@ void frame(            // Process motion for a single frame of left or right eye
   // track the pupil (eyes tend to open only as much as needed -- e.g. look
   // down and the upper eyelid drops).  Just sample a point in the upper
   // lid map slightly above the pupil to determine the rendering threshold.
-  static uint8_t uThreshold = 128;
-  uint8_t lThreshold, n;
+  static uint8_t upperLid = 128; // filtered, so it follows the gaze smoothly
+  uint8_t lowerLid, upperDrawn;
 #if TRACKING
   int16_t sampleX = SCLERA_WIDTH / 2 - (eyeX / 2), // Reduce X influence
       sampleY = SCLERA_HEIGHT / 2 - (eyeY + IRIS_HEIGHT / 4);
   // Eyelid is slightly asymmetrical, so two readings are taken, averaged
+  uint8_t sample;
   if (sampleY < 0)
-    n = 0;
+    sample = 0;
   else
-    n = (upper[sampleY][sampleX] + upper[sampleY][SCREEN_WIDTH - 1 - sampleX]) /
-        2;
-  uThreshold = (uThreshold * 3 + n) / 4; // Filter/soften motion
+    sample = (upper[sampleY][sampleX] +
+              upper[sampleY][SCREEN_WIDTH - 1 - sampleX]) /
+             2;
+  upperLid = (upperLid * 3 + sample) / 4; // Filter/soften motion
   // Lower eyelid doesn't track the same way, but seems to be pulled upward
   // by tension from the upper lid.
-  lThreshold = 254 - uThreshold;
+  lowerLid = 254 - upperLid;
 #else // No tracking -- eyelids full open unless blink modifies them
-  uThreshold = lThreshold = 0;
+  upperLid = lowerLid = 0;
 #endif
 
   // The upper/lower thresholds are then scaled relative to the current
   // blink position so that blinks work together with pupil tracking.
-  if (eye[eyeIndex].blink.state) { // Eye currently blinking?
-    uint32_t s = (t - eye[eyeIndex].blink.startTime);
-    if (s >= eye[eyeIndex].blink.duration)
+  if (panels[eyeIndex].blink.state) { // Eye currently blinking?
+    uint32_t s = (t - panels[eyeIndex].blink.startTime);
+    if (s >= panels[eyeIndex].blink.duration)
       s = 255; // At or past blink end
     else
-      s = 255 * s / eye[eyeIndex].blink.duration; // Mid-blink
-    s = (eye[eyeIndex].blink.state == BLINK_OPENING) ? 1 + s : 256 - s;
-    n = (uThreshold * s + 254 * (257 - s)) / 256;
-    lThreshold = (lThreshold * s + 254 * (257 - s)) / 256;
+      s = 255 * s / panels[eyeIndex].blink.duration; // Mid-blink
+    s = (panels[eyeIndex].blink.state == BLINK_OPENING) ? 1 + s : 256 - s;
+    upperDrawn = (upperLid * s + 254 * (257 - s)) / 256;
+    lowerLid = (lowerLid * s + 254 * (257 - s)) / 256;
   } else {
-    n = uThreshold;
+    upperDrawn = upperLid;
   }
 
   // Pass all the derived values to the eye-rendering function:
@@ -3330,16 +3340,14 @@ void frame(            // Process motion for a single frame of left or right eye
   // to the address cards or the splash, and during those nothing is rendered.
   frames++;
 #endif
-  drawEye(eyeIndex, iScale, eyeX, eyeY, n, lThreshold);
+  drawEye(eyeIndex, iScale, eyeX, eyeY, upperDrawn, lowerLid);
 }
 
 // AUTONOMOUS IRIS SCALING (if no photocell or dial) -----------------------
 // Autonomous iris motion uses a fractal behavior to similate both the major
 // reaction of the eye plus the continuous smaller adjustments that occur.
 
-uint16_t oldIris = (IRIS_MIN + IRIS_MAX) / 2, newIris;
-
-void split( // Subdivides motion path into two sub-paths w/randomization
+void walkIris( // Subdivides motion path into two sub-paths w/randomization
     int16_t startValue, // Iris scale value (IRIS_MIN to IRIS_MAX) at start
     int16_t endValue,   // Iris scale value at end
     uint32_t startTime, // micros() at start
@@ -3351,8 +3359,8 @@ void split( // Subdivides motion path into two sub-paths w/randomization
     duration /= 2;  // then pick random center point within range:
     int16_t midValue = (startValue + endValue - range) / 2 + random(range);
     uint32_t midTime = startTime + duration;
-    split(startValue, midValue, startTime, duration, range); // First half
-    split(midValue, endValue, midTime, duration, range);     // Second half
+    walkIris(startValue, midValue, startTime, duration, range); // First half
+    walkIris(midValue, endValue, midTime, duration, range);     // Second half
   } else {      // No more subdivisons, do iris motion...
     int32_t dt; // Time (micros) since start of motion
     int16_t v;  // Interim value
@@ -3368,7 +3376,7 @@ void split( // Subdivides motion path into two sub-paths w/randomization
 }
 
 // MAIN LOOP -- runs continuously after setup() ----------------------------
-// Each pass spends about ten seconds inside split(), which calls frame() for
+// Each pass spends about ten seconds inside walkIris(), which calls frame() for
 // every frame drawn.  So frame() is where everything else is serviced -- the
 // console, the web server, OTA, the BOOT button -- since anything polled from
 // here would wait up to ten seconds for its turn.
@@ -3377,8 +3385,9 @@ void loop() {
 
   // Autonomous iris scaling -- invoke recursive function
 
-  newIris = random(IRIS_MIN, IRIS_MAX);
+  static uint16_t oldIris = (IRIS_MIN + IRIS_MAX) / 2;
+  uint16_t newIris = random(IRIS_MIN, IRIS_MAX);
 
-  split(oldIris, newIris, micros(), 10000000L, IRIS_MAX - IRIS_MIN);
+  walkIris(oldIris, newIris, micros(), 10000000L, IRIS_MAX - IRIS_MIN);
   oldIris = newIris;
 }
