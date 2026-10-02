@@ -7,6 +7,186 @@ results from working code. An entry may record a decision taken about it
 — including a decision not to build it, and why — without any of it
 having been written.
 
+## Code quality: a review on 2026-10-02
+
+A review of the hand-written code for how it reads, rather than for bugs:
+whether it is consistent, whether it can be followed, whether the comments
+are earning their place, whether things are well named, and whether the
+files divide the work sensibly. Most of what it found is in `src/main.cpp`.
+At 3,400 lines it is the one file that ignores the pattern the rest of the
+firmware follows: a module owns its state, and everything else reaches that
+state through functions, as `dimmer.cpp` and `sleepmode.cpp` do. Entries
+leave this list as they are done.
+
+### Bugs it found on the way
+
+- `PUT /api/v1/pupil` and `PUT /api/v1/tz` don't mark the settings unsaved,
+  so the page says "saved" for a change a reboot will lose. The console's
+  versions of both do.
+- The console's `sleep on` and `sleep HH:MM HH:MM` wake the eyes, because
+  every typed command nudges sleep. The API deliberately avoids this.
+- Startle is compiled only under `CLOCK`. With `-DCLOCK=0` it does nothing,
+  and the console and the API both still report success.
+- A `NETWORK=1, COMMANDS=0` build saves settings that it never loads at
+  boot, and it has no BOOT-button factory reset. Both are compiled under
+  `COMMANDS` only.
+- The control page writes the WiFi network name and the timezone into the
+  Device card as markup (`innerHTML`). A network name containing `<` breaks
+  the card.
+- With the pupil turned off, `PUPIL_OFF_SCALE` is applied before `frame()`
+  remaps the scale. The arithmetic says a dot about 5 px across may remain.
+  This hasn't been checked on a panel.
+- `tools/soak.py` compares `-DHTTP_TASK=1` against `-DHTTP_TASK=0` by
+  default. That flag exists only on the `http-task` branch, so on `main` the
+  default run compares a build with itself.
+- `tools/gen_page.py` treats `-DFAVICON=1`, which is `FAVICON_EYES`'s value,
+  as the Frank icon. Only a value ending in `EYES` is recognised.
+- `hardware/gen_board.py` labels the schematic "rev A" and the silkscreen
+  "rev B".
+- `src/diag/qr_test.cpp` sizes its test code for a 12-character password
+  derived from the MAC. The real setup portal uses a random 8-character one.
+
+### Clean-up that changes no behaviour
+
+- **Comments left behind when code moved.** About a dozen sit above code
+  they don't describe: in `main.cpp` around the shared text rendering, the
+  splash and the design lookup; in `net.cpp`, four fragments about code that
+  moved to `timekeeping.cpp`; in `ssd1327.h` above `setCS`; and three in
+  `index.html`.
+- **Comments that contradict each other.** One in `main.cpp` says `IRIS_MIN`
+  is the widest pupil; another, and the code, say it is `IRIS_MAX`.
+  `docs/CONFIG.md` repeats the wrong one.
+- **Comments no longer true.** About twenty, among them:
+  - "there is no authentication on this API" (`api.cpp`);
+  - "no real time source yet" (`config.h`);
+  - "secrets.ini" (`net.cpp`);
+  - "nothing outside this module and web.cpp knows the network exists"
+    (`net.h`);
+  - the tools' "works on the 3.9 that ships with PlatformIO";
+  - `config.h`'s list of the switches that aren't overridable.
+- **Explanations given more than once.** Keep each at its definition and
+  point to it from the other places:
+  - espota's acknowledgements, three times;
+  - the `loop()`/`split()` caveat, three times;
+  - "the server answers one client at a time", six times;
+  - which pin is Frank's right, three times.
+- **History in header comments.** Lines such as "Until now…", "This used to
+  live in…" and the argument in `state.h` against splitting `main.cpp`. A
+  header should say what the module guarantees now; the history belongs in
+  the docs.
+- **Dead code.**
+  - In `main.cpp`: an unused `SPISettings`, `IRIS_SMOOTH`, `SerialIn` with
+    its pin, a commented-out remap, and an empty `if`.
+  - In `sleepmode.cpp`: `sleepBegin()`, and `asleepNow` and `reason`, which
+    are written and never read.
+  - Functions nothing calls: `qrCapacity()`, `timeSource()`, and
+    `ssd1327.h`'s `parkCS()` and `sharedReset()`. The last two are
+    reimplemented in three places.
+  - Names visible to other files that needn't be: web.cpp's handlers and
+    `server`, and `wifiWaitConnected`/`netDrawPanel` in net.cpp.
+  - Unused includes in `main.cpp` and `timekeeping.cpp`.
+- **One way to write a trailing newline.** 50 string literals end in
+  `"…" "\n"`, against about 55 that write `\n` inline.
+- **Invariants nobody wrote down.**
+  - `TimeSource`'s declaration order is the ranking `timeAccept()` relies on.
+  - The blink timers are in µs.
+  - The state lock serializes writers, while `frame()` reads without it.
+  - The eye-file header's field offsets have no names.
+
+### Consistency and naming
+
+- **`main.cpp` still uses the upstream C style:** `typedef struct`, a
+  lowercase type, a `#define` state machine and `boolean`. Elsewhere in the
+  code: `NULL` 70 times and `nullptr` twice, and unprefixed enumerators in
+  `auth.cpp` (`ALLOW`, `WAITING`, `READY`…).
+- **The console's replies** use `ok`, `err:` and `usage:`, with three
+  outliers (`error:`, `err: usage:`, and bare text).
+- **The Python tools:**
+  - `Optional[X]` in some files and `X | None` in others;
+  - gaps in the annotation rule `docs/TESTING.md` sets;
+  - `open().read()` without `with`;
+  - `# noqa: BLE001` on some broad `except`s and not others;
+  - three ways of importing a sibling module.
+- **`platformio.ini`** repeats the same three OTA lines four times, and
+  respells inherited build flags. An `[ota]` section and `${…}`
+  interpolation would remove both.
+- **Names to change:**
+  - `eye[]` is the array of panels, so rename it `panels[]`, with
+    `NUM_EYES` → `PANEL_COUNT`. "Eye" already means a design and an API
+    resource, and the overlap has caused one bug already.
+  - "Slot" is the eye-file slot and also a panel position (`flipSlot`,
+    `displaySlot`, the dimmer's `slot` argument).
+  - The five artwork globals (`upper`, `lower`, `iris`, `polar`, `sclera`)
+    become one read-only `EyeArtwork`.
+  - `timeSynced` → `timeKnown()`, which its own comment says it means.
+  - Upstream's cryptic names: `ENBLINK`/`DEBLINK`, `serEyeCtrl`, `pBurst`,
+    `gBurst`, `colourFrames`, `split()`.
+  - `state.h` puts the verb first in nine names (`stateSetGaze`) and the
+    noun first in sixteen (`stateGazeAuto`).
+  - The settings keys are named by position: `PREFS_KEY_SLP_A`, `CLK_C0`.
+    Rename the macros and keep the stored strings.
+  - `S` in `api.cpp`, and `splashCenter`, which isn't only for the splash.
+- **One feature, several names.** The address cards have five names across
+  C, the API, the console and the page. Dilation is "width" on the page.
+- **"frank" is hard-coded** in the page's title and banners, the console's
+  `version` reply and a test, although the hostname is a build option.
+
+### Reorganising
+
+In this order, building every environment and running the API suite after
+each step:
+
+1. **Put the console on `state.h`.** Today it reads and writes `main.cpp`'s
+   globals directly, and has drifted from the API; that drift is the first
+   two bugs above. Give sleep, timezone and NTP real operations in
+   `state.h`, and stop writing `settingsDirty` directly.
+2. **Move the build switches still in `main.cpp` into `config.h`.** Put the
+   pins in a `pins.h` that the three panel diagnostics share, instead of
+   keeping their own copies.
+3. **Move the console into `console.cpp`**, with a command table that
+   drives both dispatch and `help`, replacing the 515-line if/else chain.
+   Move the BOOT button into `button.cpp`.
+4. **Split the rest of `main.cpp`, one module at a time:**
+   - `watchdog`;
+   - `designs`, along with one shared definition of the eye-file geometry,
+     which is written in five places now;
+   - `display` and `framesend`;
+   - `clockface` and `splash`;
+   - `settings`, with one constant for the NVS namespace that
+     `credentials.cpp` shares today only because both spell it "creeper";
+   - `state.cpp`.
+5. **Last, and riskiest: `motion` and `render`.**
+   - Make the iris walk non-blocking, so `loop()` shows the program's real
+     control flow; today a recursive `split()` blocks there for 10 s.
+   - Break the 340-line `frame()` into the steps it performs.
+   - Compare frame rate and latency before and after.
+
+Smaller moves that can come at any point:
+
+- Request intake (`arrival()`, `routeOf()`, `turnAway()`, the
+  `handleClient()` override) moves out of `auth.cpp` into a
+  `webserver.cpp`.
+- web.cpp's declarations move out of `net.h` into a `web.h`.
+- **Adding an eye design** takes four edits in two files; one list
+  generated by `gen_eyes.py` would make it one.
+- **Helpers written several times:** the control-character check (three
+  copies), the network-status name (three), and the date and time
+  formatting (nine).
+- **`api.cpp`'s route table** repeats the same four lines for each of 23
+  paths, and six GET handlers differ in one call.
+- **`index.html`'s script** is ordered by history rather than by card, and
+  shows and hides the banner differently from everything else.
+- **`favicon.h`** is included by no C file; `gen_page.py` reads it with a
+  regex. Two `.svg` files in `data/` would replace it.
+- **`rtcRead()`** decodes the registers in two interleaved passes.
+- **`LOCKED`** is a macro that hides a declaration.
+- **`tools/test_api.py` becomes three files:** the HTTP client, which
+  `load_test.py` and `soak.py` already import and which `ota.py` should use
+  too; the latency tools; and the tests, each with one signature and driven
+  by a table.
+- **In `hardware/`,** `make_outputs.py` passes its state through module
+  globals, and `gen_board.py`'s `build_board()` is 260 lines long.
+
 ## Online firmware updates
 
 **Not being built, as of 2026-09-22.** A judgement call rather than a blocked
