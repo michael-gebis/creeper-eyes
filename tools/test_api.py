@@ -31,16 +31,17 @@ Exit status is 0 if everything passed or was skipped, 1 otherwise.
 from __future__ import annotations
 
 import argparse
+import gzip
+import hashlib
+import json
 import re
 import socket
-import gzip
-import json
 import struct
 import sys
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Optional
+from typing import Any
 
 import make_eye  # beside this file; builds the eye files the slot tests send
 
@@ -86,21 +87,21 @@ class Result:
 class Api:
     """The device, over HTTP.  Carries whichever credential was configured."""
 
-    def __init__(self, host: str, res: Result, user: Optional[str] = None,
-                 password: Optional[str] = None, token: Optional[str] = None,
+    def __init__(self, host: str, res: Result, user: str | None = None,
+                 password: str | None = None, token: str | None = None,
                  timeout: float = 10.0) -> None:
         self.base: str = "http://%s/api/v1" % host
         self.root: str = "http://%s" % host
         self.res: Result = res
-        self.token: Optional[str] = token
+        self.token: str | None = token
         self.timeout: float = timeout
-        self.user: Optional[str] = user
-        self.password: Optional[str] = password
+        self.user: str | None = user
+        self.password: str | None = password
         self.opener: urllib.request.OpenerDirector
         self.recredential(user, password)
 
-    def recredential(self, user: Optional[str],
-                     password: Optional[str]) -> None:
+    def recredential(self, user: str | None,
+                     password: str | None) -> None:
         """Start using a different password.
 
         Needed because the credential test changes the board's password and
@@ -123,15 +124,15 @@ class Api:
             self.opener = urllib.request.build_opener()
 
     def raw(self, path: str, method: str = "GET",
-            body: Optional[Any] = None,
-            headers: Optional[dict[str, str]] = None,
+            body: Any | None = None,
+            headers: dict[str, str] | None = None,
             full: bool = False) -> tuple[int, bytes]:
         """One request.  Returns the status and body; never raises for HTTP.
         A bytes body is sent as it is, the way an eye file is uploaded."""
         url: str = (self.root + path) if full else (self.base + path)
         req: urllib.request.Request = urllib.request.Request(
             url, method=method)
-        data: Optional[bytes] = None
+        data: bytes | None = None
         if isinstance(body, bytes):
             data = body
             req.add_header("Content-Type", "application/octet-stream")
@@ -164,12 +165,12 @@ class Api:
                 # Not every HTTPError has a body: the ones urllib raises
                 # itself, like that digest give-up, have nothing to read.
                 try:
-                    body: bytes = e.read()
+                    reply: bytes = e.read()
                 except Exception:  # noqa: BLE001
-                    body = b""
-                out = (e.code, body)
+                    reply = b""
+                out = (e.code, reply)
                 break
-            except Exception as e:  # timeout, reset, DNS
+            except Exception as e:  # noqa: BLE001 -- timeout, reset, DNS
                 if attempt == attempts - 1:
                     self.res.fail("%s %s" % (method, path), repr(e)[:70])
                     return (0, b"")
@@ -187,7 +188,7 @@ class Api:
         return out
 
     def json(self, path: str, method: str = "GET",
-             body: Optional[Json] = None) -> Json:
+             body: Json | None = None) -> Json:
         code, raw = self.raw(path, method, body)
         if code == 0:
             return {}
@@ -200,8 +201,8 @@ class Api:
 # ---------------------------------------------------------------- assertions --
 
 def expect(res: Result, api: Api, label: str, path: str, method: str = "GET",
-           body: Optional[Any] = None, status: int = 200,
-           headers: Optional[dict[str, str]] = None,
+           body: Any | None = None, status: int = 200,
+           headers: dict[str, str] | None = None,
            full: bool = False) -> Json:
     """A request whose status is the thing under test."""
     code, raw = api.raw(path, method, body, headers, full)
@@ -257,6 +258,8 @@ def test_info(res: Result, api: Api) -> Json:
 def test_state(res: Result, api: Api) -> Json:
     res.heading("GET /state -- everything a client polls")
     s: Json = expect(res, api, "GET /state", "/state")
+    before: int = len(res.failed)
+    count: int = 0
     for path in ("eye.index", "eye.name", "eye.count",
                  "gaze.mode", "gaze.x", "gaze.y",
                  "dilate.mode", "dilate.percent",
@@ -273,12 +276,13 @@ def test_state(res: Result, api: Api) -> Json:
                  "system.freeHeap", "system.uptimeSeconds",
                  "system.settingsDirty"):
         field(res, s, path, "state has %s" % path)
-    if s:
-        res.ok("all %d documented fields present" % 39)
+        count += 1
+    if s and len(res.failed) == before:
+        res.ok("all %d documented fields present" % count)
     return s
 
 
-def test_eyes(res: Result, api: Api, start: Json) -> None:
+def test_eyes(res: Result, api: Api) -> None:
     res.heading("eyes")
     designs: list[Any] = expect(
         res, api, "GET /eyes", "/eyes").get("designs", [])
@@ -490,7 +494,7 @@ def slot_unchanged(res: Result, api: Api, label: str, before: Json) -> None:
          (before.get("loaded"), before.get("name")))
 
 
-def test_eye_slot(res: Result, api: Api, eye_file: Optional[str]) -> None:
+def test_eye_slot(res: Result, api: Api, eye_file: str | None) -> None:
     """The eye slot (docs/EYE_FILES.md).  Everything refused here is refused
     before the board erases anything, which is checked, so it runs every
     time.  A real upload writes flash and runs only with --eye-file."""
@@ -661,7 +665,7 @@ def test_toggles(res: Result, api: Api, start: Json) -> None:
            {"left": "yes"}, status=400)
 
 
-def test_clock(res: Result, api: Api, start: Json, info: Json) -> None:
+def test_clock(res: Result, api: Api, start: Json) -> None:
     res.heading("clock")
     was_on: Any = field(res, start, "clock.on", "clock.on")
     r: Json = expect(res, api, "PUT /clock on", "/clock", "PUT", {"on": True})
@@ -701,7 +705,7 @@ def test_clock(res: Result, api: Api, start: Json, info: Json) -> None:
             res.fail("the time took", "reads %s" % r.get("time"))
 
     # Put the display settings back the way they were.
-    api.raw("/clock", "PUT", "PUT" and {
+    api.raw("/clock", "PUT", {
         "on": was_on,
         "seconds": field(res, start, "clock.seconds", "clock.seconds"),
         "rate": field(res, start, "clock.rate", "clock.rate"),
@@ -872,7 +876,7 @@ def test_errors(res: Result, api: Api) -> None:
             code: int = r.status
     except urllib.error.HTTPError as e:
         code = e.code
-    except Exception as e:
+    except Exception:  # noqa: BLE001
         code = 0
     if code == 400:
         res.ok("malformed JSON is 400", "400")
@@ -886,7 +890,7 @@ def test_errors(res: Result, api: Api) -> None:
         res.fail("errors carry a reason", repr(err)[:50])
 
 
-def raw_reply(host: str, data: bytes, wait: float = 10.0) -> tuple[Optional[int], float]:
+def raw_reply(host: str, data: bytes, wait: float = 10.0) -> tuple[int | None, float]:
     """Send bytes on a fresh connection; return the reply's status (None if
     the board closed without one) and how long that took.  For requests
     urllib will not send: a malformed one, or one that never finishes."""
@@ -903,7 +907,7 @@ def raw_reply(host: str, data: bytes, wait: float = 10.0) -> tuple[Optional[int]
                 reply += chunk
     except OSError:
         pass
-    m: Optional[re.Match[bytes]] = re.match(rb"HTTP/1\.[01] (\d{3})", reply)
+    m: re.Match[bytes] | None = re.match(rb"HTTP/1\.[01] (\d{3})", reply)
     return (int(m.group(1)) if m else None, time.time() - started)
 
 
@@ -963,11 +967,11 @@ def test_cors(res: Result, api: Api, info: Json) -> None:
         api.base + "/eye", method="OPTIONS")
     try:
         with api.opener.open(req, timeout=api.timeout) as r:
-            origin: Optional[str] = r.headers.get(
+            origin: str | None = r.headers.get(
                 "Access-Control-Allow-Origin")
-            methods: Optional[str] = r.headers.get(
+            methods: str | None = r.headers.get(
                 "Access-Control-Allow-Methods")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         res.fail("preflight headers", repr(e)[:50])
         return
     if info.get("auth"):
@@ -989,8 +993,8 @@ def test_cors(res: Result, api: Api, info: Json) -> None:
         req.add_header("Authorization", "Bearer " + api.token)
     try:
         with api.opener.open(req, timeout=api.timeout) as r:
-            xfo: Optional[str] = r.headers.get("X-Frame-Options")
-            csp: Optional[str] = r.headers.get("Content-Security-Policy")
+            xfo: str | None = r.headers.get("X-Frame-Options")
+            csp: str | None = r.headers.get("Content-Security-Policy")
     except Exception as e:  # noqa: BLE001
         res.fail("the page's framing headers", repr(e)[:50])
         return
@@ -999,7 +1003,7 @@ def test_cors(res: Result, api: Api, info: Json) -> None:
 
 
 def test_auth(res: Result, api: Api, info: Json, host: str) -> None:
-    res.heading("credentials")
+    res.heading("authentication")
     if not info.get("auth"):
         res.skip("unauthenticated requests", "this build requires no credential")
         return
@@ -1012,7 +1016,7 @@ def test_auth(res: Result, api: Api, info: Json, host: str) -> None:
                 code: int = r.status
         except urllib.error.HTTPError as e:
             code = e.code
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             res.fail("%s without a credential" % path, repr(e)[:50])
             continue
         if code == 401:
@@ -1054,12 +1058,12 @@ def test_auth(res: Result, api: Api, info: Json, host: str) -> None:
                  "needs --user and --password")
         return
     probe: str = "/api/v1/state?probe=1"
-    header: Optional[str] = digest_header(host, probe, api.user, api.password)
+    header: str | None = digest_header(host, probe, api.user, api.password)
     if header is None:
         res.fail("a digest answer is bound to its request", "no challenge")
         return
 
-    def status_with(path: str) -> Optional[int]:
+    def status_with(path: str) -> int | None:
         req: urllib.request.Request = urllib.request.Request(
             "http://%s%s" % (host, path))
         req.add_header("Authorization", header)
@@ -1080,7 +1084,8 @@ def test_auth(res: Result, api: Api, info: Json, host: str) -> None:
          status_with("/api/v1/state?probe=2"), 401)
 
 
-def test_credentials(res: Result, api: Api, info: Json, args) -> None:
+def test_credentials(res: Result, api: Api, info: Json,
+                     args: argparse.Namespace) -> None:
     """The credential endpoints.
 
     Everything here except the last group is read-only or expected to be
@@ -1393,8 +1398,6 @@ def test_wifi(res: Result, api: Api) -> None:
            status=400)
 
 
-# --------------------------------------------------------------------- driver --
-
 def test_cpu(res: Result, api: Api) -> None:
     """The CPU speed, read-only: a change is stored at once and takes effect at
     the next restart, so changing it is left to --restart."""
@@ -1455,7 +1458,7 @@ def test_restart(res: Result, api: Api) -> None:
     if was not in (160, 240):
         res.skip("the CPU speed across a restart", "no CPU speed setting")
         return
-    other: int = 400 - was  # 160 <-> 240
+    other: int = 240 if was == 160 else 160
     r = expect(res, api, "PUT /cpu %d" % other, "/cpu", "PUT", {"mhz": other})
     same(res, "stored", r.get("setting"), other)
     same(res, "not applied until the restart", r.get("mhz"), was)
@@ -1503,7 +1506,7 @@ def measure(res: Result, api: Api, n: int) -> int:
     visits each endpoint once or twice, and one sample of a noisy number is
     not a measurement.
     """
-    probes: list[tuple[str, str, Optional[Json]]] = [
+    probes: list[tuple[str, str, Json | None]] = [
         ("/eye", "GET", None),
         ("/eyes", "GET", None),
         ("/state", "GET", None),
@@ -1629,7 +1632,7 @@ def linear_histogram(values: list[float], hi: float, buckets: int = 20,
 
 
 def digest_header(host: str, path: str, user: str, password: str,
-                  method: str = "GET") -> Optional[str]:
+                  method: str = "GET") -> str | None:
     """An Authorization header for raw-socket requests.
 
     The challenge is collected once and its nonce reused.  That is legal, and
@@ -1643,9 +1646,6 @@ def digest_header(host: str, path: str, user: str, password: str,
     this returns -- and because the failure is itself a 401, it never
     recovers.  Build the header last, immediately before it is used.
     """
-    import hashlib
-    import urllib.request
-
     try:
         urllib.request.urlopen("http://%s%s" % (host, path), timeout=6)
         return None  # no challenge, so the board is not asking for one
@@ -1657,7 +1657,7 @@ def digest_header(host: str, path: str, user: str, password: str,
         return None
 
     def param(name: str) -> str:
-        m: Optional[re.Match[str]] = re.search(
+        m: re.Match[str] | None = re.search(
             r'%s="([^"]*)"' % name, challenge)
         return m.group(1) if m else ""
 
@@ -1678,8 +1678,8 @@ def digest_header(host: str, path: str, user: str, password: str,
 
 
 def decompose(res: Result, api: Api, n: int, host: str, path: str,
-              user: Optional[str], password: Optional[str],
-              token: Optional[str]) -> int:
+              user: str | None, password: str | None,
+              token: str | None) -> int:
     """Split a request into handshake, wait, and transfer.
 
     Written to settle an argument the ordinary timings could not.  A trivial
@@ -1714,7 +1714,7 @@ def decompose(res: Result, api: Api, n: int, host: str, path: str,
 
     # Last thing before the loop: a challenge is only good until the next
     # one is issued, and everything above could have provoked one.
-    auth: Optional[str] = None
+    auth: str | None = None
     if token:
         auth = "Bearer " + token
     elif user and password:
@@ -1838,6 +1838,8 @@ def decompose(res: Result, api: Api, n: int, host: str, path: str,
     return 0
 
 
+# --------------------------------------------------------------------- driver --
+
 def main(argv: list[str]) -> int:
     ap: argparse.ArgumentParser = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1892,7 +1894,7 @@ def main(argv: list[str]) -> int:
         return 1
 
     test_page(res, api)
-    test_eyes(res, api, start)
+    test_eyes(res, api)
     test_eye_slot(res, api, args.eye_file)
     test_validation(res, api, start)
     test_dim(res, api, start)
@@ -1901,7 +1903,7 @@ def main(argv: list[str]) -> int:
     test_dilate(res, api)
     test_toggles(res, api, start)
     test_cpu(res, api)
-    test_clock(res, api, start, info)
+    test_clock(res, api, start)
     test_time(res, api)
     test_ntp(res, api)
     test_rtc(res, api, info)

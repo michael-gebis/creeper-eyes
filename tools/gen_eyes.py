@@ -10,9 +10,6 @@ Also renders preview PNGs using the same arithmetic the firmware uses, so the
 result can be checked without flashing.
 """
 
-# Annotations are evaluated lazily, so the built-in generic syntax below
-# (list[int], Image.Image | None) works on the 3.9 that ships with some
-# PlatformIO installs as well as on newer interpreters.
 from __future__ import annotations
 
 import json
@@ -29,9 +26,7 @@ from PIL import Image
 # needs, so it is aliased rather than imported.
 PixelMap = Any
 
-# These are evaluated at import time, not lazily like the annotations, so
-# they need the built-in generic syntax that arrived in 3.9 -- which is the
-# oldest interpreter this has to run on.
+# Type aliases for the annotations below.
 RGB = tuple[int, int, int]          # an 8-bit-per-channel pixel
 Config = dict[str, Any]             # one design's parsed config.eye
 PolarTable = list[list[int]]        # IRIS x IRIS, packed (angle<<7)|distance

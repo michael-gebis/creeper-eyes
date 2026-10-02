@@ -39,12 +39,12 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Any, Optional
+from typing import Any
+
+from ota import from_secrets
+from test_api import Api, Result
 
 HERE: str = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
-from ota import from_secrets  # noqa: E402
-from test_api import Api, Result  # noqa: E402
 
 # Serial lines that mean the board went down.  "rst:" is the ROM's first
 # line after any reset; the others say which kind.
@@ -79,7 +79,7 @@ class SerialWatch(threading.Thread):
         return self.buf.decode("utf-8", "replace").splitlines()
 
 
-def uptime(api: Api, wait: float = 90.0) -> Optional[int]:
+def uptime(api: Api, wait: float = 90.0) -> int | None:
     """The board's uptime in seconds, waiting out a restart in progress."""
     end: float = time.time() + wait
     while time.time() < end:
@@ -142,11 +142,11 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--token", help="bearer token; read from secrets.h if omitted")
     ap.add_argument("--user", help="digest username; read from secrets.h if omitted")
     ap.add_argument("--password", help="digest password; read from secrets.h if omitted")
-    args: argparse.Namespace = ap.parse_args(argv)
+    args: argparse.Namespace = ap.parse_args(argv[1:])
 
-    token: Optional[str] = args.token or from_secrets("AUTH_TOKEN_VALUE")
-    user: Optional[str] = args.user or from_secrets("AUTH_USER")
-    password: Optional[str] = args.password or from_secrets("AUTH_PASS")
+    token: str | None = args.token or from_secrets("AUTH_TOKEN_VALUE")
+    user: str | None = args.user or from_secrets("AUTH_USER")
+    password: str | None = args.password or from_secrets("AUTH_PASS")
     creds: list[str] = []
     api: Api
     if token:
@@ -157,13 +157,13 @@ def main(argv: list[str]) -> int:
             creds = ["--user", user, "--password", password]
         api = Api(args.host, Result(), user, password)
 
-    watch: Optional[SerialWatch] = SerialWatch(args.port) if args.port else None
+    watch: SerialWatch | None = SerialWatch(args.port) if args.port else None
     if watch:
         watch.start()
 
     start: float = time.time()
     deadline: float = start + args.minutes * 60
-    last_up: Optional[int] = uptime(api)
+    last_up: int | None = uptime(api)
     last_t: float = time.time()
     if last_up is None:
         print("%s does not answer" % args.host)
@@ -179,7 +179,7 @@ def main(argv: list[str]) -> int:
         ok, summary = suite(args.host, creds, extra)
         runs += 1
         failed += 0 if ok else 1
-        up: Optional[int] = uptime(api)
+        up: int | None = uptime(api)
         now: float = time.time()
         # Without a restart, uptime keeps pace with the clock.  Comparing it
         # with the last reading alone would miss a restart early in a long
@@ -216,4 +216,4 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(main(sys.argv))

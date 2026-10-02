@@ -15,8 +15,6 @@ Standard library only: no Pillow, no TeensyEyes checkout.  Those are for
 regenerating the headers themselves (tools/gen_eyes.py), not for this.
 """
 
-# Annotations are evaluated lazily, so the built-in generic syntax below
-# works on the 3.9 that ships with some PlatformIO installs.
 from __future__ import annotations
 
 import argparse
@@ -49,12 +47,12 @@ PAYLOAD_BYTES: int = sum(width * count for _, width, count in TABLES)
 # One C array: `const uint16_t scleraDragon[SCLERA_HEIGHT][SCLERA_WIDTH] = {`
 # then values to the closing `};`.  Non-greedy, so each array stops at its
 # own terminator.
-ARRAY = re.compile(
+ARRAY: re.Pattern[str] = re.compile(
     r"const\s+uint(8|16)_t\s+(sclera|iris|upper|lower|polar)(\w+)\s*"
     r"(?:\[[^\]]*\]\s*)+=\s*\{(.*?)\}\s*;",
     re.DOTALL)
 
-NAME_OK = re.compile(r"[a-z][a-z0-9]{0,%d}$" % (NAME_MAX - 1))
+NAME_OK: re.Pattern[str] = re.compile(r"[a-z][a-z0-9]{0,%d}$" % (NAME_MAX - 1))
 
 
 class EyeError(Exception):
@@ -166,7 +164,7 @@ def make(source: str, out_dir: str) -> str:
 
 
 def main(argv: Sequence[str]) -> int:
-    ap = argparse.ArgumentParser(
+    ap: argparse.ArgumentParser = argparse.ArgumentParser(
         description="Build eye files for the board's eye slot "
                     "(docs/EYE_FILES.md).")
     ap.add_argument("designs", nargs="*",
@@ -177,7 +175,7 @@ def main(argv: Sequence[str]) -> int:
                     help="where to write them (default: dist/eyes/)")
     ap.add_argument("--check", metavar="FILE",
                     help="verify an eye file instead of building one")
-    args = ap.parse_args(argv[1:])
+    args: argparse.Namespace = ap.parse_args(argv[1:])
 
     try:
         if args.check:

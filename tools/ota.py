@@ -8,15 +8,11 @@ Why this exists rather than `pio run -t upload`: espota.py reports failure for
 updates that have already succeeded, and it does so most of the time on a
 weak link.
 
-The cause is ack bookkeeping, not the transfer.  espota performs exactly one
-recv() for every 1024-byte chunk it sends, while the board acknowledges once
-per read of up to 1460 bytes -- ArduinoOTA.cpp clamps to 1460, not to the
-sender's chunk size.  As long as the board keeps up, a read covers one chunk
-and the counts happen to match.  When the link stalls and data backs up in the
-board's receive buffer, one read covers two chunks and emits one ack where
-espota waits for two.  From then on espota is an ack behind, and at the end of
-the file it blocks on a recv that will never come, times out after ten
-seconds, and prints "Error Uploading" -- having delivered every byte.
+The cause is ack bookkeeping, not the transfer: espota falls an
+acknowledgement behind whenever the link stalls, and at the end of the file
+blocks on a recv that will never come, times out after ten seconds, and prints
+"Error Uploading" -- having delivered every byte.  The comment above the
+upload section below explains the mechanism.
 
 Confirmed rather than guessed: all 1351 chunks of a 1.38 MB image were sent on
 a run espota called a failure, and draining acks opportunistically instead of
@@ -25,8 +21,7 @@ reboot the board.
 
 So the upload is implemented here instead, correctly: the image is streamed
 and acknowledgements are drained as they arrive, without requiring any
-particular number of them.  TCP already supplies the backpressure espota was
-trying to impose by counting.  See the comments above push().
+particular number of them.
 
 It then asks the board anyway.  After uploading it polls /api/v1/info until
 the commit changes to the one just built and uptime resets -- because an
@@ -53,31 +48,32 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from typing import Optional
+from typing import Any
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-SECRETS = os.path.join(ROOT, "include", "secrets.h")
+HERE: str = os.path.dirname(os.path.abspath(__file__))
+ROOT: str = os.path.dirname(HERE)
+SECRETS: str = os.path.join(ROOT, "include", "secrets.h")
 
 
 def default_pio() -> str:
     """PlatformIO's command: `pio` on the PATH -- a standalone install, such as
     `uv tool install platformio` -- or else the copy inside the VS Code
     extension's own environment, for someone who has only the extension."""
-    found: Optional[str] = shutil.which("pio")
+    found: str | None = shutil.which("pio")
     if found:
         return found
     return os.path.expanduser("~/.platformio/penv/Scripts/pio.exe" if os.name == "nt"
                               else "~/.platformio/penv/bin/pio")
 
 
-def from_secrets(name: str) -> Optional[str]:
+def from_secrets(name: str) -> str | None:
     """A #define out of the gitignored header, for local convenience."""
     try:
-        src: str = open(SECRETS, encoding="utf-8").read()
+        with open(SECRETS, encoding="utf-8") as f:
+            src: str = f.read()
     except OSError:
         return None
-    m: Optional[re.Match[str]] = re.search(
+    m: re.Match[str] | None = re.search(
         r'#define\s+%s\s+"([^"]*)"' % name, src)
     return m.group(1) if m else None
 
@@ -100,8 +96,8 @@ def local_address_for(target: str) -> str:
         s.close()
 
 
-def api(host: str, path: str, token: Optional[str], user: Optional[str],
-        password: Optional[str], timeout: float = 6.0) -> Optional[dict]:
+def api(host: str, path: str, token: str | None, user: str | None,
+        password: str | None, timeout: float = 6.0) -> dict[str, Any] | None:
     req: urllib.request.Request = urllib.request.Request(
         "http://%s/api/v1%s" % (host, path))
     if token:
@@ -138,7 +134,7 @@ def expected_commit() -> str:
     return rev + ("+dirty" if git("status", "--porcelain") else "")
 
 
-def build(pio: str, env: str) -> Optional[str]:
+def build(pio: str, env: str) -> str | None:
     print("building %s..." % env, end="", flush=True)
     r: subprocess.CompletedProcess[bytes] = subprocess.run(
         [pio, "run", "-e", env], cwd=ROOT,
@@ -168,7 +164,8 @@ def build(pio: str, env: str) -> Optional[str]:
 # connects back to us over TCP, we send the image, it writes it to flash and
 # answers "OK".  What espota gets wrong is the bookkeeping in the middle: it
 # performs exactly one recv() for every 1024-byte chunk it sends, while the
-# board acknowledges once per read of up to 1460 bytes.  Those counts match
+# board acknowledges once per read of up to 1460 bytes (ArduinoOTA.cpp clamps
+# to 1460, not to the sender's chunk size).  Those counts match
 # only while the board keeps up.  As soon as the link stalls and data backs up
 # in the board's receive buffer, one read covers two chunks and answers once --
 # and espota spends the rest of the file an acknowledgement behind, ending on
@@ -187,9 +184,9 @@ def build(pio: str, env: str) -> Optional[str]:
 # ArduinoOTA treats a failed printf as a dead connection and gives up.  Hence
 # select() on both directions rather than a simple sendall().
 
-FLASH = 0
-AUTH = 200
-SEND_CHUNK = 1460  # what the board reads at once; keeps progress smooth
+FLASH: int = 0
+AUTH: int = 200
+SEND_CHUNK: int = 1460  # what the board reads at once; keeps progress smooth
 
 
 class UploadError(Exception):
@@ -200,8 +197,8 @@ def md5hex(s: str) -> str:
     return hashlib.md5(s.encode("utf-8")).hexdigest()
 
 
-def invite(udp: socket.socket, addr: tuple, local_port: int, size: int,
-           digest: str, password: str, name: str) -> None:
+def invite(udp: socket.socket, addr: tuple[str, int], local_port: int,
+           size: int, digest: str, password: str, name: str) -> None:
     """Tell the board an update is coming and where to collect it.
 
     The board answers "OK", or "AUTH <nonce>" if it wants a password.  Note
@@ -335,7 +332,8 @@ def await_ok(conn: socket.socket, heard: bytes, timeout: float = 60.0) -> None:
 def push(ip: str, local: str, port: int, password: str,
          firmware: str) -> tuple[bool, str]:
     """Upload one image.  True means the board confirmed it."""
-    blob: bytes = open(firmware, "rb").read()
+    with open(firmware, "rb") as f:
+        blob: bytes = f.read()
     digest: str = hashlib.md5(blob).hexdigest()
 
     # Listen before inviting, so there is no window in which the board
@@ -343,7 +341,7 @@ def push(ip: str, local: str, port: int, password: str,
     srv: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     udp: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    conn: Optional[socket.socket] = None
+    conn: socket.socket | None = None
     try:
         srv.bind((local, 0))
         srv.listen(1)
@@ -393,9 +391,9 @@ def main(argv: list[str]) -> int:
     args: argparse.Namespace = ap.parse_args(argv[1:])
 
     ota_pw: str = args.password or from_secrets("OTA_PASSWORD") or ""
-    token: Optional[str] = args.token or from_secrets("AUTH_TOKEN_VALUE")
-    user: Optional[str] = args.user or from_secrets("AUTH_USER")
-    api_pw: Optional[str] = args.api_password or from_secrets("AUTH_PASS")
+    token: str | None = args.token or from_secrets("AUTH_TOKEN_VALUE")
+    user: str | None = args.user or from_secrets("AUTH_USER")
+    api_pw: str | None = args.api_password or from_secrets("AUTH_PASS")
 
     try:
         ip: str = resolve(args.host)
@@ -409,7 +407,7 @@ def main(argv: list[str]) -> int:
     # Give a board that is still coming up a chance.  Rejoining WiFi after a
     # reboot takes twelve to fifteen seconds, which is exactly the window you
     # land in when updating twice in a row.
-    before: Optional[dict] = api(ip, "/info", token, user, api_pw)
+    before: dict[str, Any] | None = api(ip, "/info", token, user, api_pw)
     if before is None:
         print("waiting for the board...", end="", flush=True)
         deadline: float = time.time() + 60
@@ -433,7 +431,7 @@ def main(argv: list[str]) -> int:
         print("  note: --no-build, so the image on disk may predate the")
         print("  working tree.  The check below compares the board against")
         print("  what HEAD says now, and will disagree if it does.")
-    firmware: Optional[str] = (
+    firmware: str | None = (
         None if args.no_build else build(args.pio, args.env))
     if not args.no_build and firmware is None:
         return 1
@@ -453,7 +451,7 @@ def main(argv: list[str]) -> int:
     # the earlier reading plus however long we have taken since.
     uptime_before: float = 10 ** 9
     measured_at: float = time.time()
-    st: Optional[dict] = api(ip, "/state", token, user, api_pw)
+    st: dict[str, Any] | None = api(ip, "/state", token, user, api_pw)
     if st:
         uptime_before = st.get("system", {}).get("uptimeSeconds", 10 ** 9)
 
@@ -474,11 +472,11 @@ def main(argv: list[str]) -> int:
         deadline: float = time.time() + 90
         while time.time() < deadline:
             time.sleep(4)
-            info: Optional[dict] = api(
+            info: dict[str, Any] | None = api(
                 ip, "/info", token, user, api_pw, timeout=4)
             if not info:
                 continue
-            state: Optional[dict] = api(
+            state: dict[str, Any] | None = api(
                 ip, "/state", token, user, api_pw, timeout=4)
             up: float = (state or {}).get(
                 "system", {}).get("uptimeSeconds", 10 ** 9)

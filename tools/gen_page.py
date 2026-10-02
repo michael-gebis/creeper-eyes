@@ -20,7 +20,7 @@ from __future__ import annotations
 import gzip
 import os
 import re
-from typing import Any, Optional
+from typing import Any
 
 Import("env")  # noqa: F821
 env: Any
@@ -38,7 +38,8 @@ def selected_favicon() -> str:
     The macros are read out of favicon.h rather than duplicated here, so the
     icons have exactly one definition and it is the one the C code uses.
     """
-    src: str = open(FAVICON_H, encoding="utf-8").read()
+    with open(FAVICON_H, encoding="utf-8") as f:
+        src: str = f.read()
 
     # -DFAVICON=FAVICON_EYES arrives as a CPPDEFINES tuple or a bare string.
     want: str = "FAVICON_FRANK"
@@ -48,7 +49,7 @@ def selected_favicon() -> str:
                 want = str(define[1])
 
     name: str = "FAVICON_URI_EYES" if want.endswith("EYES") else "FAVICON_URI_FRANK"
-    m: Optional[re.Match[str]] = re.search(
+    m: re.Match[str] | None = re.search(
         r"#define\s+" + name + r"\b(.*?)(?=\n#define|\n#if|\Z)",
         src, re.S)
     if not m:
@@ -99,7 +100,8 @@ def main() -> None:
     os.makedirs(BUILD, exist_ok=True)
     existing: str = ""
     if os.path.exists(OUT):
-        existing = open(OUT, encoding="utf-8").read()
+        with open(OUT, encoding="utf-8") as f:
+            existing = f.read()
     if existing != header:
         with open(OUT, "w", encoding="utf-8", newline="\n") as f:
             f.write(header)

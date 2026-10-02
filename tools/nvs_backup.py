@@ -43,34 +43,31 @@ import sys
 import tempfile
 import time
 import zlib
-from typing import Any, Optional
+from typing import Any
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-
-PARTITION_TABLE_OFFSET = 0x8000
-PARTITION_TABLE_SIZE = 0x0C00
-PARTITION_MAGIC = 0x50AA
+PARTITION_TABLE_OFFSET: int = 0x8000
+PARTITION_TABLE_SIZE: int = 0x0C00
+PARTITION_MAGIC: int = 0x50AA
 
 # NVS on-flash layout, from the ESP-IDF documentation.
-PAGE_SIZE = 4096
-ENTRY_SIZE = 32
-ENTRIES_PER_PAGE = 126
-BITMAP_OFFSET = 32
-ENTRY_OFFSET = 64
+PAGE_SIZE: int = 4096
+ENTRY_SIZE: int = 32
+ENTRIES_PER_PAGE: int = 126
+BITMAP_OFFSET: int = 32
+ENTRY_OFFSET: int = 64
 
-PAGE_ACTIVE = 0xFFFFFFFE
-PAGE_FULL = 0xFFFFFFFC
-PAGE_FREEING = 0xFFFFFFF8
+PAGE_ACTIVE: int = 0xFFFFFFFE
+PAGE_FULL: int = 0xFFFFFFFC
+PAGE_FREEING: int = 0xFFFFFFF8
 
-ENTRY_WRITTEN = 0b10
+ENTRY_WRITTEN: int = 0b10
 
-TYPE_NAMES = {
+TYPE_NAMES: dict[int, str] = {
     0x01: "u8", 0x11: "i8", 0x02: "u16", 0x12: "i16",
     0x04: "u32", 0x14: "i32", 0x08: "u64", 0x18: "i64",
     0x21: "str", 0x41: "blob", 0x42: "blob_data", 0x48: "blob_index",
 }
-PRIMITIVE_FORMATS = {
+PRIMITIVE_FORMATS: dict[int, str] = {
     0x01: "<B", 0x11: "<b", 0x02: "<H", 0x12: "<h",
     0x04: "<I", 0x14: "<i", 0x08: "<Q", 0x18: "<q",
 }
@@ -249,7 +246,7 @@ def do_save(port: str, path: str) -> int:
     digest: str = hashlib.sha256(image).hexdigest()
 
     decoded: dict[str, Any]
-    note: Optional[str]
+    note: str | None
     try:
         decoded = parse_nvs(image)
         note = None

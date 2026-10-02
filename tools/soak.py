@@ -33,15 +33,14 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Optional, TextIO
+from typing import Any, TextIO
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from ota import default_pio  # noqa: E402
-from test_api import Api, Json, Result, percentile  # noqa: E402
+from ota import default_pio
+from test_api import Api, Json, Result, percentile
 
 # A request slower than this is the thing being counted: not a slow reply but
 # a stalled one, an order of magnitude off the median.
-STALL_MS = 500.0
+STALL_MS: float = 500.0
 
 
 class Config:
@@ -56,7 +55,7 @@ class Config:
         self.rounds: int = 0
 
 
-def run(cmd: list[str], env: Optional[dict[str, str]] = None,
+def run(cmd: list[str], env: dict[str, str] | None = None,
         timeout: int = 600) -> tuple[int, str]:
     full: dict[str, str] = dict(os.environ)
     if env:
@@ -98,7 +97,7 @@ def wait_for_board(host: str, limit: int = 90) -> bool:
     return False
 
 
-def signal(api: Api) -> Optional[int]:
+def signal(api: Api) -> int | None:
     """The board's own view of its radio, in dBm.
 
     Sampled per round rather than per request: it is a slow-moving condition,
@@ -204,7 +203,7 @@ def main(argv: list[str]) -> int:
                     print(" board did not come back")
                     continue
                 time.sleep(2)
-                rssi: Optional[int] = signal(api)
+                rssi: int | None = signal(api)
                 got, failed = measure(api, args.samples, args.gap)
                 stalls: int = len([v for v in got if v > STALL_MS])
                 cfg.samples += got
