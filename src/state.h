@@ -176,6 +176,37 @@ bool stateClockSetTime(long h, long m, long s);
 // which: 0 hour, 1 minute, 2 second, -1 all three.  rgb is 0xRRGGBB.
 bool stateClockSetColor(long which, uint32_t rgb);
 
+// ------------------------------------------------------------------- sleep --
+
+// Any of the window, the level and the switch at once; whatever is not
+// marked set is left alone.  Times are minutes past midnight, 0-1439, and
+// the level is 0-100.  False if anything is out of range, and then nothing
+// changes.
+//
+// Changing the schedule is administration rather than someone being in the
+// room, so it also drops any hold keeping the eyes up.  Otherwise setting a
+// window that includes now would leave the board awake for another minute,
+// and look like the setting did nothing.
+struct SleepChange {
+  bool setWindow = false;
+  long start = 0, stop = 0;
+  bool setLevel = false;
+  long level = 0;
+  bool setEnabled = false;
+  bool enabled = false;
+};
+bool stateSleepSet(const SleepChange &c);
+
+// -------------------------------------------------------------------- time --
+
+// A zone name or a POSIX string; false if it is neither.  The time client is
+// restarted afterwards from the render loop, not here: re-resolving its
+// servers can block for seconds.
+bool stateTzSet(const char *nameOrPosix);
+
+// Whether to ask time servers at all.
+void stateNtpSetEnabled(bool on);
+
 // ------------------------------------------------------- when they happen --
 //
 // An operation can arrive in the middle of a frame.  The console is polled
@@ -211,10 +242,6 @@ void stateLock(void);
 void stateUnlock(void);
 
 // ---------------------------------------------------------------- settings --
-
-// Mark the live settings as differing from the stored ones, for a change
-// made somewhere that does not own the flag.
-void stateMarkDirty(void);
 
 void stateSave(void);
 void stateForget(void);

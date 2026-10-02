@@ -20,11 +20,6 @@ leave this list as they are done.
 
 ### Bugs it found on the way
 
-- `PUT /api/v1/pupil` and `PUT /api/v1/tz` don't mark the settings unsaved,
-  so the page says "saved" for a change a reboot will lose. The console's
-  versions of both do.
-- The console's `sleep on` and `sleep HH:MM HH:MM` wake the eyes, because
-  every typed command nudges sleep. The API deliberately avoids this.
 - Startle is compiled only under `CLOCK`. With `-DCLOCK=0` it does nothing,
   and the console and the API both still report success.
 - A `NETWORK=1, COMMANDS=0` build saves settings that it never loads at
@@ -83,10 +78,11 @@ leave this list as they are done.
 In this order, building every environment and running the API suite after
 each step:
 
-1. **Put the console on `state.h`.** Today it reads and writes `main.cpp`'s
-   globals directly, and has drifted from the API; that drift is the first
-   two bugs above. Give sleep, timezone and NTP real operations in
-   `state.h`, and stop writing `settingsDirty` directly.
+1. **Have the console read through `state.h` too.** It changes things only
+   through `state.h` now, but `status`, the eye list, `clock`, `pupil`, `cpu`
+   and `swap` still read `main.cpp`'s globals directly. `DeviceState` needs
+   the few fields it lacks: the startle phase, the core-0 idle gap and the
+   sender's rests.
 2. **Move the build switches still in `main.cpp` into `config.h`.** Put the
    pins in a `pins.h` that the three panel diagnostics share, instead of
    keeping their own copies.

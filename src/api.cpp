@@ -900,13 +900,10 @@ static void putTz(void) {
     sendError(400, "expected tz: a name or a POSIX string");
     return;
   }
-  if (!timeSetTz(b["tz"])) {
+  if (!stateTzSet(b["tz"])) {
     sendError(400, "not a known zone name or a POSIX timezone string");
     return;
   }
-  // Queued, not done here: re-resolving the time servers can block for
-  // seconds, and a request handler is the worst place to spend them.
-  netRequestTimeRestart();
   getTz();
 }
 
@@ -945,8 +942,7 @@ static void putNtp(void) {
       wrongType<const char *>(b, "op", "\"sync\""))
     return;
   if (b["enabled"].is<bool>()) {
-    netNtpSetEnabled(b["enabled"]);
-    stateMarkDirty(); // it is a saved setting like the timezone
+    stateNtpSetEnabled(b["enabled"]);
     getNtp();
     return;
   }
@@ -1367,20 +1363,15 @@ static void putSleep(void) {
     return;
   }
 
-  // Reconfiguring the schedule is administration rather than someone being
-  // in the room, so it drops any hold that is keeping the eyes up -- both the
-  // one this very request would otherwise have created, and any left over
-  // from a moment ago.  Without this, setting a window that includes now
-  // leaves the board awake for another minute and looks like it did nothing.
-  sleepCancelWake();
-
-  if (haveWindow)
-    sleepSetWindow(start, stop);
-  if (haveLevel)
-    sleepSetLevel(level);
-  if (haveEnabled)
-    sleepSetEnabled(b["enabled"]);
-  stateMarkDirty();
+  SleepChange c; // which also drops any hold keeping the eyes up
+  c.setWindow = haveWindow;
+  c.start = start;
+  c.stop = stop;
+  c.setLevel = haveLevel;
+  c.level = level;
+  c.setEnabled = haveEnabled;
+  c.enabled = haveEnabled && b["enabled"].as<bool>();
+  stateSleepSet(c);
 
   JsonDocument d;
   fillSleep(d.to<JsonObject>());

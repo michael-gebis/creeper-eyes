@@ -2023,6 +2023,7 @@ void stateDilationAuto(void) {
 void stateSetPupil(bool on) {
   LOCKED;
   pupilOn = on;
+  settingsDirty = true;
 }
 
 void stateSetSwap(bool sw) {
@@ -2213,9 +2214,47 @@ bool stateClockSetColor(long which, uint32_t rgb) {
 #endif
 }
 
-void stateMarkDirty(void) {
+bool stateSleepSet(const SleepChange &c) {
   LOCKED;
+#if SLEEP
+  if ((c.setWindow && (c.start < 0 || c.start > 1439 || c.stop < 0 ||
+                       c.stop > 1439)) ||
+      (c.setLevel && (c.level < 0 || c.level > 100)))
+    return false;
+  sleepCancelWake();
+  if (c.setWindow)
+    sleepSetWindow((uint16_t)c.start, (uint16_t)c.stop);
+  if (c.setLevel)
+    sleepSetLevel((uint8_t)c.level);
+  if (c.setEnabled)
+    sleepSetEnabled(c.enabled);
   settingsDirty = true;
+  return true;
+#else
+  (void)c;
+  return false;
+#endif
+}
+
+bool stateTzSet(const char *nameOrPosix) {
+  LOCKED;
+  if (!timeSetTz(nameOrPosix))
+    return false;
+  settingsDirty = true;
+#if NETWORK
+  netRequestTimeRestart();
+#endif
+  return true;
+}
+
+void stateNtpSetEnabled(bool on) {
+  LOCKED;
+#if NETWORK
+  netNtpSetEnabled(on);
+  settingsDirty = true;
+#else
+  (void)on;
+#endif
 }
 
 void stateSave(void) {
@@ -2460,8 +2499,10 @@ void handleCommand(char *line, Print &out) {
                    mins / 60, mins % 60);
       out.println();
     } else if (!strcmp(a, "on") || !strcmp(a, "off")) {
-      sleepSetEnabled(!strcmp(a, "on"));
-      stateMarkDirty();
+      SleepChange c;
+      c.setEnabled = true;
+      c.enabled = !strcmp(a, "on");
+      stateSleepSet(c);
       out.printf("ok sleep=%s\n", sleepEnabled() ? "on" : "off");
     } else if (!strcmp(a, "level")) {
       char *v = strtok(NULL, " \t");
@@ -2469,8 +2510,10 @@ void handleCommand(char *line, Print &out) {
       if (!parseLong(v, 0, 100, pct)) {
         out.println(F("usage: sleep level <0-100>   (0 = panels off)"));
       } else {
-        sleepSetLevel((uint8_t)pct);
-        stateMarkDirty();
+        SleepChange c;
+        c.setLevel = true;
+        c.level = pct;
+        stateSleepSet(c);
         out.printf("ok sleep level=%u\n", (unsigned)sleepLevel());
       }
     } else {
@@ -2481,8 +2524,11 @@ void handleCommand(char *line, Print &out) {
           !parseTimeOfDay(b, false, h2, m2, unused)) {
         out.println(F("usage: sleep HH:MM HH:MM   (start, then stop)"));
       } else {
-        sleepSetWindow((uint16_t)(h1 * 60 + m1), (uint16_t)(h2 * 60 + m2));
-        stateMarkDirty();
+        SleepChange c;
+        c.setWindow = true;
+        c.start = h1 * 60 + m1;
+        c.stop = h2 * 60 + m2;
+        stateSleepSet(c);
         out.printf("ok sleep %02u:%02u-%02u:%02u\n", h1, m1, h2, m2);
       }
     }
@@ -2508,8 +2554,7 @@ void handleCommand(char *line, Print &out) {
       *c = (char)tolower((unsigned char)*c);
 
     if (!strcmp(arg, "on") || !strcmp(arg, "off")) {
-      clockOn = !strcmp(arg, "on");
-      settingsDirty = true;
+      stateClockSetOn(!strcmp(arg, "on"));
       out.printf("ok clock=%s\n", clockOn ? "on" : "off");
     } else if (!strcmp(arg, "set")) {
       char *v = strtok(NULL, " \t");
@@ -2571,8 +2616,7 @@ void handleCommand(char *line, Print &out) {
                  (unsigned long)v);
     } else if (!strcmp(arg, "secs")) {
       char *v = strtok(NULL, " \t");
-      clockSeconds = !(v && !strcmp(v, "off"));
-      settingsDirty = true;
+      stateClockSetSeconds(!(v && !strcmp(v, "off")));
       out.printf("ok seconds=%s\n", clockSeconds ? "on" : "off");
     } else {
       out.println(
@@ -2600,14 +2644,10 @@ void handleCommand(char *line, Print &out) {
       out.println(F("  or any POSIX string, e.g. PST8PDT,M3.2.0/2,M11.1.0/2"));
       return;
     }
-    if (!timeSetTz(rest)) {
-      out.printf("err: timezone must be under %d characters\n", TZ_MAX);
+    if (!stateTzSet(rest)) {
+      out.println(F("err: not a known zone name or a POSIX timezone string"));
       return;
     }
-    settingsDirty = true;
-#if NETWORK
-    netRequestTimeRestart(); // from the render loop; the lookup can block
-#endif
     out.printf("ok tz=%s\n", tzString);
 
 #if NETWORK
@@ -2626,8 +2666,7 @@ void handleCommand(char *line, Print &out) {
       return;
     }
     if (arg && (!strcmp(arg, "on") || !strcmp(arg, "off"))) {
-      netNtpSetEnabled(!strcmp(arg, "on"));
-      settingsDirty = true;
+      stateNtpSetEnabled(!strcmp(arg, "on"));
     } else if (arg) {
       out.println(F("usage: ntp [on|off|sync]"));
       return;
@@ -2739,7 +2778,6 @@ void handleCommand(char *line, Print &out) {
       out.println(F("usage: pupil [on|off]"));
       return;
     }
-    settingsDirty = true;
     out.printf("ok pupil=%s%s\n", pupilOn ? "on" : "off",
                   pupilOn ? "" : " (full iris disc; dilate has no effect)");
   } else if (!strcmp(cmd, "cpu")) {

@@ -1379,6 +1379,31 @@ def test_settings(res: Result, api: Api) -> None:
     expect(res, api, "rejects a bad op", "/settings", "POST", {"op": "nope"},
            status=400)
 
+    # Every saved setting changed through the API marks the settings unsaved,
+    # or the page says "saved" about a change a restart will lose.  Each is
+    # set to what it already is, and saved again after.
+    st: Json = api.json("/state")
+    for label, path, body in (
+            ("pupil", "/pupil", {"on": st.get("pupil", {}).get("on", True)}),
+            ("timezone", "/tz", {"tz": st.get("net", {}).get("tz")}),
+            ("time servers", "/ntp",
+             {"enabled": st.get("time", {}).get("ntp", {}).get("enabled",
+                                                               True)}),
+            ("sleep", "/sleep",
+             {"enabled": st.get("sleep", {}).get("enabled", False)}),
+            ("clock", "/clock", {"on": st.get("clock", {}).get("on", True)})):
+        code, _ = api.raw(path, "PUT", body)
+        if code == 404:
+            res.skip("%s marks the settings unsaved" % label,
+                     "not in this build")
+            continue
+        if code != 200:
+            res.fail("PUT %s, unchanged" % path, "got %d" % code)
+            continue
+        dirty = api.json("/state").get("system", {}).get("settingsDirty")
+        same(res, "%s marks the settings unsaved" % label, dirty, True)
+        api.raw("/settings", "POST", {"op": "save"})
+
 
 def test_wifi(res: Result, api: Api) -> None:
     res.heading("wifi (reboots the board)")
