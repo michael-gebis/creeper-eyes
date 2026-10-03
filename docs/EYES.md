@@ -114,8 +114,10 @@ git clone --depth 1 https://github.com/chrismiller/TeensyEyes.git
 uv run tools/gen_eyes.py TeensyEyes/resources/eyes/240x240
 ```
 
-That writes `include/eyes/*.h` and the gallery images. Then add an `EYE_FOO`
-switch to `include/eyes_config.h` and a registry row to `src/main.cpp`.
+That writes `include/eyes/*.h` and the gallery images. Then, in
+`include/eyes_config.h`, add an `EYE_FOO` switch and add it to the
+at-least-one-design check at the bottom; and in `src/main.cpp`, add its
+`#include` and a row in `builtinDesigns[]`.
 
 Dimensions must match what is already built in: **SCLERA 200×200, IRIS_MAP
 256×64, SCREEN 128×128, IRIS 80×80**. The renderer reaches the artwork through

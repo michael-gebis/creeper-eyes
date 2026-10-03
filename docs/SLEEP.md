@@ -36,6 +36,12 @@ or any API call that changes something. Reading does not count, deliberately:
 the control page polls once a second while it is open, so counting reads would
 mean a browser tab left open kept the head awake all night.
 
+Changing the sleep settings themselves is the exception, from the console as
+from the page: that is administration rather than someone in the room, so it
+ends any hold instead of starting one. Otherwise setting a window that
+includes now would leave the eyes up for another minute, and look like it did
+nothing.
+
 Sleep is the lowest-priority claim on the panels. An address card asked for at
 3am still appears, an over-the-air update still shows its progress, and the
 startup cards still run — each of those lights the panels for as long as it

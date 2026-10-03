@@ -21,9 +21,10 @@
 //   1. Generate its header with tools/gen_eyes.py, or hand-write one whose
 //      symbols are suffixed to match -- scleraFoo, irisFoo, upperFoo,
 //      lowerFoo, polarFoo.
-//   2. Add an EYE_FOO switch here.
-//   3. Add the #include and the registry row in src/main.cpp, both guarded
-//      by #if EYE_FOO.
+//   2. Add an EYE_FOO switch here, and add it to the at-least-one-design
+//      check at the bottom of this file.
+//   3. Add the #include and the builtinDesigns[] row in src/main.cpp, both
+//      guarded by #if EYE_FOO.
 //
 //   Dimensions must match: SCLERA 200x200, IRIS_MAP 256x64, SCREEN 128x128,
 //   IRIS 80x80.  The renderer reaches the artwork through pointers whose row

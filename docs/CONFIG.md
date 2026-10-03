@@ -35,12 +35,14 @@ That is only the speed a board starts at: one with the supply for it can be
 set to 240 without a rebuild, and keeps it as a
 [saved setting](#remembering-settings).
 
-Two groups are **not** guarded and cannot be overridden this way. Three
-derived values — `CONTROLLABLE`, `FAVICON_FRANK` and `FAVICON_EYES` — are
-computed from the others. And the **pin numbers** in
+Two groups are **not** guarded and cannot be overridden this way. A few
+names are not settings at all: `CONTROLLABLE`, `OTA_AUTH` and
+`FIRMWARE_COMMIT` are computed from others, `DIM_GAMMA_MIN` and
+`DIM_GAMMA_MAX` are fixed limits, and `FAVICON_FRANK` and `FAVICON_EYES` are
+the two values `FAVICON` chooses between. And the **pin numbers** in
 [`src/main.cpp`](../src/main.cpp) (`DISPLAY_DC`, `DISPLAY_RESET`,
-`SELECT_L_PIN`, `SELECT_R_PIN`, `MOSI_PIN`, `MISO_PIN`, `SCLK_PIN`,
-`UART_RX_PIN`) are plain `#define`s: `-DDISPLAY_DC=…` is a macro
+`SELECT_L_PIN`, `SELECT_R_PIN`, `MOSI_PIN`, `MISO_PIN`, `SCLK_PIN`) are plain
+`#define`s: `-DDISPLAY_DC=…` is a macro
 redefinition, not an override, so those are edited in place. They are wiring,
 not preference — change them only if you wire differently, and update
 [docs/WIRING.md](WIRING.md) to match.
@@ -91,7 +93,7 @@ not preference — change them only if you wire differently, and update
 | `WEB_CMD_ENDPOINT` | `1` | The `/cmd` escape hatch. `0` leaves only the REST API. Needs `COMMANDS`, since it is a passthrough to the console. |
 | `REQUEST_HEAD_MAX` / `REQUEST_BODY_MAX` | `3072` / `2048` | The largest request head, and body (the streamed eye file aside), the web server takes. Anything larger is refused with `431` or `413` before any of it is read. Together they must fit the TCP window, 5760 bytes, or an allowed request could never arrive whole — see [Driving it](CONTROL.md#web-interface). |
 | `REQUEST_ARRIVE_MS` | `5000` | How long a request has to arrive in full. It waits outside the render loop meanwhile, and is dropped after this. |
-| `WIFI_HOSTNAME` | `frank` | DHCP and mDNS name. |
+| `WIFI_HOSTNAME` | `frank` | DHCP and mDNS name, and the name the control page and the console's `version` give the board. |
 | `WIFI_AP_NAME` | `frank-setup` | The setup portal's own network name. |
 | `QR_CODES` | `NETWORK` | Codes on the panels: one that joins the setup network, one that opens the control page. `0` leaves plain text — see [Codes on the eyes](QR.md). |
 | `PORTAL_PASSWORD` | `QR_CODES` | A random password on the setup network, which is only reasonable because the panels can show it. Follows `QR_CODES`, and `0` leaves the portal open. |

@@ -69,7 +69,7 @@ each step:
    - `state.cpp`, dropping `state.h`'s argument against this split.
 5. **Last, and riskiest: `motion` and `render`.**
    - Make the iris walk non-blocking, so `loop()` shows the program's real
-     control flow; today a recursive `split()` blocks there for 10 s.
+     control flow; today a recursive `walkIris()` blocks there for 10 s.
    - Break the 340-line `frame()` into the steps it performs.
    - Compare frame rate and latency before and after.
 

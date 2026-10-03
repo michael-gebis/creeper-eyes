@@ -102,6 +102,10 @@ upload on purpose, and removes it again. The uploads the board refuses
 *before* erasing anything are tested on every run, and checked to have left
 the slot alone.
 
+`--settings` saves, then changes each saved setting through the API to the
+value it already has, and checks that every one marks the settings unsaved —
+otherwise the page would say "saved" about a change a restart loses.
+
 `--restart` restarts the board twice: once to move the CPU speed to its other
 setting, and once to move it back. It checks that the new speed took, and that
 a restart the board was asked for leaves no warning behind.

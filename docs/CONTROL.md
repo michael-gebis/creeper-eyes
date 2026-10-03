@@ -25,13 +25,15 @@ anyone asks of a control they have just moved.
 
 The page is static: [`data/index.html`](../data/index.html), gzipped into the
 firmware at build time by [`tools/gen_page.py`](../tools/gen_page.py) and served
-straight out of flash. About 41 KB becomes 14; compressing it took the page
+straight out of flash. About 45 KB becomes 15; compressing it took the page
 load from 554 ms to under 100 when that was measured — the board sends roughly one TCP segment per rendered frame, so
 the only thing that really helps is sending fewer of them. Its tab icon is an inline SVG `data:` URI from
 [`src/favicon.h`](../src/favicon.h) rather than a `/favicon.ico` route — no
 second handler, and no second request against a server that manages one
 client at a time. Two are bundled: Frank's head, and just the eyes for a
-build going into something that is not a Frankenstein. Pick with `FAVICON`. Everything on it is drawn from the API below, so there
+build going into something that is not a Frankenstein. Pick with `FAVICON`.
+Its title is the board's own name, `WIFI_HOSTNAME`, which `gen_page.py`
+fills in along with the icon. Everything on it is drawn from the API below, so there
 is no markup anywhere that has to be kept in step with device state.
 
 Requests are served from the render loop, which is also the floor on how fast
@@ -102,7 +104,7 @@ Open `pio device monitor` and type `help`. Commands are line-based at 115200.
 | `wifi join <ssid> [pass]` | Store a network and reboot into it |
 | `wifi forget` | Clear the stored network |
 | `wifi portal` | Reboot into the setup portal |
-| `version` | Firmware version, commit and build date |
+| `version` | The board's name, firmware version, commit and build date |
 | `ntp [on\|off\|sync]` | Use a time server, stop using one, or ask again now |
 | `rtc` | Battery-backed clock: present, valid, its time and temperature |
 | `rtc sync` | Store the current time in it |
@@ -115,6 +117,10 @@ Open `pio device monitor` and type `help`. Commands are line-based at 115200.
 | `sleep HH:MM HH:MM` | The window: when to sleep, then when to wake |
 | `sleep level <0-100>` | `0` switches the panels off; above that, a share of the brightness setting |
 | `help` | The list above. `?` does the same |
+
+A reply starts with `ok` when something was done, `err:` when it was refused,
+and `usage:` when the command was not understood; anything else is a report,
+like `status` or `sleep` on its own.
 
 The **BOOT button** cycles through the eye designs, which is handy on the
 bench but unreachable once the head is assembled — hence the console. Held
